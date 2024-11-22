@@ -22,6 +22,7 @@ srcs += files(
   'cds.f90',
   'cm5.f90',
   'cpcm.f90',
+  'draco.f90',
   'cpcm_dd.f90',
   'data.f90',
   'input.f90',

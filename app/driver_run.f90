@@ -44,6 +44,9 @@ module tblite_driver_run
    use tblite_ceh_ceh, only : new_ceh_calculator
    use tblite_post_processing_list, only : add_post_processing, post_processing_type, post_processing_list
 
+   use tblite_solvation_draco, only : draco_type, new_draco
+   use tblite_ncoord, only: new_ncoord
+
    implicit none
    private
 
@@ -71,6 +74,8 @@ subroutine run_main(config, error)
    integer :: unpaired, charge, unit, nspin
    logical :: exist
    real(wp) :: energy
+   real(wp), allocatable :: cn(:)
+   real(wp), allocatable :: scaled_radii(:)
    real(wp), allocatable :: dpmom(:), qpmom(:)
    real(wp), allocatable :: gradient(:, :), sigma(:, :)
    type(param_record) :: param
@@ -79,6 +84,7 @@ subroutine run_main(config, error)
    type(xtb_calculator) :: calc_ceh
    type(wavefunction_type) :: wfn, wfn_ceh
    type(results_type) :: results
+   type(draco_type) :: draco
    class(post_processing_list), allocatable :: post_proc
 
    ctx%terminal = context_terminal(config%color)
@@ -123,6 +129,11 @@ subroutine run_main(config, error)
    end if
 
    nspin = merge(2, 1, config%spin_polarized)
+
+
+
+
+
 
    if (config%grad) then
       allocate(gradient(3, mol%nat), sigma(3, 3))
@@ -201,6 +212,20 @@ subroutine run_main(config, error)
       call shell_partition(mol, calc, wfn)
    end select
    if (allocated(error)) return
+
+    !!!!!!!!!!!!!!!!!!!!!!
+   allocate(cn(mol%nat))
+   call new_ncoord(calc%ncoord, mol, "gfn")
+   call calc%ncoord%get_cn(mol, cn)
+   !call print_values(mol, wfn%qat(:, 1), cn)
+
+   allocate(scaled_radii(mol%nat))
+   call new_draco(draco, mol, 'cpcm')
+   call draco%radii_adjustment(mol, wfn%qat(:, 1), cn, scaled_radii)
+   write(*, *) 'Scaled radii: ', scaled_radii
+   !call radii_adjustment(mol, wfn%qat(:, 1), cn, scaled_radii)
+   stop
+    !!!!!!!!!!!!!!!!!!!!!!
 
    if (allocated(config%efield)) then
       block

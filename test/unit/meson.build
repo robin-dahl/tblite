@@ -51,6 +51,7 @@ tests = [
   'spin',
   'solvation-born',
   'solvation-cpcm',
+  'solvation-draco',
   'solvation-surface',
   'solvation-cds',
   'solvation-shift',

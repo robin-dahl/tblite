@@ -28,7 +28,7 @@ module tblite_solvation_data
    implicit none
    private
 
-   public :: get_vdw_rad_d3, get_vdw_rad_cosmo, get_vdw_rad_bondi
+   public :: get_vdw_rad_d3, get_vdw_rad_cosmo, get_vdw_rad_bondi, get_vdw_rad_cpcm, get_vdw_rad_smd
    public :: get_solvent_data
 
 
@@ -66,6 +66,18 @@ module tblite_solvation_data
       module procedure :: get_vdw_rad_bondi_sym
       module procedure :: get_vdw_rad_bondi_num
    end interface get_vdw_rad_bondi
+
+   !> Get SMD van-der-Waals radius for a species
+   interface get_vdw_rad_smd
+      module procedure :: get_vdw_rad_smd_sym
+      module procedure :: get_vdw_rad_smd_num
+   end interface get_vdw_rad_smd
+
+   !> Get CPCM van-der-Waals radius for a species
+   interface get_vdw_rad_cpcm
+      module procedure :: get_vdw_rad_cpcm_sym
+      module procedure :: get_vdw_rad_cpcm_num
+   end interface get_vdw_rad_cpcm
 
 
    !> In case no van-der-Waals value is provided
@@ -146,6 +158,52 @@ module tblite_solvation_data
       & missing, missing, missing, missing, missing, missing, missing, missing, &  ! Ta-Hg
       & 1.96_wp, 2.02_wp, 2.07_wp, 1.97_wp, 2.02_wp, 2.20_wp, 3.48_wp, 2.83_wp]    ! Tl-Ra
 
+    !> Default value for unoptimized van-der-Waals radii
+    real(wp), parameter :: cpcmstub = 2.223_wp
+    !> CPCM optimized van-der-Waals radii
+    real(wp), parameter :: vdw_rad_cpcm(94) = aatoau * [ &
+        & 1.3200_wp, 1.6800_wp, 2.1840_wp, 1.8360_wp, &   ! h-be
+        & 2.3040_wp, 2.0400_wp, 1.8600_wp, 1.8240_wp, &   ! B-O
+        & 1.7640_wp, cpcmstub, cpcmstub, cpcmstub, &   ! F-Mg
+        & 2.3040_wp, 2.5200_wp, 2.1600_wp, 2.1600_wp, &   ! Al-S
+        & 2.1000_wp, cpcmstub, cpcmstub, cpcmstub, &   ! Cl-Ca
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Sc-Cr
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Mn-Ni
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Cu-Ge
+        & cpcmstub, cpcmstub, 2.2200_wp, cpcmstub, &   ! As-Kr
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Rb-Zr
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Nb-Ru
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Rh-Cd
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! In-Te
+        & 2.3760_wp, cpcmstub, cpcmstub, cpcmstub, &   ! I-Ba
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! La-Nd
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Pm-Gd
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Tb-Er
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Tm-Hf
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Ta-Os
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Ir-Hg
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Tl-Po
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! At-Ra
+        & cpcmstub, cpcmstub, cpcmstub, cpcmstub, &   ! Ac-U
+        & cpcmstub, cpcmstub]                           ! Np-Pu
+
+    !> Default value for missing bondi radii
+    real(wp), parameter :: smdstub = 2.000_wp
+
+    real(wp), parameter :: vdw_rad_smd(88) = aatoau * [ &
+        & 1.20_wp, 1.40_wp, 1.81_wp, 1.53_wp, 1.92_wp, 1.85_wp, 1.89_wp, 1.52_wp, &  ! H-O
+        & 1.73_wp, 1.54_wp, 2.27_wp, 1.73_wp, 1.84_wp, 2.47_wp, 2.12_wp, 2.49_wp, &  ! F-S
+        & 2.38_wp, 1.88_wp, 2.75_wp, 2.31_wp, smdstub, smdstub, smdstub, smdstub, &  ! Cl-Cr
+        & smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, 1.87_wp, 2.11_wp, &  ! Mn-Ge
+        & 1.85_wp, 1.90_wp, 3.06_wp, 2.02_wp, 3.03_wp, 2.49_wp, smdstub, smdstub, &  ! As-Zr
+        & smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, &  ! Nb-Cd
+        & 1.93_wp, 2.17_wp, 2.06_wp, 2.06_wp, 1.98_wp, 2.16_wp, 3.43_wp, 2.68_wp, &  ! I-Ba
+        & smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, &  ! La-Gd
+        & smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, &  ! Tb-Hf
+        & smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, smdstub, &  ! Ta-Hg
+        & 1.96_wp, 2.02_wp, 2.07_wp, 1.97_wp, 2.02_wp, 2.20_wp, 3.48_wp, 2.83_wp]    ! Tl-Ra
+     
+  
 
 contains
 
@@ -232,6 +290,66 @@ elemental function get_vdw_rad_bondi_num(number) result(radius)
    end if
 
 end function get_vdw_rad_bondi_num
+
+
+!> Get van-der-Waals radius for species with a given symbol
+elemental function get_vdw_rad_smd_sym(symbol) result(radius)
+   !> Element symbol
+   character(len=*), intent(in) :: symbol
+   !> van-der-Waals radius
+   real(wp) :: radius
+
+   radius = get_vdw_rad_smd(to_number(symbol))
+
+end function get_vdw_rad_smd_sym
+
+
+!> Get van-der-Waals radius for species with a given atomic number
+elemental function get_vdw_rad_smd_num(number) result(radius)
+   !> Atomic number
+   integer, intent(in) :: number
+   !> van-der-Waals radius
+   real(wp) :: radius
+
+   if (number > 0 .and. number <= size(vdw_rad_smd, dim=1)) then
+      radius = vdw_rad_smd(number)
+   else
+      radius = missing
+   end if
+
+end function get_vdw_rad_smd_num
+
+!> Get van-der-Waals radius for species with a given symbol
+elemental function get_vdw_rad_cpcm_sym(symbol) result(radius)
+   !> Element symbol
+   character(len=*), intent(in) :: symbol
+   !> van-der-Waals radius
+   real(wp) :: radius
+
+   radius = get_vdw_rad_cpcm(to_number(symbol))
+
+end function get_vdw_rad_cpcm_sym
+
+! Get van-der-Waals radius for species with a given atomic number
+elemental function get_vdw_rad_cpcm_num(number) result(radius)
+   ! Atomic number
+   integer, intent(in) :: number
+   ! van-der-Waals radius
+   real(wp) :: radius
+
+   if (number > 0 .and. number <= size(vdw_rad_cpcm, dim=1)) then
+      radius = vdw_rad_cpcm(number)
+   else
+      radius = missing
+   end if
+
+end function get_vdw_rad_cpcm_num
+
+
+
+
+
+
 
 
 !> Get solvent parameters, in case the solvent is not known the ideal conductor is assumed
