@@ -1673,7 +1673,7 @@ subroutine diis(n, nmat, ndiis, x, e, b, xnew)
    call gjinv(nmat1, 1, bloc, cex, ok)
    if (.not. ok) then
       nmat = 1
-      error stop "Upps!"
+      error stop "Error: Matrix inversion failed in the ddCPCM DIIS procedure."
       return
    end if
    xnew = 0.0_wp
