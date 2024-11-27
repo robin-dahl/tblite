@@ -1,0 +1,77 @@
+module tblite_solvation_draco_calc
+    use mctc_io, only: structure_type
+    use mctc_env, only: wp
+    use draco_data , only: get_alpha, get_beta, get_eps, aatoau, min_rad, eeq_prefac_water_cpcm 
+    use draco_data, only: eeq_expo_water_cpcm, eeq_k_water_cpcm
+    use tblite_solvation_draco_type
+    use tblite_wavefunction, only: wavefunction_type, new_wavefunction, shell_partition
+    use tblite_xtb_calculator, only: xtb_calculator, new_xtb_calculator
+    use tblite_xtb_gfn2, only: new_gfn2_calculator
+    
+    implicit none
+
+    contains
+
+        subroutine print_values(mol, q, cn) ! Printing the value that are passes to this module, which are needed for the error function
+            type(structure_type), intent(in) :: mol 
+            real(wp), intent(in), dimension(:) :: q, cn
+            type(TDraco) :: TDracoInstance
+
+            call TDracoInstance%init(mol, 'cpcm')
+            write(*,*) 'Default radii: ', TDracoInstance%defaultradii
+            write(*,*) 'Atomic number H: ', mol%id(1)
+            write(*,*) 'EEQ charges: ', q
+            write(*,*) 'Coordination numbers: ', cn
+        end subroutine print_values
+
+        
+
+        
+        
+        
+        subroutine radii_adjustment(self, mol, q, cn, scaled_radii) ! Subroutine that rescales the radii, fo now implemented only for water as a solvent
+            type(structure_type), intent(in) :: mol
+            real(wp), intent(in), dimension(:) :: q
+            real(wp), intent(in), dimension(:) :: cn
+            type(TDraco) :: TDracoInstance
+
+            real(wp), dimension(mol%nat), intent(inout) :: scaled_radii 
+            real(wp), dimension(mol%nat) :: f_scale 
+            real(wp), dimension(mol%nat) :: qeff
+            real(wp) :: a_i
+            real(wp) :: b_i
+            real(wp) :: k
+            integer :: i
+
+            call TDracoInstance%init(mol, 'cpcm')
+
+            ! Scale the radii
+            do iat = 1, mol%nat
+                izp = mol%id(iat)
+                isp = mol%num(izp)
+
+                a_i = eeq_prefac_water_cpcm(isp)
+                b_i = eeq_expo_water_cpcm(isp) 
+                k = eeq_k_water_cpcm(isp)
+
+                qeff(i) = q(i) + k * q(i) * cn(i)
+
+                f_scale(i) = erf( a_i * (qeff(i) - b_i) ) + 1
+
+                scaled_radii(i) = TDracoInstance%defaultradii(i) * f_scale(i) 
+            end do
+
+            write(*, *) 'Scaled radii: ', scaled_radii 
+
+            ! header for print
+            write(*, '(A, 3X, A, 3X, A, 3X, A)') 'Atom', 'Radii', 'Scaling', 'Scaled Radii'
+
+            ! formatted printroutine. print atom number, radii, scaling, scaled radii
+            do i = 1, mol%nat
+                write(*, '(I3, 3F10.4)') mol%id(i), TDracoInstance%defaultradii(i), f_scale(i), scaled_radii(i)
+            end do
+
+        end subroutine radii_adjustment
+        
+
+end module tblite_solvation_draco_calc

@@ -58,20 +58,26 @@ subroutine sad_guess_qsh(mol, calc, wfn)
    call shell_partition(mol, calc, wfn)
 end subroutine sad_guess_qsh
 
-subroutine eeq_guess_qat(mol, charges, dpat)
+subroutine eeq_guess_qat(mol, charges, dpat, dqdr, dqdL)
    type(structure_type), intent(in) :: mol
-   real(wp), intent(inout) :: charges(:), dpat(:, :)
+   real(wp), intent(inout) :: charges(:)
+   real(wp), intent(inout) :: dpat(:, :)
+   real(wp), intent(out), optional :: dqdr(:, :, :)
+   real(wp), intent(out), optional :: dqdL(:, :, :)
 
    dpat(:, :) = 0.0_wp
-   call get_eeq_charges(mol, charges)
+
+   call get_eeq_charges(mol, charges, dqdr=dqdr, dqdL=dqdL)
 end subroutine eeq_guess_qat
 
-subroutine eeq_guess_qsh(mol, calc, wfn)
+subroutine eeq_guess_qsh(mol, calc, wfn, dqdr, dqdL)
    type(structure_type), intent(in) :: mol
    type(xtb_calculator), intent(in) :: calc
    type(wavefunction_type), intent(inout) :: wfn
+   real(wp), intent(out), optional :: dqdr(:, :, :)
+   real(wp), intent(out), optional :: dqdL(:, :, :)
 
-   call eeq_guess_qat(mol, wfn%qat(:, 1), wfn%dpat(:, :, 1))
+   call eeq_guess_qat(mol, wfn%qat(:, 1), wfn%dpat(:, :, 1), dqdr=dqdr, dqdL=dqdL)
    call shell_partition(mol, calc, wfn)
 end subroutine eeq_guess_qsh
 
