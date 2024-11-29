@@ -52,7 +52,7 @@ contains
                   new_unittest("cpcm-radii-adjust", test_r_cpcm_adjust), &
                   new_unittest("smd-radii-adjust", test_r_smd_adjust), &
                   new_unittest("cosmo-radii-adjust", test_r_cosmo_adjust), &
-                  new_unittest("scaled_radii_gradient", test_gradient_cpcm) &
+                  new_unittest("srad_gradient", test_gradient_cpcm) &
                   ]
    end subroutine collect_solvation_draco
 
@@ -77,12 +77,12 @@ contains
       real(wp), allocatable :: qat(:)
 
       !> Radii adjusted with scaling function
-      real(wp), allocatable :: scaled_radii(:)
+      real(wp), allocatable :: srad(:)
 
       
       class(ncoord_type), allocatable :: ncoord
 
-      allocate (cn(mol%nat), qat(mol%nat), scaled_radii(mol%nat))
+      allocate (cn(mol%nat), qat(mol%nat), srad(mol%nat))
 
       ! Get eeq charges and coordiantion numbers
       call get_eeq_charges(mol, qat)
@@ -90,23 +90,22 @@ contains
       call ncoord%get_cn(mol, cn)
 
       ! Use DRACO to sclae the radii
-      call draco%radii_adjustment(mol, qat, cn, scaled_radii)
+      call draco%radii_adjustment(mol, qat, cn, srad)
 
-      print '(3es21.13)', scaled_radii
+      print '(3es21.13)', srad
 
-      if (any(abs(scaled_radii - ref) > thr2)) then
+      if (any(abs(srad - ref) > thr2)) then
           call test_failed(error, "Scaled radii do not match reference")
           print '(a)', 'Scaled radii:'
-          print '(3es21.13)', scaled_radii
+          print '(3es21.13)', srad
           print '(a)', 'Difference to ref:'
-          print '(3es21.13)', scaled_radii - ref
+          print '(3es21.13)', srad - ref
       end if
    end subroutine test_r_adjust
 
    !> Test the analytical gradient of the scaled radii w.r.t. the atom positions
    subroutine test_g(error, mol, draco) 
       !> Error handling
-
       type(error_type), allocatable, intent(out) :: error
 
       !> Molecular structure data
@@ -116,19 +115,17 @@ contains
       type(draco_type), intent(in) :: draco
 
       real(wp), parameter :: step = 1.0e-4_wp
-      real(wp), allocatable :: dsraddr(:, :, :), dsraddL(:, :, :), numgr(:, :, :), numgL(:, :, :)
-      real(wp), parameter :: unity(3, 3)  = reshape(&
-         & [1, 0, 0, 0, 1, 0, 0, 0, 1], shape(unity))
+      real(wp), allocatable :: dsraddr(:, :, :), dsraddL(:, :, :), numgr(:, :, :)
       real(wp), allocatable :: dqdr(:, :, :), dcndr(:, :, :), dqdL(:, :, :), dcndL(:, :, :)
-      real(wp), allocatable :: qat(:), cn(:), scaled_radii(:)
-      real(wp), allocatable :: rr(:), rl(:), lr(:), ll(:), eps(:, :)
+      real(wp), allocatable :: qat(:), cn(:), srad(:)
+      real(wp), allocatable :: rr(:), rl(:)
       
       integer :: ii, ic
       real(wp), allocatable :: dpat(:, :)
       class(ncoord_type), allocatable :: ncoord
       call new_ncoord(ncoord, mol, cn_type="gfn")
 
-      allocate(cn(mol%nat), qat(mol%nat), scaled_radii(mol%nat), rr(mol%nat), rl(mol%nat))
+      allocate(cn(mol%nat), qat(mol%nat), srad(mol%nat), rr(mol%nat), rl(mol%nat))
       allocate(numgr(3, mol%nat, mol%nat))
       allocate(dsraddr(3, mol%nat, mol%nat), dsraddL(3, 3, mol%nat), dpat(3, mol%nat))
       do ii = 1, mol%nat
@@ -156,32 +153,7 @@ contains
          end do
       end do
       
-      allocate(numgL(3, 3, mol%nat), eps(3, 3))
-      eps(:, :) = unity
-      do ic = 1, 3
-         do ii = 1, 3
-            eps(ii, ic) = eps(ii, ic) + step
-            mol%xyz(:, :) = matmul(eps, mol%xyz)
-            call get_eeq_charges(mol, qat)
-            call ncoord%get_cn(mol, cn)
-            if (any(mol%periodic)) mol%lattice(:, :) = matmul(eps, mol%lattice)
-            call draco%radii_adjustment(mol, qat, cn, lr)
-
-            eps(ii, ic) = eps(ii, ic) - 2*step
-            mol%xyz(:, :) = matmul(eps, mol%xyz)
-            call get_eeq_charges(mol, qat)
-            call ncoord%get_cn(mol, cn)
-            if (any(mol%periodic)) mol%lattice(:, :) = matmul(eps, mol%lattice)
-            call draco%radii_adjustment(mol, qat, cn, ll)
-
-            numgL(ii, ic, :) = 0.5_wp*(lr - ll)/step
-
-            eps(ii, ic) = eps(ii, ic) + step
-            mol%xyz(:, :) = matmul(eps, mol%xyz)
-            if (any(mol%periodic)) mol%lattice(:, :) = matmul(eps, mol%lattice)
-         end do
-      end do
-      !print '(3es20.13)', numgL
+          
         
       allocate (dqdr(3, mol%nat, mol%nat), dcndr(3, mol%nat, mol%nat))
       allocate (dqdL(3, 3, mol%nat), dcndL(3, 3, mol%nat))
@@ -190,7 +162,7 @@ contains
       call get_eeq_charges(mol, qat, dqdr=dqdr, dqdL=dqdL)
       call ncoord%get_cn(mol, cn, dcndr=dcndr, dcndL=dcndL)
       ! Get the analytical gradients
-      call draco%radii_adjustment(mol, qat, cn, scaled_radii, dsraddr, dsraddL, dqdr, dcndr, dqdL, dcndL)
+      call draco%radii_adjustment(mol, qat, cn, srad, dsraddr, dsraddL, dqdr, dcndr, dqdL, dcndL)
 
       if (any(abs(dsraddr - numgr) > thr2)) then
          call test_failed(error, "Gradient w.r.t r does not match")
@@ -202,16 +174,84 @@ contains
          print '(3es20.13)', dsraddr - numgr
       end if
 
-      ! if (any(abs(dsraddL - numgL) > thr2)) then
-      !    call test_failed(error, "Gradient w.r.t L does not match")
-      !    print '(a)', 'dsraddL:'
-      !    print '(3es20.13)', dsraddL
-      !    print '(a)', "numgL:"
-      !    print '(3es20.13)', numgL
-      !    print '(a)', "dsraddL - numgL:"
-      !    print '(3es20.13)', dsraddL - numgL
-      ! end if
    end subroutine test_g
+
+   !!! Does not work yet !!!
+   subroutine test_g_lattice(error, mol, draco)
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+   
+      !> Molecular structure data
+      type(structure_type), intent(inout) :: mol
+      
+      !> DRACO class
+      type(draco_type), intent(in) :: draco
+   
+      real(wp), parameter :: step = 1.0e-4_wp
+      real(wp), allocatable :: dsraddr(:, :, :), dsraddL(:, :, :), numgL(:, :, :)
+      real(wp), parameter :: unity(3, 3)  = reshape(&
+         & [1, 0, 0, 0, 1, 0, 0, 0, 1], shape(unity))
+      real(wp), allocatable :: dqdr(:, :, :), dcndr(:, :, :), dqdL(:, :, :), dcndL(:, :, :)
+      real(wp), allocatable :: qat(:), cn(:), srad(:)
+      real(wp), allocatable :: lr(:), ll(:), eps(:, :)
+      
+      integer :: ii, ic
+      real(wp), allocatable :: dpat(:, :)
+      class(ncoord_type), allocatable :: ncoord
+      call new_ncoord(ncoord, mol, cn_type="gfn")
+   
+      allocate(cn(mol%nat), qat(mol%nat), srad(mol%nat), lr(mol%nat), ll(mol%nat))
+      allocate(numgL(3, 3, mol%nat))
+      allocate(dsraddL(3, 3, mol%nat), dpat(3, mol%nat))
+      allocate(dqdL(3, 3, mol%nat), dcndL(3, 3, mol%nat))
+   
+      allocate(numgL(3, 3, mol%nat), eps(3, 3), lr(mol%nat), ll(mol%nat))
+         eps(:, :) = unity
+         do ic = 1, 3
+            do ii = 1, 3
+               eps(ii, ic) = eps(ii, ic) + step
+               mol%xyz(:, :) = matmul(eps, mol%xyz)
+               call get_eeq_charges(mol, qat)
+               call ncoord%get_cn(mol, cn)
+               if (any(mol%periodic)) mol%lattice(:, :) = matmul(eps, mol%lattice)
+               call draco%radii_adjustment(mol, qat, cn, lr)
+   
+               eps(ii, ic) = eps(ii, ic) - 2*step
+               mol%xyz(:, :) = matmul(eps, mol%xyz)
+               call get_eeq_charges(mol, qat)
+               call ncoord%get_cn(mol, cn)
+               if (any(mol%periodic)) mol%lattice(:, :) = matmul(eps, mol%lattice)
+               call draco%radii_adjustment(mol, qat, cn, ll)
+   
+               numgL(ii, ic, :) = 0.5_wp*(lr - ll)/step
+   
+               eps(ii, ic) = eps(ii, ic) + step
+               mol%xyz(:, :) = matmul(eps, mol%xyz)
+               if (any(mol%periodic)) mol%lattice(:, :) = matmul(eps, mol%lattice)
+            end do
+         end do
+   
+         allocate (dqdr(3, mol%nat, mol%nat), dcndr(3, mol%nat, mol%nat))
+         allocate (dqdL(3, 3, mol%nat), dcndL(3, 3, mol%nat))
+   
+         
+         call get_eeq_charges(mol, qat, dqdr=dqdr, dqdL=dqdL)
+         call ncoord%get_cn(mol, cn, dcndr=dcndr, dcndL=dcndL)
+         ! Get the analytical gradients
+         call draco%radii_adjustment(mol, qat, cn, srad, dsraddr, dsraddL, dqdr, dcndr, dqdL, dcndL)
+   
+         if (any(abs(dsraddL - numgL) > thr2)) then
+            call test_failed(error, "Gradient w.r.t L does not match")
+            print '(a)', 'dsraddL:'
+            print '(3es20.13)', dsraddL
+            print '(a)', "numgL:"
+            print '(3es20.13)', numgL
+            print '(a)', "dsraddL - numgL:"
+            print '(3es20.13)', dsraddL - numgL
+         end if
+   
+      end subroutine test_g_lattice
+
 
    subroutine test_r_cpcm_adjust(error)
       !> Error handling
@@ -233,7 +273,7 @@ contains
       &2.3040000000000E+00_wp]
 
       call get_structure(mol, "MB16-43", "04")
-      call new_draco(draco, mol, 'cpcm')
+      call new_draco(draco, mol, 'cpcm', 'water', 'eeq')
       call test_r_adjust(error, mol, draco, ref)
    end subroutine test_r_cpcm_adjust
 
@@ -257,7 +297,7 @@ contains
       &1.9200000000000E+00_wp]
 
       call get_structure(mol, "MB16-43", "04")
-      call new_draco(draco, mol, 'smd')
+      call new_draco(draco, mol, 'smd', 'water', 'eeq')
       call test_r_adjust(error, mol, draco, ref)
    end subroutine test_r_smd_adjust
 
@@ -281,7 +321,7 @@ contains
       &2.0480000000000E+00_wp]
 
       call get_structure(mol, "MB16-43", "04")
-      call new_draco(draco, mol, 'cosmo')
+      call new_draco(draco, mol, 'cosmo', 'water', 'eeq')
       call test_r_adjust(error, mol, draco, ref)
    end subroutine test_r_cosmo_adjust
 
@@ -296,7 +336,7 @@ contains
       type(draco_type) :: draco
 
       call get_structure(mol, "MB16-43", "04")
-      call new_draco(draco, mol, 'cpcm')
+      call new_draco(draco, mol, 'cpcm', 'water', 'eeq')
       call test_g(error, mol, draco)
    end subroutine test_gradient_cpcm
 end module test_solvation_draco

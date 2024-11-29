@@ -20,67 +20,109 @@
 !> DRACO radii scaling parameters
 module tblite_solvation_data_draco
    use mctc_env, only: wp
-   use mctc_io, only: to_number
+   use mctc_io, only: to_number, structure_type
+   use mctc_io_convert, only: aatoau, autoaa
+   !use tblite_solvation_draco_type, only: draco_type
+   use tblite_solvation_data, only: get_vdw_rad_cpcm, get_vdw_rad_smd, get_vdw_rad_cosmo
    implicit none
    private
-   public :: get_alpha_cpcm, get_shift_cpcm, get_kcn_cpcm
-   public :: get_alpha_smd, get_shift_smd, get_kcn_smd
-   public :: get_alpha_cosmo, get_shift_cosmo, get_kcn_cosmo
+   !public :: get_alpha_cpcm, get_shift_cpcm, get_kcn_cpcm
+   !public :: get_alpha_smd, get_shift_smd, get_kcn_smd
+   !public :: get_alpha_cosmo, get_shift_cosmo, get_kcn_cosmo
+   public :: get_draco_param
 
-   !>  convert bohr (a.u.) to Ångström and back
-   real(wp), parameter :: autoaa = 0.52917726_wp
-   real(wp), parameter :: aatoau = 1.0_wp/autoaa
+       
+   !real(wp), parameter :: autoaa = 0.52917726_wp
+   !real(wp), parameter :: aatoau = 1.0_wp/autoaa
+
+
+   ! !> Parameters for the DRACO scxaling function
+   ! type :: draco_parameter
+   !    !> Shift parameter for the error function (adaps scaled radii relative to the original values)
+   !    real(wp), allocatable :: shift(:)
+
+   !    !> Sensitivity of atomic radius toward change in enveronment (paramter a in error function)
+   !    real(wp), allocatable :: alpha(:)
+
+   !    !> CN dependence of the effective charge (differentiates between various bonding motifs)
+   !    real(wp), allocatable :: kcn(:)
+
+   !    !> Cutoff radius
+   !    real(wp) :: minrad
+   ! end type draco_parameter
+
 
    !> CPCM ----
-   !> Interface for getting the alpha parameter of the scaling function based on either the atomic number or symbol
-   interface get_alpha_cpcm
-      module procedure get_alpha_cpcm_num
-      module procedure get_alpha_cpcm_sym
-   end interface get_alpha_cpcm
-   !> Interface for getting the shift parameter of the scaling function based on either the atomic number or symbol
-   interface get_shift_cpcm
-      module procedure get_shift_cpcm_num
-      module procedure get_shift_cpcm_sym
-   end interface get_shift_cpcm
-   !> Interface for getting the k parameter of the scaling function based on either the atomic number or symbol
-   interface get_kcn_cpcm
-      module procedure get_kcn_cpcm_num
-      module procedure get_kcn_cpcm_sym
-   end interface get_kcn_cpcm
+   !> EEQ ----
+   ! !> Interface for getting the alpha parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_alpha_cpcm_water_eeq
+   !    module procedure get_alpha_cpcm_water_eeq_num
+   !    module procedure get_alpha_cpcm_water_eeq_sym
+   ! end interface get_alpha_cpcm_water_eeq
+   ! !> Interface for getting the shift parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_shift_cpcm_water_eeq
+   !    module procedure get_shift_cpcm_water_eeq_num
+   !    module procedure get_shift_cpcm_water_eeq_sym
+   ! end interface get_shift_cpcm_water_eeq
+   ! !> Interface for getting the k parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_kcn_cpcm_water_eeq
+   !    module procedure get_kcn_cpcm_water_eeq_num
+   !    module procedure get_kcn_cpcm_water_eeq_sym
+   ! end interface get_kcn_cpcm_water_eeq
 
-   !> SMD -----
-   !> Interface for getting the alpha parameter of the scaling function based on either the atomic number or symbol
-   interface get_alpha_smd
-      module procedure get_alpha_smd_num
-      module procedure get_alpha_smd_sym
-   end interface get_alpha_smd
-   !> Interface for getting the shift parameter of the scaling function based on either the atomic number or symbol
-   interface get_shift_smd
-      module procedure get_shift_smd_num
-      module procedure get_shift_smd_sym
-   end interface get_shift_smd
-   !> Interface for getting the k parameter of the scaling function based on either the atomic number or symbol
-   interface get_kcn_smd
-      module procedure get_kcn_smd_num
-      module procedure get_kcn_smd_sym
-   end interface get_kcn_smd
 
-   !> COSMO -----
-   !> Interface for getting the alpha parameter of the scaling function based on either the atomic number or symbol
-   interface get_alpha_cosmo
-      module procedure get_alpha_cosmo_num
-      module procedure get_alpha_cosmo_sym
-   end interface get_alpha_cosmo
-   !> Interface for getting the shift parameter of the scaling function based on either the atomic number or symbol
-   interface get_shift_cosmo
-      module procedure get_shift_cosmo_num
-      module procedure get_shift_cosmo_sym
-   end interface get_shift_cosmo
-   !> Interface for getting the k parameter of the scaling function based on either the atomic number or symbol
-   interface get_kcn_cosmo
-      module procedure get_kcn_cosmo_num
-      module procedure get_kcn_cosmo_sym
-   end interface get_kcn_cosmo
+   ! !> CEH ----
+   ! !> Interface for getting the alpha parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_alpha_cpcm_water_ceh
+   !    module procedure get_alpha_cpcm_water_ceh_num
+   !    module procedure get_alpha_cpcm_water_ceh_sym
+   ! end interface get_alpha_cpcm_water_ceh
+   ! !> Interface for getting the shift parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_shift_cpcm_water_ceh
+   !    module procedure get_shift_cpcm_water_ceh_num
+   !    module procedure get_shift_cpcm_water_ceh_sym
+   ! end interface get_shift_cpcm_water_ceh
+   ! !> Interface for getting the k parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_kcn_cpcm_water_ceh 
+   !    module procedure get_kcn_cpcm_water_ceh_num
+   !    module procedure get_kcn_cpcm_water_ceh_sym
+   ! end interface get_kcn_cpcm_water_ceh
+
+
+
+   ! !> SMD -----
+   ! !> Interface for getting the alpha parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_alpha_smd
+   !    module procedure get_alpha_smd_num
+   !    module procedure get_alpha_smd_sym
+   ! end interface get_alpha_smd
+   ! !> Interface for getting the shift parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_shift_smd
+   !    module procedure get_shift_smd_num
+   !    module procedure get_shift_smd_sym
+   ! end interface get_shift_smd
+   ! !> Interface for getting the k parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_kcn_smd
+   !    module procedure get_kcn_smd_num
+   !    module procedure get_kcn_smd_sym
+   ! end interface get_kcn_smd
+
+   ! !> COSMO -----
+   ! !> Interface for getting the alpha parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_alpha_cosmo
+   !    module procedure get_alpha_cosmo_num
+   !    module procedure get_alpha_cosmo_sym
+   ! end interface get_alpha_cosmo
+   ! !> Interface for getting the shift parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_shift_cosmo
+   !    module procedure get_shift_cosmo_num
+   !    module procedure get_shift_cosmo_sym
+   ! end interface get_shift_cosmo
+   ! !> Interface for getting the k parameter of the scaling function based on either the atomic number or symbol
+   ! interface get_kcn_cosmo
+   !    module procedure get_kcn_cosmo_num
+   !    module procedure get_kcn_cosmo_sym
+   ! end interface get_kcn_cosmo
 
    !> CPCM ####################################################################
    !> EEQ !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -263,6 +305,188 @@ module tblite_solvation_data_draco
    &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
    &0.0000_wp, 0.0000_wp]
 
+   !> CEH !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   !> Water
+   real(wp), parameter :: ceh_prefac_water_cpcm(94) = [ &
+   &-0.65904013_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -0.00358454_wp, -0.00342745_wp, -0.07007118_wp, &
+   &0.68512698_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.30653269_wp, &
+   &0.38485040_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -0.00821188_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_expo_water_cpcm(94) = [ &
+   &0.21176816_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -28.62823797_wp, -13.35311152_wp, -6.67930003_wp, &
+   &-0.78166202_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, -0.32680996_wp, &
+   &-1.04851220_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -1.91997695_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_k_water_cpcm(94) = [ &
+   &0.50005327_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 22.90527785_wp, 9.70091632_wp, 2.91961744_wp, &
+   &1.19307832_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.23057460_wp, &
+   &1.42820209_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 144.34185372_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+
+   !> Other solvents
+   real(wp), parameter :: ceh_prefac_other_solvents_cpcm(94) = [ &
+   &0.01613269_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -1.13947112_wp, -0.01149207_wp, 0.02851381_wp, &
+   &8.45611324_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.13877436_wp, &
+   &0.59185505_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.08267757_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_expo_other_solvents_cpcm(94) = [ &
+   &1.81633871_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -0.09164275_wp, 10.33355847_wp, 17.22252296_wp, &
+   &0.08444314_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 2.44349653_wp, &
+   &-0.46506398_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -2.86835778_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_k_other_solvents_cpcm(94) = [ &
+   &-64.69116297_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -0.16536648_wp, 10.05392092_wp, -10.43841191_wp, &
+   &-1.03597345_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.12537767_wp, &
+   &-0.96151019_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 17.76076228_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_o_shift_other_solvents_cpcm(94) = [ &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 1.38447722_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+
+  
+
    !> SMD #####################################################################
    !> EEQ !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
    !> Water
@@ -443,6 +667,189 @@ module tblite_solvation_data_draco
    &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
    &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
    &0.0000_wp, 0.0000_wp]
+
+
+   !> CEH !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   !> Water
+   real(wp), parameter :: ceh_prefac_water_smd(94) = [ &
+   &0.13278187_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -0.00146812_wp, 0.00000488_wp, -0.02124967_wp, &
+   &0.25427486_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.01478035_wp, &
+   &0.03217447_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -0.00207840_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_expo_water_smd(94) = [ &
+   &-0.41815931_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -32.69993244_wp, 1090.06514910_wp, -5.49813787_wp, &
+   &-0.37380230_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 5.63040203_wp, &
+   &2.09115155_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -109.83484932_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_k_water_smd(94) = [ &
+   &-5.84406187_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 12.76232179_wp, -2248.82616675_wp, -1.92880979_wp, &
+   &2.40865454_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 3.65172475_wp, &
+   &-1.53099622_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 292.82961749_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+
+   !> Other solvents
+   real(wp), parameter :: ceh_prefac_other_solvents_smd(94) = [ &
+   &0.01775790_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -1.13710910_wp, -0.00890536_wp, 0.01997734_wp, &
+   &8.36560123_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.14404919_wp, &
+   &0.91753417_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -0.03312601_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_expo_other_solvents_smd(94) = [ &
+   &-8.08396836_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -0.05604955_wp, 8.86841876_wp, 14.59911082_wp, &
+   &0.08033544_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 2.58057820_wp, &
+   &-0.26450382_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -4.06137021_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_k_other_solvents_smd(94) = [ &
+   &-90.01967387_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -0.19357272_wp, 10.60471580_wp, -17.03013639_wp, &
+   &-1.03974451_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, -0.24299494_wp, &
+   &-0.63375885_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 10.89572156_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_o_shift_other_solvents_smd(94) = [ &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 1.46342898_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+
+
 
    !> COSMO ###################################################################
    !> EEQ !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -625,175 +1032,676 @@ module tblite_solvation_data_draco
    &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
    &0.0000_wp, 0.0000_wp]
 
+   !> CEH !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   !> Water
+   real(wp), parameter :: ceh_prefac_water_cosmo(94) = [ &
+   &-0.24801297_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.00126248_wp, 0.00645905_wp, 0.12419660_wp, &
+   &0.90506526_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.35099629_wp, &
+   &0.38050098_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.71132602_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_expo_water_cosmo(94) = [ &
+   &0.53283215_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 88.24181656_wp, 2.27609470_wp, 3.25592667_wp, &
+   &-0.60743678_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, -0.36429247_wp, &
+   &-1.09830618_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -0.19827260_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_k_water_cosmo(94) = [ &
+   &3.69308631_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -58.55269459_wp, -4.15666904_wp, -2.46255510_wp, &
+   &1.06924147_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.14230787_wp, &
+   &1.30153465_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -2.60769421_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+
+   !> Other Solvents
+   real(wp), parameter :: ceh_prefac_other_solvents_cosmo(94) = [ &
+   &0.02142668_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -1.18089126_wp, -0.01628084_wp, 0.02812814_wp, &
+   &0.02091575_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.17963303_wp, &
+   &0.54454077_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.10732460_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_expo_other_solvents_cosmo(94) = [ &
+   &4.22515708_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -0.09004890_wp, 8.99620447_wp, 15.25108820_wp, &
+   &19.67837190_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 1.84853007_wp, &
+   &-0.45429384_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, -2.56660951_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_k_other_solvents_cosmo(94) = [ &
+   &-39.10764607_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, -0.14714527_wp, 5.18096498_wp, -8.96711125_wp, &
+   &-10.90411686_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, -0.00707453_wp, &
+   &-0.98650104_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 4.89168731_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+   real(wp), parameter :: ceh_o_shift_other_solvents_cosmo(94) = [ &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 1.46529128_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp, 0.0000_wp, 0.0000_wp, &
+   &0.0000_wp, 0.0000_wp]
+
+
    !!!!!!!!!!!!!
 
 contains
 
-   !!! CPCM -----
-   !> Get the alpha parameter of the error function for cpcm based on atomic number
-   elemental function get_alpha_cpcm_num(number) result(alpha)
-      integer, intent(in) :: number
-      real(wp) :: alpha
+!> Get DRACO parameters
+subroutine get_draco_param(defaultradii, minrad, kcn, alpha, shift, hbond_acidity, O_shift, &
+      & radtype, solvtype, chrgtype, mol)
+   real(wp), allocatable, intent(out) :: defaultradii(:) 
 
-      alpha = eeq_prefac_water_cpcm(number)
+   real(wp), intent(out) :: minrad
 
-   end function get_alpha_cpcm_num
+   real(wp), allocatable, intent(out) :: kcn(:)
 
-   !> Get the alpha parameter of the error function for cpcm based on atomic symbol
-   elemental function get_alpha_cpcm_sym(symbol) result(alpha)
-      !> Element symbol
-      character(len=*), intent(in) :: symbol
-      !> Alpha parameter
-      real(wp) :: alpha
+   real(wp), allocatable, intent(out) :: alpha(:)
 
-      alpha = eeq_prefac_water_cpcm(to_number(symbol))
-   end function get_alpha_cpcm_sym
+   real(wp), allocatable, intent(out) :: shift(:) 
 
-   !> Get the shift parameter of the error function for cpcm based on atomic number
-   elemental function get_shift_cpcm_num(number) result(shift)
-      integer, intent(in) :: number
-      real(wp) :: shift
+   real(wp), intent(out) :: hbond_acidity
 
-      shift = eeq_expo_water_cpcm(number)
+   real(wp), allocatable, intent(out)  :: O_shift(:)
 
-   end function get_shift_cpcm_num
+   !> Solvation model that defines the intital radii
+   character(len=*), intent(in) :: radtype
 
-   !> Get the shift parameter of the error function for cpcm based on atomic symbol
-   elemental function get_shift_cpcm_sym(symbol) result(shift)
-      character(len=*), intent(in) :: symbol
-      real(wp) :: shift
+   !> Solvent
+   character(len=*), intent(in) :: solvtype
 
-      shift = eeq_expo_water_cpcm(to_number(symbol))
-   end function get_shift_cpcm_sym
+   !> Charge model
+   character(len=*), intent(in) :: chrgtype
 
-   !> Get the k parameter of the error function for cpcm based on atomic number
-   elemental function get_kcn_cpcm_num(number) result(kcn)
-      integer, intent(in) :: number
-      real(wp) :: kcn
+   !> Molecuar structure type
+   type(structure_type), intent(in) :: mol
 
-      kcn = eeq_k_water_cpcm(number)
 
-   end function get_kcn_cpcm_num
+   allocate(defaultradii(mol%nat), kcn(mol%nat), alpha(mol%nat), shift(mol%nat), O_shift(mol%nat)) 
 
-   !> Get the k parameter of the error function for cpcm based on atomic symbol
-   elemental function get_kcn_cpcm_sym(symbol) result(kcn)
-      character(len=*), intent(in) :: symbol
-      real(wp) :: kcn
+   select case (radtype)
+   case ('cpcm')
+       defaultradii = get_vdw_rad_cpcm(mol%num)
+       minrad = 0.4_wp
+       select case (solvtype)
+       case ('water')
+         hbond_acidity = 0.82_wp
+         select case (chrgtype)   
+         case ('eeq')      
+            kcn = eeq_k_water_cpcm(mol%num)
+            alpha = eeq_prefac_water_cpcm(mol%num)
+            shift = eeq_expo_water_cpcm(mol%num)
+            O_shift = 0.0_wp
+         case ('ceh')      
+            kcn = ceh_k_water_cpcm(mol%num)
+            alpha = ceh_prefac_water_cpcm(mol%num)
+            shift = ceh_expo_water_cpcm(mol%num)
+            O_shift = 0.0_wp
+         end select
+      case ('nonwater')
+         hbond_acidity = 0.00_wp ! Dummy value as not solvent input currently available
+         select case (chrgtype)   
+         case ('eeq')      
+            kcn = eeq_k_other_solvents_cpcm(mol%num)
+            alpha = eeq_prefac_other_solvents_cpcm(mol%num)
+            shift = eeq_expo_other_solvents_cpcm(mol%num)
+            O_shift  = eeq_o_shift_other_solvents_cpcm(mol%num)
+         case ('ceh')      
+            kcn = ceh_k_other_solvents_cpcm(mol%num)
+            alpha = ceh_prefac_other_solvents_cpcm(mol%num)
+            shift = ceh_expo_other_solvents_cpcm(mol%num)
+            O_shift  = eeq_o_shift_other_solvents_cpcm(mol%num)
+         end select
+      end select
+   
+   case ('smd')
+      defaultradii = get_vdw_rad_smd(mol%num)
+      minrad = 0.5_wp
+      select case (solvtype)
+      case ('water')
+         hbond_acidity = 0.82_wp
+         select case (chrgtype)   
+         case ('eeq')      
+            kcn = eeq_k_water_smd(mol%num) 
+            alpha = eeq_prefac_water_smd(mol%num)
+            shift = eeq_expo_water_smd(mol%num)
+            O_shift = 0.0_wp
+         case ('ceh')      
+            kcn = ceh_k_water_smd(mol%num)
+            alpha = ceh_prefac_water_smd(mol%num)
+            shift = ceh_expo_water_smd(mol%num)
+            O_shift = 0.0_wp
+         end select
+      case ('nonwater')
+         hbond_acidity = 0.00_wp ! Dummy value as not solvent input currently available
+         select case (chrgtype)   
+         case ('eeq')      
+            kcn = eeq_k_other_solvents_smd(mol%num)
+            alpha = eeq_prefac_other_solvents_smd(mol%num)
+            shift = eeq_expo_other_solvents_smd(mol%num)
+            O_shift  = eeq_o_shift_other_solvents_smd(mol%num)
+         case ('ceh')      
+            kcn = ceh_k_other_solvents_smd(mol%num)
+            alpha = ceh_prefac_other_solvents_smd(mol%num)
+            shift = ceh_expo_other_solvents_smd(mol%num)
+            O_shift  = eeq_o_shift_other_solvents_smd(mol%num)
+         end select
+      end select
+   case ('cosmo')
+      defaultradii = get_vdw_rad_cosmo(mol%num)
+      minrad = 0.4_wp
+      select case (solvtype)
+      case ('water')
+         hbond_acidity = 0.82_wp
+         select case (chrgtype)   
+         case ('eeq')      
+            kcn = eeq_k_water_cosmo(mol%num) 
+            alpha = eeq_prefac_water_cosmo(mol%num)
+            shift = eeq_expo_water_cosmo(mol%num)
+            O_shift = 0.0_wp
+         case ('ceh')      
+            kcn = ceh_k_water_cosmo(mol%num)
+            alpha = ceh_prefac_water_cosmo(mol%num)
+            shift = ceh_expo_water_cosmo(mol%num)
+            O_shift = 0.0_wp
+         end select
+      case ('nonwater')
+         hbond_acidity = 0.00_wp ! Dummy value as not solvent input currently available
+         select case (chrgtype)   
+         case ('eeq')      
+            kcn = eeq_k_other_solvents_cosmo(mol%num)
+            alpha = eeq_prefac_other_solvents_cosmo(mol%num)
+            shift = eeq_expo_other_solvents_cosmo(mol%num)
+            O_shift  = eeq_o_shift_other_solvents_cosmo(mol%num)
+         case ('ceh')      
+            kcn = ceh_k_other_solvents_cosmo(mol%num)
+            alpha = ceh_prefac_other_solvents_cosmo(mol%num)
+            shift = ceh_expo_other_solvents_cosmo(mol%num)
+            O_shift  = eeq_o_shift_other_solvents_cosmo(mol%num)
+         end select
+      end select
+   end select
 
-      kcn = eeq_k_water_cpcm(to_number(symbol))
+end subroutine get_draco_param
 
-   end function get_kcn_cpcm_sym
 
-    !!! SMD -----
-   !> Get the alpha parameter of the error function for smd based atomic number
-   elemental function get_alpha_smd_num(number) result(alpha)
-      integer, intent(in) :: number
-      real(wp) :: alpha
 
-      alpha = eeq_prefac_water_smd(number)
+!    !!! CPCM -----
+!    !!! WATER
+!    !!! EEQ -----
+!    !> Get the alpha parameter of the error function for cpcm based on atomic number
+!    elemental function get_alpha_cpcm_water_eeq_num(number) result(alpha)
+!       integer, intent(in) :: number
+!       real(wp) :: alpha
 
-   end function get_alpha_smd_num
+!       alpha = eeq_prefac_water_cpcm(number)
 
-   !> Get the alpha parameter of the error function for smd based atomic symbol
-   elemental function get_alpha_smd_sym(symbol) result(alpha)
-      character(len=*), intent(in) :: symbol
-      real(wp) :: alpha
+!    end function get_alpha_cpcm_water_eeq_num
 
-      alpha = eeq_prefac_water_smd(to_number(symbol))
+!    !> Get the alpha parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_alpha_cpcm_water_eeq_sym(symbol) result(alpha)
+!       !> Element symbol
+!       character(len=*), intent(in) :: symbol
+!       !> Alpha parameter
+!       real(wp) :: alpha
 
-   end function get_alpha_smd_sym
+!       alpha = eeq_prefac_water_cpcm(to_number(symbol))
+!    end function get_alpha_cpcm_water_eeq_sym
 
-   !> Get the shift parameter of the error function for smd based on atomic number
-   elemental function get_shift_smd_num(number) result(shift)
-      integer, intent(in) :: number
-      real(wp) :: shift
+!    !> Get the shift parameter of the error function for cpcm based on atomic number
+!    elemental function get_shift_cpcm_water_eeq_num(number) result(shift)
+!       integer, intent(in) :: number
+!       real(wp) :: shift
 
-      shift = eeq_expo_water_smd(number)
+!       shift = eeq_expo_water_cpcm(number)
 
-   end function get_shift_smd_num
+!    end function get_shift_cpcm_water_eeq_num
 
-   !> Get the shift parameter of the error function for smd based on atomic symbol
-   elemental function get_shift_smd_sym(symbol) result(shift)
-      character(len=*), intent(in) :: symbol
-      real(wp) :: shift
+!    !> Get the shift parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_shift_cpcm_water_eeq_sym(symbol) result(shift)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: shift
 
-      shift = eeq_expo_water_smd(to_number(symbol))
+!       shift = eeq_expo_water_cpcm(to_number(symbol))
+!    end function get_shift_cpcm_water_eeq_sym
 
-   end function get_shift_smd_sym
+!    !> Get the k parameter of the error function for cpcm based on atomic number
+!    elemental function get_kcn_cpcm_water_eeq_num(number) result(kcn)
+!       integer, intent(in) :: number
+!       real(wp) :: kcn
 
-   !> Get the k parameter of the error function for smd based on atomic number
-   elemental function get_kcn_smd_num(number) result(kcn)
-      integer, intent(in) :: number
-      real(wp) :: kcn
+!       kcn = eeq_k_water_cpcm(number)
 
-      kcn = eeq_k_water_smd(number)
+!    end function get_kcn_cpcm_water_eeq_num
 
-   end function get_kcn_smd_num
+!    !> Get the k parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_kcn_cpcm_water_eeq_sym(symbol) result(kcn)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: kcn
 
-   !> Get the k parameter of the error function for smd based on atomic symbol
-   elemental function get_kcn_smd_sym(symbol) result(kcn)
-      character(len=*), intent(in) :: symbol
-      real(wp) :: kcn
+!       kcn = eeq_k_water_cpcm(to_number(symbol))
 
-      kcn = eeq_k_water_smd(to_number(symbol))
+!    end function get_kcn_cpcm_water_eeq_sym
 
-   end function get_kcn_smd_sym
+!    !!! CEH -----
+!    !> Get the alpha parameter of the error function for cpcm based on atomic number
+!    elemental function get_alpha_cpcm_water_ceh_num(number) result(alpha)
+!       integer, intent(in) :: number
+!       real(wp) :: alpha
 
-    !!! COSMO -----
-   !> Get the alpha parameter of the error function for cosmo based atomic number
-   elemental function get_alpha_cosmo_num(number) result(alpha)
-      integer, intent(in) :: number
-      real(wp) :: alpha
+!       alpha = ceh_prefac_water_cpcm(number)
 
-      alpha = eeq_prefac_water_cosmo(number)
+!    end function get_alpha_cpcm_water_ceh_num
 
-   end function get_alpha_cosmo_num
+!    !> Get the alpha parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_alpha_cpcm_water_ceh_sym(symbol) resul
+! end function get_kcn_cpcm_other_solvents_eeq_num
 
-   !> Get the alpha parameter of the error function for cosmo based atomic symbol
-   elemental function get_alpha_cosmo_sym(symbol) result(alpha)
-      character(len=*), intent(in) :: symbol
-      real(wp) :: alpha
+! !> Get the k parameter of the error function for cpcm based on atomic symbol
+! elemental function get_kcn_cpcm_other_solvents_eeq_sym(symbol) result(kcn)
+!    character(len=*), intent(in) :: symbol
+!    real(wp) :: kcn
 
-      alpha = eeq_prefac_water_cosmo(to_number(symbol))
+!    kcn = eeq_k_other_solvents_cpcm(to_number(symbol))
 
-   end function get_alpha_cosmo_sym
+! end function get_kcn_cpcm_other_solvents_eeq_sym
 
-   !> Get the shift parameter of the error function for cosmo based on atomic number
-   elemental function get_shift_cosmo_num(number) result(shift)
-      integer, intent(in) :: number
-      real(wp) :: shift
+! !!! CEH -----t(alpha)
+!       !> Element symbol
+!       character(len=*), intent(in) :: symbol
+!       !> Alpha parameter
+!       real(wp) :: alpha
 
-      shift = eeq_expo_water_cosmo(number)
+!       alpha = ceh_prefac_water_cpcm(to_number(symbol))
+!    end function get_alpha_cpcm_water_ceh_sym
 
-   end function get_shift_cosmo_num
+!    !> Get the shift parameter of the error function for cpcm based on atomic number
+!    elemental function get_shift_cpcm_water_ceh_num(number) result(shift)
+!       integer, intent(in) :: number
+!       real(wp) :: shift
 
-   !> Get the shift parameter of the error function for cosmo based on atomic symbol
-   elemental function get_shift_cosmo_sym(symbol) result(shift)
-      character(len=*), intent(in) :: symbol
-      real(wp) :: shift
+!       shift = ceh_expo_water_cpcm(number)
 
-      shift = eeq_expo_water_cosmo(to_number(symbol))
+!    end function get_shift_cpcm_water_ceh_num
 
-   end function get_shift_cosmo_sym
+!    !> Get the shift parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_shift_cpcm_water_ceh_sym(symbol) result(shift)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: shift
 
-   !> Get the k parameter of the error function for cosmo based on atomic number
-   elemental function get_kcn_cosmo_num(number) result(kcn)
-      integer, intent(in) :: number
-      real(wp) :: kcn
+!       shift = ceh_expo_water_cpcm(to_number(symbol))
+!    end function get_shift_cpcm_water_ceh_sym
 
-      kcn = eeq_k_water_cosmo(number)
+!    !> Get the k parameter of the error function for cpcm based on atomic number
+!    elemental function get_kcn_cpcm_water_ceh_num(number) result(kcn)
+!       integer, intent(in) :: number
+!       real(wp) :: kcn
 
-   end function get_kcn_cosmo_num
+!       kcn = ceh_k_water_cpcm(number)
 
-   !> Get the k parameter of the error function for cosmo based on atomic symbol
-   elemental function get_kcn_cosmo_sym(symbol) result(kcn)
-      character(len=*), intent(in) :: symbol
-      real(wp) :: kcn
+!    end function get_kcn_cpcm_water_ceh_num
 
-      kcn = eeq_k_water_cosmo(to_number(symbol))
+!    !> Get the k parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_kcn_cpcm_water_ceh_sym(symbol) result(kcn)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: kcn
 
-      !-999
+!       kcn = ceh_k_water_cpcm(to_number(symbol))
 
-   end function get_kcn_cosmo_sym
+!    end function get_kcn_cpcm_water_ceh_sym
+
+!    !!! OTHER SOLVENTS
+!    !!! EEQ -----
+!    !> Get the alpha parameter of the error function for cpcm based on atomic number
+!    elemental function get_alpha_cpcm_other_solvents_eeq_num(number) result(alpha)
+!       integer, intent(in) :: number
+!       real(wp) :: alpha
+
+!       alpha = eeq_prefac_other_solvents_cpcm(number)
+
+!    end function get_alpha_cpcm_other_solvents_eeq_num
+
+!    !> Get the alpha parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_alpha_cpcm_other_solvents_eeq_sym(symbol) result(alpha)
+!       !> Element symbol
+!       character(len=*), intent(in) :: symbol
+!       !> Alpha parameter
+!       real(wp) :: alpha
+
+!       alpha = eeq_prefac_other_solvents_cpcm(to_number(symbol))
+!    end function get_alpha_cpcm_other_solvents_eeq_sym
+
+!    !> Get the shift parameter of the error function for cpcm based on atomic number
+!    elemental function get_shift_cpcm_other_solvents_eeq_num(number) result(shift)
+!       integer, intent(in) :: number
+!       real(wp) :: shift
+
+!       shift = eeq_expo_other_solvents_cpcm(number)
+
+!    end function get_shift_cpcm_other_solvents_eeq_num
+
+!    !> Get the shift parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_shift_cpcm_other_solvents_eeq_sym(symbol) result(shift)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: shift
+
+!       shift = eeq_expo_other_solvents_cpcm(to_number(symbol))
+!    end function get_shift_cpcm_other_solvents_eeq_sym
+
+!    !> Get the k parameter of the error function for cpcm based on atomic number
+!    elemental function get_kcn_cpcm_other_solvents_eeq_num(number) result(kcn)
+!       integer, intent(in) :: number
+!       real(wp) :: kcn
+
+!       kcn = eeq_k_other_solvents_cpcm(number)
+
+!    end function get_kcn_cpcm_other_solvents_eeq_num
+
+!    !> Get the k parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_kcn_cpcm_other_solvents_eeq_sym(symbol) result(kcn)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: kcn
+
+!       kcn = eeq_k_other_solvents_cpcm(to_number(symbol))
+
+!    end function get_kcn_cpcm_other_solvents_eeq_sym
+
+!    !!! CEH -----
+!    !> Get the alpha parameter of the error function for cpcm based on atomic number
+!    elemental function get_alpha_cpcm_other_solvents_ceh_num(number) result(alpha)
+!       integer, intent(in) :: number
+!       real(wp) :: alpha
+
+!       alpha = ceh_prefac_other_solvents_cpcm(number)
+
+!    end function get_alpha_cpcm_other_solvents_ceh_num
+
+!    !> Get the alpha parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_alpha_cpcm_other_solvents_ceh_sym(symbol) result(alpha)
+!       !> Element symbol
+!       character(len=*), intent(in) :: symbol
+!       !> Alpha parameter
+!       real(wp) :: alpha
+
+!       alpha = ceh_prefac_other_solvents_cpcm(to_number(symbol))
+!    end function get_alpha_cpcm_other_solvents_ceh_sym
+
+!    !> Get the shift parameter of the error function for cpcm based on atomic number
+!    elemental function get_shift_cpcm_other_solvents_ceh_num(number) result(shift)
+!       integer, intent(in) :: number
+!       real(wp) :: shift
+
+!       shift = ceh_expo_other_solvents_cpcm(number)
+
+!    end function get_shift_cpcm_other_solvents_ceh_num
+
+!    !> Get the shift parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_shift_cpcm_other_solvents_ceh_sym(symbol) result(shift)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: shift
+
+!       shift = ceh_expo_other_solvents_cpcm(to_number(symbol))
+!    end function get_shift_cpcm_other_solvents_ceh_sym
+
+!    !> Get the k parameter of the error function for cpcm based on atomic number
+!    elemental function get_kcn_cpcm_other_solvents_ceh_num(number) result(kcn)
+!       integer, intent(in) :: number
+!       real(wp) :: kcn
+
+!       kcn = ceh_k_other_solvents_cpcm(number)
+
+!    end function get_kcn_cpcm_other_solvents_ceh_num
+
+!    !> Get the k parameter of the error function for cpcm based on atomic symbol
+!    elemental function get_kcn_cpcm_water_ceh_sym(symbol) result(kcn)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: kcn
+
+!       kcn = ceh_k_other_solvents_cpcm(to_number(symbol))
+
+!    end function get_kcn_cpcm_other_solvents_ceh_sym
+
+
+!     !!! SMD -----
+!    !> Get the alpha parameter of the error function for smd based atomic number
+!    elemental function get_alpha_smd_num(number) result(alpha)
+!       integer, intent(in) :: number
+!       real(wp) :: alpha
+
+!       alpha = eeq_prefac_water_smd(number)
+
+!    end function get_alpha_smd_num
+
+!    !> Get the alpha parameter of the error function for smd based atomic symbol
+!    elemental function get_alpha_smd_sym(symbol) result(alpha)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: alpha
+
+!       alpha = eeq_prefac_water_smd(to_number(symbol))
+
+!    end function get_alpha_smd_sym
+
+!    !> Get the shift parameter of the error function for smd based on atomic number
+!    elemental function get_shift_smd_num(number) result(shift)
+!       integer, intent(in) :: number
+!       real(wp) :: shift
+
+!       shift = eeq_expo_water_smd(number)
+
+!    end function get_shift_smd_num
+
+!    !> Get the shift parameter of the error function for smd based on atomic symbol
+!    elemental function get_shift_smd_sym(symbol) result(shift)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: shift
+
+!       shift = eeq_expo_water_smd(to_number(symbol))
+
+!    end function get_shift_smd_sym
+
+!    !> Get the k parameter of the error function for smd based on atomic number
+!    elemental function get_kcn_smd_num(number) result(kcn)
+!       integer, intent(in) :: number
+!       real(wp) :: kcn
+
+!       kcn = eeq_k_water_smd(number)
+
+!    end function get_kcn_smd_num
+
+!    !> Get the k parameter of the error function for smd based on atomic symbol
+!    elemental function get_kcn_smd_sym(symbol) result(kcn)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: kcn
+
+!       kcn = eeq_k_water_smd(to_number(symbol))
+
+!    end function get_kcn_smd_sym
+
+!     !!! COSMO -----
+!    !> Get the alpha parameter of the error function for cosmo based atomic number
+!    elemental function get_alpha_cosmo_num(number) result(alpha)
+!       integer, intent(in) :: number
+!       real(wp) :: alpha
+
+!       alpha = eeq_prefac_water_cosmo(number)
+
+!    end function get_alpha_cosmo_num
+
+!    !> Get the alpha parameter of the error function for cosmo based atomic symbol
+!    elemental function get_alpha_cosmo_sym(symbol) result(alpha)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: alpha
+
+!       alpha = eeq_prefac_water_cosmo(to_number(symbol))
+
+!    end function get_alpha_cosmo_sym
+
+!    !> Get the shift parameter of the error function for cosmo based on atomic number
+!    elemental function get_shift_cosmo_num(number) result(shift)
+!       integer, intent(in) :: number
+!       real(wp) :: shift
+
+!       shift = eeq_expo_water_cosmo(number)
+
+!    end function get_shift_cosmo_num
+
+!    !> Get the shift parameter of the error function for cosmo based on atomic symbol
+!    elemental function get_shift_cosmo_sym(symbol) result(shift)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: shift
+
+!       shift = eeq_expo_water_cosmo(to_number(symbol))
+
+!    end function get_shift_cosmo_sym
+
+!    !> Get the k parameter of the error function for cosmo based on atomic number
+!    elemental function get_kcn_cosmo_num(number) result(kcn)
+!       integer, intent(in) :: number
+!       real(wp) :: kcn
+
+!       kcn = eeq_k_water_cosmo(number)
+
+!    end function get_kcn_cosmo_num
+
+!    !> Get the k parameter of the error function for cosmo based on atomic symbol
+!    elemental function get_kcn_cosmo_sym(symbol) result(kcn)
+!       character(len=*), intent(in) :: symbol
+!       real(wp) :: kcn
+
+!       kcn = eeq_k_water_cosmo(to_number(symbol))
+
+!       !-999
+
+!    end function get_kcn_cosmo_sym
 
 end module tblite_solvation_data_draco

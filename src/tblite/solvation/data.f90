@@ -30,6 +30,7 @@ module tblite_solvation_data
 
    public :: get_vdw_rad_d3, get_vdw_rad_cosmo, get_vdw_rad_bondi, get_vdw_rad_cpcm, get_vdw_rad_smd
    public :: get_solvent_data
+   public :: vdw_rad_cpcm, vdw_rad_smd, vdw_rad_cosmo
 
 
    !> Solvent specific parameters

@@ -29,13 +29,13 @@ module tblite_solvation_draco_calc
         
         
         
-        subroutine radii_adjustment(self, mol, q, cn, scaled_radii) ! Subroutine that rescales the radii, fo now implemented only for water as a solvent
+        subroutine radii_adjustment(self, mol, q, cn, srad) ! Subroutine that rescales the radii, fo now implemented only for water as a solvent
             type(structure_type), intent(in) :: mol
             real(wp), intent(in), dimension(:) :: q
             real(wp), intent(in), dimension(:) :: cn
             type(TDraco) :: TDracoInstance
 
-            real(wp), dimension(mol%nat), intent(inout) :: scaled_radii 
+            real(wp), dimension(mol%nat), intent(inout) :: srad 
             real(wp), dimension(mol%nat) :: f_scale 
             real(wp), dimension(mol%nat) :: qeff
             real(wp) :: a_i
@@ -58,17 +58,17 @@ module tblite_solvation_draco_calc
 
                 f_scale(i) = erf( a_i * (qeff(i) - b_i) ) + 1
 
-                scaled_radii(i) = TDracoInstance%defaultradii(i) * f_scale(i) 
+                srad(i) = TDracoInstance%defaultradii(i) * f_scale(i) 
             end do
 
-            write(*, *) 'Scaled radii: ', scaled_radii 
+            write(*, *) 'Scaled radii: ', srad 
 
             ! header for print
             write(*, '(A, 3X, A, 3X, A, 3X, A)') 'Atom', 'Radii', 'Scaling', 'Scaled Radii'
 
             ! formatted printroutine. print atom number, radii, scaling, scaled radii
             do i = 1, mol%nat
-                write(*, '(I3, 3F10.4)') mol%id(i), TDracoInstance%defaultradii(i), f_scale(i), scaled_radii(i)
+                write(*, '(I3, 3F10.4)') mol%id(i), TDracoInstance%defaultradii(i), f_scale(i), srad(i)
             end do
 
         end subroutine radii_adjustment

@@ -24,10 +24,12 @@ module tblite_solvation_draco_type
    use mctc_io_constants, only: pi
    use mctc_io, only: structure_type
    use mctc_io, only: toNumber => to_number
-   use tblite_solvation_data_draco, only: get_alpha_cpcm, get_shift_cpcm, get_kcn_cpcm
-   use tblite_solvation_data_draco, only: get_alpha_smd, get_shift_smd, get_kcn_smd
-   use tblite_solvation_data_draco, only: get_alpha_cosmo, get_shift_cosmo, get_kcn_cosmo
-   use tblite_solvation_data
+  ! use tblite_solvation_data_draco, only: get_alpha_cpcm, get_shift_cpcm, get_kcn_cpcm
+  ! use tblite_solvation_data_draco, only: get_alpha_smd, get_shift_smd, get_kcn_smd
+  ! use tblite_solvation_data_draco, only: get_alpha_cosmo, get_shift_cosmo, get_kcn_cosmo
+   use tblite_solvation_data, only: get_vdw_rad_cpcm, get_vdw_rad_smd, get_vdw_rad_cosmo
+   use tblite_solvation_data_draco, only: get_draco_param
+   ! use tblite_solvation_data
    implicit none
    private
    public :: draco_type, new_draco
@@ -46,6 +48,12 @@ module tblite_solvation_draco_type
       !> CN dependence of the effective charge (differentiates between various bonding motifs)
       real(wp), allocatable :: kcn(:)
 
+      !> Abraham's hydrogen bond acidity 
+      real(wp) :: hbond_acidity
+
+      !> Oxygen shift
+      real(wp), allocatable :: O_shift(:)
+
       !> Cutoff radius
       real(wp) :: minrad
 
@@ -57,45 +65,32 @@ module tblite_solvation_draco_type
    end type draco_type
 
 contains
-   subroutine new_draco(self, mol, radtype) ! Gets the default radii based on solvation model
-      !> DRACO trype
-      class(draco_type), intent(out) :: self
+
+   subroutine new_draco(self, mol, radtype, solvtype, chrgtype) ! Gets the default radii based on solvation model
+      !!> DRACO trype
+      type(draco_type), intent(inout) :: self 
 
       !> Solvation model that defines the intital radii
       character(len=*), intent(in) :: radtype
 
+      !> Solvent
+      character(len=*), intent(in) :: solvtype
+
+      !> Charge model
+      character(len=*), intent(in) :: chrgtype
+
       !> Molecuar structure type
       type(structure_type), intent(in) :: mol
 
+      !self%defaultradii = get_vdw_rad_cpcm(mol%num)
+      call get_draco_param(self%defaultradii, self%minrad, self%kcn, self%alpha, &
+         & self%shift, self%hbond_acidity, self%O_shift, radtype, solvtype, chrgtype, mol) 
 
-      select case (radtype)
-      case ('cpcm')
-          self%defaultradii = get_vdw_rad_cpcm(mol%num)
-          self%kcn = get_kcn_cpcm(mol%num)
-          self%alpha = get_alpha_cpcm(mol%num)
-          self%shift = get_shift_cpcm(mol%num)
-
-          self%minrad = 0.4_wp
-      case ('smd')
-          self%defaultradii = get_vdw_rad_smd(mol%num)
-          self%kcn = get_kcn_smd(mol%num)
-          self%alpha = get_alpha_smd(mol%num)
-          self%shift = get_shift_smd(mol%num)
-
-          self%minrad = 0.5_wp
-      case ('cosmo')
-          self%defaultradii = get_vdw_rad_cosmo(mol%num)
-          self%kcn = get_kcn_cosmo(mol%num)
-          self%alpha = get_alpha_cosmo(mol%num)
-          self%shift = get_shift_cosmo(mol%num)
-
-          self%minrad = 0.4_wp
-      end select
    end subroutine new_draco
 
 
    !> Subroutine that rescales the radii, for now implemented only for water as a solvent
-   subroutine radii_adjustment(self, mol, q, cn, scaled_radii, dsraddr, dsraddL, dqdr, dcndr, dqdL, dcndL)
+   subroutine radii_adjustment(self, mol, q, cn, srad, dsraddr, dsraddL, dqdr, dcndr, dqdL, dcndL)
       !> DRACO class
       class(draco_type), intent(in) :: self
 
@@ -109,7 +104,7 @@ contains
       real(wp), intent(in) :: cn(:)
 
       !> Radii, adjusted with scaling function
-      real(wp), allocatable, intent(out) :: scaled_radii(:)
+      real(wp), allocatable, intent(out) :: srad(:)
 
       !> Derivative of scaled radii w.r.t. atom positions
       real(wp), intent(out), optional :: dsraddr(:, :, :)
@@ -142,7 +137,7 @@ contains
       integer :: iat, izp
       logical :: grad
 
-      allocate (fscale(mol%nat), scaled_radii(mol%nat))
+      allocate (fscale(mol%nat), srad(mol%nat))
 
       grad = present(dsraddr) .and. present(dqdr) .and. present(dcndr) &
          & .and. present(dsraddL) .and. present(dqdL) .and. present(dcndL)
@@ -154,7 +149,7 @@ contains
          ! Scale the radii
          do iat = 1, mol%nat
              izp = mol%id(iat)
-             scaled_radii(iat) = self%defaultradii(izp) * fscale(iat) * autoaa
+             srad(iat) = self%defaultradii(izp) * fscale(iat) * autoaa
              
              ! Get the derivative
              dsraddr(:, :, iat) = self%defaultradii(izp) * dfscaledr(:, :, iat) * autoaa
@@ -166,9 +161,9 @@ contains
           ! Scale the radii
           do iat = 1, mol%nat
               izp = mol%id(iat)
-              scaled_radii(iat) = self%defaultradii(izp) * fscale(iat) * autoaa
+              srad(iat) = self%defaultradii(izp) * fscale(iat) * autoaa
 
-              if (scaled_radii(iat) <= self%minrad) scaled_radii(iat) = self%minrad
+              if (srad(iat) <= self%minrad) srad(iat) = self%minrad
               
           end do
       end if
@@ -236,6 +231,11 @@ contains
            qeff = q(iat) + self%kcn(izp) * q(iat) * cn(iat)
            fscale(iat) = erf(self%alpha(izp) * (qeff - self%shift(izp))) + 1
 
+           !> Apply shift for oxgen atoms
+           if (mol%num(mol%id(izp)) == 8 .and. self%hbond_acidity < 0.42) then
+            fscale(iat) = fscale(iat) + self%O_shift(izp) * (0.43 - self%hbond_acidity)
+           end if
+
            dfscaledqeff = 2/sqrt(pi) * self%alpha(izp) * exp(-self%alpha(izp)**2 * (qeff - self%shift(izp))**2)
            
            dqeffdr(:, :, iat) = (self%kcn(izp) * cn(iat) + 1) * dqdr(:, :, iat) + self%kcn(izp) * q(iat) * dcndr(:, :, iat)
@@ -250,6 +250,11 @@ contains
 
            qeff = q(iat) + self%kcn(izp) * q(iat) * cn(iat)
            fscale(iat) = erf(self%alpha(izp) * (qeff - self%shift(izp))) + 1
+
+           !> Apply shift for oxgen atoms
+           if (mol%num(mol%id(izp)) == 8 .and. self%hbond_acidity < 0.42) then
+             fscale(iat) = fscale(iat) + self%O_shift(izp) * (0.43 - self%hbond_acidity)
+           end if
          end do
       end if
    end subroutine get_fscale

@@ -46,6 +46,7 @@ module tblite_driver_run
 
    use tblite_solvation_draco, only : draco_type, new_draco
    use tblite_ncoord, only: new_ncoord
+   use tblite_disp_d4, only: get_eeq_charges
 
    implicit none
    private
@@ -75,7 +76,7 @@ subroutine run_main(config, error)
    logical :: exist
    real(wp) :: energy
    real(wp), allocatable :: cn(:)
-   real(wp), allocatable :: scaled_radii(:)
+   real(wp), allocatable :: srad(:)
    real(wp), allocatable :: dpmom(:), qpmom(:)
    real(wp), allocatable :: gradient(:, :), sigma(:, :)
    type(param_record) :: param
@@ -217,13 +218,19 @@ subroutine run_main(config, error)
    allocate(cn(mol%nat))
    call new_ncoord(calc%ncoord, mol, "gfn")
    call calc%ncoord%get_cn(mol, cn)
-   !call print_values(mol, wfn%qat(:, 1), cn)
+   
+   !call get_eeq_charges(mol, wfn%qat(:, 1))
+   call new_ceh_calculator(calc, mol, error)
+   call new_wavefunction(wfn, mol%nat, calc%bas%nsh, calc%bas%nao, 1, kt)
+   call ceh_singlepoint(ctx, calc, mol, wfn, config%accuracy)
 
-   allocate(scaled_radii(mol%nat))
-   call new_draco(draco, mol, 'cpcm')
-   call draco%radii_adjustment(mol, wfn%qat(:, 1), cn, scaled_radii)
-   write(*, *) 'Scaled radii: ', scaled_radii
-   !call radii_adjustment(mol, wfn%qat(:, 1), cn, scaled_radii)
+
+   allocate(srad(mol%nat))
+   call new_draco(draco, mol, 'cpcm', 'nonwater', 'ceh')
+   call draco%radii_adjustment(mol, wfn%qat(:, 1), cn, srad)
+   write(*, *) 'Scaled radii: ', srad
+   write(*,*) 'Charges: ', wfn%qat(:, 1)
+   !call radii_adjustment(mol, wfn%qat(:, 1), cn, srad)
    stop
     !!!!!!!!!!!!!!!!!!!!!!
 
