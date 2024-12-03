@@ -24,4 +24,5 @@ srcs += files(
   'input.f90',
   'surface.f90',
   'type.f90',
+  'ddx.f90',
 )

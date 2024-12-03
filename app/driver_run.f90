@@ -44,6 +44,8 @@ module tblite_driver_run
    use tblite_ceh_ceh, only : new_ceh_calculator
    use tblite_post_processing_list, only : add_post_processing, post_processing_type, post_processing_list
 
+   use tblite_solvation_ddx
+
    implicit none
    private
 
@@ -179,6 +181,10 @@ subroutine run_main(config, error)
             end block
          end if
    end if
+
+   ! ! playgroud ddx
+   ! call new_ddx(mol)
+   ! stop
 
    select case(config%guess)
    case default

@@ -31,10 +31,6 @@ module tblite_solvation_cpcm
    use tblite_solvation_cpcm_dd
    use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
-
-   use ddx, only: ddx_type, ddx_error_type, check_error, ddinit, ddx_state_type, allocate_state
-   use ddx, only: fill_guess, fill_guess_adjoint, ddrun
-   use ddx_core, only: ddx_electrostatics_type, allocate_electrostatics
    implicit none
    private
 
@@ -64,7 +60,6 @@ module tblite_solvation_cpcm
    type, extends(solvation_type) :: cpcm_solvation
       !> Actual domain decomposition calculator
       type(domain_decomposition) :: dd
-      type(ddx_type) :: xdd !ddx not usable
       !> Dielectric function
       real(wp) :: keps
       !> Van-der-Waal radii for all atoms
@@ -92,29 +87,16 @@ module tblite_solvation_cpcm
    type :: cpcm_cache
       !> Actual domain decomposition calculator
       type(domain_decomposition) :: dd
-      type(ddx_type) :: xdd 
-
       !> Electrostatic potential phi(ncav)
-      ! ddx_state%phi_cav
       real(wp), allocatable :: phi(:)
-
-      ! nylm: Number of basis functions, i.e., spherical harmonics
-
       !> Psi vector psi(nylm, n)
-      ! ddx_state%psi
       real(wp), allocatable :: psi(:, :)
-
       !> CPCM solution sigma(nylm, n)
-      ! ddx_state%xs
       real(wp), allocatable :: sigma(:, :)
-
       !> CPCM adjoint solution s(nylm, n)
-      ! ddx_state%s
       real(wp), allocatable :: s(:, :)
-
       !> Interaction matrix with surface charges jmat(ncav, n)
       real(wp), allocatable :: jmat(:, :)
-
    end type cpcm_cache
 
 
@@ -138,26 +120,10 @@ subroutine new_cpcm(self, mol, input, error)
    type(cpcm_input), intent(in) :: input
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
-   !> ddX type
-   ! type(ddx_type) :: xdd
-   !> ddX error type
-   type(ddx_error_type) :: ddx_error
-   
-   type(ddx_state_type) :: ddx_state
 
-   type(ddx_electrostatics_type) :: ddx_electrostatics
-
-   real(wp), allocatable :: coords(:, :)
-
-   integer :: igrid, stat, iat, izp, i
-   ! real(wp), allocatable :: ang_grid(:, :), ang_weight(:)
-
-   real(wp) :: esolv = 0.0_wp
-
-   real(wp) :: ddx_tol = 1.0e-11_wp
-
-   real(wp) :: qat(mol%nat)
-   real(wp) :: jmat(mol%nat, mol%nat)
+   integer :: igrid, stat, iat, izp
+   real(wp), allocatable :: ang_grid(:, :), ang_weight(:)
+   type(domain_decomposition_input) :: ddinput
 
    self%label = label
 
@@ -170,54 +136,19 @@ subroutine new_cpcm(self, mol, input, error)
          self%rvdw(iat) = input%rscale*get_vdw_rad_cosmo(izp)
       end do
    end if
+   self%keps = -0.5_wp * (1.0_wp/input%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
+   ! choose the lebedev grid with number of points closest to nAng:
+   igrid = list_bisection(grid_size, input%nang)
+   allocate(ang_grid(3, grid_size(igrid)))
+   allocate(ang_weight(grid_size(igrid)))
+   call get_angular_grid(igrid, ang_grid, ang_weight, stat)
+   if (stat /= 0) then
+      call fatal_error(error, "Could not initialize angular grid for CPCM model")
+   end if
 
-   !self%keps = -0.5_wp * (1.0_wp/input%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
+   ddinput = domain_decomposition_input(lmax=input%lmax, conv=input%conv, eta=input%eta)
 
-   ! ! choose the lebedev grid with number of points closest to nAng:
-   ! igrid = list_bisection(grid_size, input%nang)
-   ! allocate(ang_grid(3, grid_size(igrid)))
-   ! allocate(ang_weight(grid_size(igrid)))
-   ! call get_angular_grid(igrid, ang_grid, ang_weight, stat)
-   ! if (stat /= 0) then
-   !    call fatal_error(error, "Could not initialize angular grid for CPCM model")
-   ! end if
-
-   allocate(coords(3, mol%nat))
-   do i = 1, mol%nat
-      coords(:,i) = mol%xyz(:,i)
-   end do
-
-   ! ddinit
-   call ddinit(1, mol%nat, mol%xyz, self%rvdw, input%dielectric_const, self%xdd, ddx_error)
-   call check_error(ddx_error)
-   write(*,*) '----------CHECKPOINT: ddinit done----------'
-
-   call allocate_state(self%xdd%params, self%xdd%constants,  &
-      ddx_state, ddx_error)
-   call check_error(ddx_error)
-   write(*,*) '----------CHECKPOINT: allocate state done----------'
-
-   call allocate_electrostatics(self%xdd%params, self%xdd%constants,  &
-      ddx_electrostatics, ddx_error)
-   call check_error(ddx_error)
-   write(*,*) '----------CHECKPOINT: allocate electrostatics done----------'
-
-   qat = (/-0.6_wp, 0.3_wp, 0.3_wp/)
-
-   ! this has likely to be done in the update routine
-   call get_psi(qat, ddx_state%psi)
-   call get_coulomb_matrix(mol%xyz, gridXYZ, jmat)
-   call get_phi(qat, jmat, ddx_electrostatics%phi_cav)
-
-   call ddrun(self%xdd, ddx_state, ddx_electrostatics, ddx_state%psi, ddx_tol, esolv, ddx_error)
-   call check_error(ddx_error)
-   write(*,*) '----------CHECKPOINT: ddrun done----------'
-
-   write(*,*) 'esolv = ', esolv
-
-
-
-
+   call new_domain_decomposition(self%dd, ddinput, self%rvdw, ang_weight, ang_grid)
 
 end subroutine new_cpcm
 
@@ -255,7 +186,7 @@ subroutine update(self, mol, cache)
    if (allocated(ptr%sigma)) deallocate(ptr%sigma)
    if (allocated(ptr%s)) deallocate(ptr%s)
    if (allocated(ptr%jmat)) deallocate(ptr%jmat)
-   
+
    ptr%dd = self%dd
 
    call ddupdate(ptr%dd, mol%xyz)
