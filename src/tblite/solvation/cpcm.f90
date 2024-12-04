@@ -28,9 +28,12 @@ module tblite_solvation_cpcm
    use tblite_scf_info, only : scf_info, atom_resolved
    use tblite_scf_potential, only : potential_type
    use tblite_wavefunction_type, only : wavefunction_type
-   use tblite_solvation_cpcm_dd
+   ! use tblite_solvation_cpcm_dd
    use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
+
+   use tblite_disp_d4, only: get_eeq_charges
+
 
    use ddx, only: ddx_type, ddx_error_type, check_error, ddinit, ddx_state_type, allocate_state
    use ddx, only: fill_guess, fill_guess_adjoint, ddrun
@@ -63,12 +66,18 @@ module tblite_solvation_cpcm
    !> Definition of polarizable continuum model
    type, extends(solvation_type) :: cpcm_solvation
       !> Actual domain decomposition calculator
-      type(domain_decomposition) :: dd
-      type(ddx_type) :: xdd !ddx not usable
+      ! type(domain_decomposition) :: dd
+
       !> Dielectric function
       real(wp) :: keps
+      !> Dielctric constant
+      real(wp) :: dielectric_const
       !> Van-der-Waal radii for all atoms
       real(wp), allocatable :: rvdw(:)
+
+      
+      real(wp) :: ddx_tol = 1.0e-11_wp
+
    contains
       !> Update cache from container
       procedure :: update
@@ -91,29 +100,37 @@ module tblite_solvation_cpcm
    !> Restart data for CPCM calculation
    type :: cpcm_cache
       !> Actual domain decomposition calculator
-      type(domain_decomposition) :: dd
+      ! type(domain_decomposition) :: dd
       type(ddx_type) :: xdd 
 
-      !> Electrostatic potential phi(ncav)
-      ! ddx_state%phi_cav
-      real(wp), allocatable :: phi(:)
+      type(ddx_state_type) :: ddx_state
+      
+      type(ddx_error_type) :: ddx_error
 
-      ! nylm: Number of basis functions, i.e., spherical harmonics
+      type(ddx_electrostatics_type) :: ddx_electrostatics
 
-      !> Psi vector psi(nylm, n)
-      ! ddx_state%psi
-      real(wp), allocatable :: psi(:, :)
 
-      !> CPCM solution sigma(nylm, n)
-      ! ddx_state%xs
-      real(wp), allocatable :: sigma(:, :)
+      ! !> Electrostatic potential phi(ncav)
+      ! ! ddx_state%phi_cav
+      ! real(wp), allocatable :: phi(:) !phi_cav ?
 
-      !> CPCM adjoint solution s(nylm, n)
-      ! ddx_state%s
-      real(wp), allocatable :: s(:, :)
+      ! !> Psi vector psi(nylm, n)
+      ! ! ddx_state%psi
+      ! real(wp), allocatable :: psi(:, :)
+
+      ! !> CPCM solution sigma(nylm, n)
+      ! ! ddx_state%xs
+      ! real(wp), allocatable :: sigma(:, :)
+
+      ! !> CPCM adjoint solution s(nylm, n)
+      ! ! ddx_state%s
+      ! real(wp), allocatable :: s(:, :)
 
       !> Interaction matrix with surface charges jmat(ncav, n)
       real(wp), allocatable :: jmat(:, :)
+
+      real(wp) :: esolv
+   
 
    end type cpcm_cache
 
@@ -138,29 +155,13 @@ subroutine new_cpcm(self, mol, input, error)
    type(cpcm_input), intent(in) :: input
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
-   !> ddX type
-   ! type(ddx_type) :: xdd
-   !> ddX error type
-   type(ddx_error_type) :: ddx_error
-   
-   type(ddx_state_type) :: ddx_state
 
-   type(ddx_electrostatics_type) :: ddx_electrostatics
-
-   real(wp), allocatable :: coords(:, :)
-
-   integer :: igrid, stat, iat, izp, i
+   integer :: iat, izp
    ! real(wp), allocatable :: ang_grid(:, :), ang_weight(:)
-
-   real(wp) :: esolv = 0.0_wp
-
-   real(wp) :: ddx_tol = 1.0e-11_wp
-
-   real(wp) :: qat(mol%nat)
-   real(wp) :: jmat(mol%nat, mol%nat)
 
    self%label = label
 
+   ! Radii for all atoms
    allocate(self%rvdw(mol%nat))
    if (allocated(input%rvdw)) then
       self%rvdw(:) = input%rscale*input%rvdw(mol%id)
@@ -171,53 +172,10 @@ subroutine new_cpcm(self, mol, input, error)
       end do
    end if
 
-   !self%keps = -0.5_wp * (1.0_wp/input%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
+   self%rvdw(2) = 0.1_wp
 
-   ! ! choose the lebedev grid with number of points closest to nAng:
-   ! igrid = list_bisection(grid_size, input%nang)
-   ! allocate(ang_grid(3, grid_size(igrid)))
-   ! allocate(ang_weight(grid_size(igrid)))
-   ! call get_angular_grid(igrid, ang_grid, ang_weight, stat)
-   ! if (stat /= 0) then
-   !    call fatal_error(error, "Could not initialize angular grid for CPCM model")
-   ! end if
-
-   allocate(coords(3, mol%nat))
-   do i = 1, mol%nat
-      coords(:,i) = mol%xyz(:,i)
-   end do
-
-   ! ddinit
-   call ddinit(1, mol%nat, mol%xyz, self%rvdw, input%dielectric_const, self%xdd, ddx_error)
-   call check_error(ddx_error)
-   write(*,*) '----------CHECKPOINT: ddinit done----------'
-
-   call allocate_state(self%xdd%params, self%xdd%constants,  &
-      ddx_state, ddx_error)
-   call check_error(ddx_error)
-   write(*,*) '----------CHECKPOINT: allocate state done----------'
-
-   call allocate_electrostatics(self%xdd%params, self%xdd%constants,  &
-      ddx_electrostatics, ddx_error)
-   call check_error(ddx_error)
-   write(*,*) '----------CHECKPOINT: allocate electrostatics done----------'
-
-   qat = (/-0.6_wp, 0.3_wp, 0.3_wp/)
-
-   ! this has likely to be done in the update routine
-   call get_psi(qat, ddx_state%psi)
-   call get_coulomb_matrix(mol%xyz, gridXYZ, jmat)
-   call get_phi(qat, jmat, ddx_electrostatics%phi_cav)
-
-   call ddrun(self%xdd, ddx_state, ddx_electrostatics, ddx_state%psi, ddx_tol, esolv, ddx_error)
-   call check_error(ddx_error)
-   write(*,*) '----------CHECKPOINT: ddrun done----------'
-
-   write(*,*) 'esolv = ', esolv
-
-
-
-
+   ! Epssilon
+   self%dielectric_const = input%dielectric_const
 
 end subroutine new_cpcm
 
@@ -243,48 +201,55 @@ subroutine update(self, mol, cache)
    class(cpcm_solvation), intent(in) :: self
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
+
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
-
    type(cpcm_cache), pointer :: ptr
-
    call taint(cache, ptr)
 
-   if (allocated(ptr%phi)) deallocate(ptr%phi)
-   if (allocated(ptr%psi)) deallocate(ptr%psi)
-   if (allocated(ptr%sigma)) deallocate(ptr%sigma)
-   if (allocated(ptr%s)) deallocate(ptr%s)
-   if (allocated(ptr%jmat)) deallocate(ptr%jmat)
-   
-   ptr%dd = self%dd
+   ! ddinit
+   call ddinit(1, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%xdd, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
+   write(*,*) '----------CHECKPOINT: ddinit done----------'
 
-   call ddupdate(ptr%dd, mol%xyz)
+   call allocate_state(ptr%xdd%params, ptr%xdd%constants,  &
+      ptr%ddx_state, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
+   write(*,*) '----------CHECKPOINT: allocate state done----------'
 
-   allocate(ptr%phi(ptr%dd%ncav), ptr%psi(ptr%dd%nylm, ptr%dd%nat))
-   allocate(ptr%jmat(ptr%dd%ncav, ptr%dd%nat))
+   call allocate_electrostatics(ptr%xdd%params, ptr%xdd%constants,  &
+      ptr%ddx_electrostatics, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
+   write(*,*) '----------CHECKPOINT: allocate electrostatics done----------'
+ 
+   allocate(ptr%jmat(size(ptr%xdd%constants%ccav,2), mol%nat))
 
-   call get_coulomb_matrix(mol%xyz, ptr%dd%ccav, ptr%jmat)
+   call get_coulomb_matrix(mol%xyz, ptr%xdd%constants%ccav, ptr%jmat)
+   write(*,*) '----------CHECKPOINT: got J matrix----------'
+
 end subroutine update
 
 
+!!! not needed anymore..?
 !> Get electric field energy
 subroutine get_energy(self, mol, cache, wfn, energies)
    !> Instance of the solvation model
    class(cpcm_solvation), intent(in) :: self
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
-   !> Reusable data container
-   type(container_cache), intent(inout) :: cache
    !> Wavefunction data
    type(wavefunction_type), intent(in) :: wfn
    !> Solvation free energy
    real(wp), intent(inout) :: energies(:)
 
+   !> Reusable data container
+   type(container_cache), intent(inout) :: cache
    type(cpcm_cache), pointer :: ptr
+   call taint(cache, ptr)
 
-   call view(cache, ptr)
+   energies(:) = energies + self%keps * sum(ptr%ddx_state%s*ptr%ddx_state%psi , 1)
+   write(*,*) 'energ = ', sum(energies(:)) / 627.5095_wp
 
-   energies(:) = energies + self%keps * sum(ptr%sigma * ptr%psi, 1)
 end subroutine get_energy
 
 
@@ -294,45 +259,47 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    class(cpcm_solvation), intent(in) :: self
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
-   !> Reusable data container
-   type(container_cache), intent(inout) :: cache
    !> Wavefunction data
    type(wavefunction_type), intent(in) :: wfn
    !> Density dependent potential
    type(potential_type), intent(inout) :: pot
 
-   real(wp) :: xx(1, 1)
-   logical :: restart
+   
+   !> Reusable data container
+   type(container_cache), intent(inout) :: cache
    type(cpcm_cache), pointer :: ptr
+   call taint(cache, ptr)
 
-   call view(cache, ptr)
+   !> Calculate Representation of the solute density in spherical harmonics
+   !! (\f$ \Psi \f$). It is used as RHS for the adjoint linear system.
+   !! Dimension (nbasis, nsph).
+   call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
 
-   restart = allocated(ptr%sigma)
-   if (.not.allocated(ptr%sigma)) then
-      allocate(ptr%sigma(ptr%dd%nylm, ptr%dd%nat))
-   end if
+   !> Calculate Electric potential at the cavity points. It is used to construct
+   !! the RHS for the primal linear system. Dimension (ncav).
+   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
 
-   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%phi)
+   write(*,*) 'Phi: ', ptr%ddx_electrostatics%phi_cav
+   
+   !> Calculate the solvation energy
+   call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, self%ddx_tol, ptr%esolv, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
 
-   call solve_cosmo_direct(ptr%dd, .true., ptr%phi, xx, ptr%sigma, restart)
+   write(*,*) ''
 
-   restart = allocated(ptr%s)
-   if (.not.allocated(ptr%s)) then
-      allocate(ptr%s(ptr%dd%nylm, ptr%dd%nat))
-   end if
+   write(*,*) 'qat = ', wfn%qat(:, 1)
 
-   call get_psi(wfn%qat(:, 1), ptr%psi)
-
-   ! solve adjoint ddCOSMO equation to get full potential contributions
-   call solve_cosmo_adjoint(ptr%dd, ptr%psi, ptr%s, restart)
+   write(*,*) 'esolv = ', ptr%esolv
 
    ! we abuse Phi to store the unpacked and scaled value of s
-   call get_zeta(ptr%dd, self%keps, ptr%s, ptr%phi)
+   call get_zeta(ptr%xdd, self%keps, ptr%ddx_state%s, ptr%ddx_electrostatics%phi_cav)
    ! and contract with the Coulomb matrix
-   call gemv(ptr%jmat, ptr%phi, pot%vat(:, 1), alpha=-1.0_wp, &
+   call gemv(ptr%jmat, ptr%ddx_electrostatics%phi_cav, pot%vat(:, 1), alpha=-1.0_wp, &
       & beta=1.0_wp, trans='t')
 
-   pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%sigma(1, :)
+   !> Caclulate the potential
+   pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%ddx_state%s(1, :)
+
 
 end subroutine get_potential
 
@@ -352,51 +319,51 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    !> Strain derivatives of the solvation free energy
    real(wp), contiguous, intent(inout) :: sigma(:, :)
 
-   integer :: ii, iat, ig
-   real(wp), allocatable :: gx(:, :), zeta(:), ef(:, :)
-   type(cpcm_cache), pointer :: ptr
+   ! integer :: ii, iat, ig
+   ! real(wp), allocatable :: gx(:, :), zeta(:), ef(:, :)
+   ! type(cpcm_cache), pointer :: ptr
 
-   call view(cache, ptr)
+   ! call view(cache, ptr)
 
-   allocate(gx(3, mol%nat), zeta(ptr%dd%ncav), ef(3, max(mol%nat, ptr%dd%ncav)))
+   ! allocate(gx(3, mol%nat), zeta(ptr%dd%ncav), ef(3, max(mol%nat, ptr%dd%ncav)))
 
-   call solve_cosmo_adjoint(ptr%dd, ptr%psi, ptr%s, .true., &
-      & accuracy=ptr%dd%conv*1e-3_wp)
+   ! call solve_cosmo_adjoint(ptr%dd, ptr%ddx_state%psi, ptr%ddx_state%s, .true., &
+   !    & accuracy=ptr%dd%conv*1e-3_wp)
 
-   ! reset Phi
-   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%phi)
+   ! ! reset Phi
+   ! call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_state%phi_cav)
 
-   ! now call the routine that computes the ddcosmo specific contributions to the forces.
-   call get_deriv(ptr%dd, self%keps, ptr%phi, ptr%sigma, ptr%s, gx)
+   ! ! now call the routine that computes the ddcosmo specific contributions to the forces.
+   ! call get_deriv(ptr%dd, self%keps, ptr%ddx_state%phi_cav, ptr%ddx_state%xs, ptr%ddx_state%s, gx)
 
-   ! form the "zeta" intermediate
-   call get_zeta(ptr%dd, self%keps, ptr%s, zeta)
+   ! ! form the "zeta" intermediate
+   ! call get_zeta(ptr%dd, self%keps, ptr%ddx_state%s, zeta)
 
-   ! 1. solute's electric field at the cav points times zeta:
-   !    compute the electric field
-   call efld(mol%nat, wfn%qat(:, 1), ptr%dd%xyz, ptr%dd%ncav, ptr%dd%ccav, ef)
+   ! ! 1. solute's electric field at the cav points times zeta:
+   ! !    compute the electric field
+   ! call efld(mol%nat, wfn%qat(:, 1), ptr%dd%xyz, ptr%dd%ncav, ptr%dd%ccav, ef)
 
-   ! contract it with the zeta intermediate
-   ii = 0
-   do iat = 1, ptr%dd%nat
-      do ig = 1, ptr%dd%ngrid
-         if (ptr%dd%ui(ig, iat) > 0.0_wp) then
-            ii = ii + 1
-            gx(:, iat) = gx(:, iat) + zeta(ii)*ef(:, ii)
-         end if
-      end do
-   end do
+   ! ! contract it with the zeta intermediate
+   ! ii = 0
+   ! do iat = 1, ptr%dd%nat
+   !    do ig = 1, ptr%dd%ngrid
+   !       if (ptr%dd%ui(ig, iat) > 0.0_wp) then
+   !          ii = ii + 1
+   !          gx(:, iat) = gx(:, iat) + zeta(ii)*ef(:, ii)
+   !       end if
+   !    end do
+   ! end do
 
-   ! 2. "zeta's" electric field at the nuclei times the charges.
-   !    compute the "electric field"
-   call efld(ptr%dd%ncav, zeta, ptr%dd%ccav, mol%nat, ptr%dd%xyz, ef)
+   ! ! 2. "zeta's" electric field at the nuclei times the charges.
+   ! !    compute the "electric field"
+   ! call efld(ptr%dd%ncav, zeta, ptr%dd%ccav, mol%nat, ptr%dd%xyz, ef)
 
-   ! contract it with the solute's charges.
-   do iat = 1, ptr%dd%nat
-      gx(:, iat) = gx(:, iat) + ef(:, iat)*wfn%qat(iat, 1)
-   end do
+   ! ! contract it with the solute's charges.
+   ! do iat = 1, ptr%dd%nat
+   !    gx(:, iat) = gx(:, iat) + ef(:, iat)*wfn%qat(iat, 1)
+   ! end do
 
-   gradient(:, :) = gradient(:, :) + gx
+   ! gradient(:, :) = gradient(:, :) + gx
 end subroutine get_gradient
 
 
@@ -527,6 +494,36 @@ subroutine efld(nsrc, src, csrc, ntrg, ctrg, ef)
    end do
 
 end subroutine efld
+
+!> Compute
+!
+! \zeta(n, i) =
+!
+!  1/2 f(\eps) sum w_n U_n^i Y_l^m(s_n) [S_i]_l^m
+!              l, m
+!
+subroutine get_zeta(self, keps, s, zeta)
+   type(ddx_type), intent(in) :: self
+   real(wp), intent(in) :: keps
+   real(wp), intent(in) :: s(:, :) ! [self%nylm, self%nat]
+   real(wp), intent(inout) :: zeta(:) ! [self%ncav]
+
+   integer :: its, iat, ii
+
+   ii = 0
+   do iat = 1, size(s, 2)
+      do its = 1, size(zeta, 2)
+         if (self%ui(its, iat) > 0.0_wp) then
+            ii = ii + 1
+            zeta(ii) = keps * self%w(its) * self%ui(its, iat) &
+               & * dot_product(self%basis(:, its), s(:, iat))
+         end if
+      end do
+   end do
+
+end subroutine get_zeta
+
+
 
 
 end module tblite_solvation_cpcm
