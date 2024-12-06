@@ -32,6 +32,7 @@ module tblite_solvation_cpcm
    use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
 
+
    use tblite_disp_d4, only: get_eeq_charges
 
 
@@ -41,7 +42,7 @@ module tblite_solvation_cpcm
    implicit none
    private
 
-   public :: cpcm_solvation, new_cpcm, cpcm_input
+   public :: cpcm_solvation, new_cpcm, cpcm_input, cpcm_cache
 
 
    !> Input for CPCM solvation
@@ -126,10 +127,12 @@ module tblite_solvation_cpcm
       ! ! ddx_state%s
       ! real(wp), allocatable :: s(:, :)
 
-      !> Interaction matrix with surface charges jmat(ncav, n)
+      !> Interaction matrix with surface charges jmat(ncav, nat)
       real(wp), allocatable :: jmat(:, :)
 
       real(wp) :: esolv
+
+      real(wp), allocatable :: zeta(:)
    
 
    end type cpcm_cache
@@ -222,11 +225,12 @@ subroutine update(self, mol, cache)
    call check_error(ptr%ddx_error)
    write(*,*) '----------CHECKPOINT: allocate electrostatics done----------'
  
-   allocate(ptr%jmat(size(ptr%xdd%constants%ccav,2), mol%nat))
+   allocate(ptr%jmat(ptr%xdd%constants%ncav, mol%nat))
 
    call get_coulomb_matrix(mol%xyz, ptr%xdd%constants%ccav, ptr%jmat)
    write(*,*) '----------CHECKPOINT: got J matrix----------'
 
+   allocate(ptr%zeta(ptr%xdd%params%ngrid * ptr%xdd%params%nsph))
 end subroutine update
 
 
@@ -247,8 +251,8 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
-   energies(:) = energies + self%keps * sum(ptr%ddx_state%s*ptr%ddx_state%psi , 1)
-   write(*,*) 'energ = ', sum(energies(:)) / 627.5095_wp
+   energies(:) = energies + self%keps * sum(ptr%ddx_state%xs*ptr%ddx_state%psi , 1)
+   write(*,*) 'energy = ', sum(energies(:)) / 627.5095_wp
 
 end subroutine get_energy
 
@@ -279,27 +283,32 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    !! the RHS for the primal linear system. Dimension (ncav).
    call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
 
-   write(*,*) 'Phi: ', ptr%ddx_electrostatics%phi_cav
+   ! write(*,*) 'Phi: ', ptr%ddx_electrostatics%phi_cav
    
    !> Calculate the solvation energy
    call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, self%ddx_tol, ptr%esolv, ptr%ddx_error)
    call check_error(ptr%ddx_error)
 
-   write(*,*) ''
+   ! write(*,*) ''
 
-   write(*,*) 'qat = ', wfn%qat(:, 1)
+   ! write(*,*) 'qat = ', wfn%qat(:, 1)
 
-   write(*,*) 'esolv = ', ptr%esolv
+   ! write(*,*) 'esolv = ', ptr%esolv
 
    ! we abuse Phi to store the unpacked and scaled value of s
-   call get_zeta(ptr%xdd, self%keps, ptr%ddx_state%s, ptr%ddx_electrostatics%phi_cav)
+   !!! No, we don't 
+   ! We need the weights w, the switching function ui, the sp harm expansion v (v + w -> vw), and the solution to the COSMO eq S
+   ! allocate(ptr%zeta(ptr%xdd%constants%ncav))
+    call get_zeta(ptr, self%keps)
    ! and contract with the Coulomb matrix
-   call gemv(ptr%jmat, ptr%ddx_electrostatics%phi_cav, pot%vat(:, 1), alpha=-1.0_wp, &
-      & beta=1.0_wp, trans='t')
+   ! write(*,*) 'size sphicav ', size(ptr%ddx_state%phi_cav, 1)
+   ! write(*,*) 'size s: ', size(ptr%ddx_state%qgrid, 1), size(ptr%ddx_state%qgrid, 2)
+   ! write(*,*) 'size jmat: ', size(ptr%jmat, 1), size(ptr%jmat, 2)
+
+   call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t')
 
    !> Caclulate the potential
-   pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%ddx_state%s(1, :)
-
+   pot%vat(:, 1) = pot%vat(:, 1) + 20.0_wp !(self%keps * sqrt(4*pi)) * ptr%ddx_state%s(1, :)
 
 end subroutine get_potential
 
@@ -495,35 +504,27 @@ subroutine efld(nsrc, src, csrc, ntrg, ctrg, ef)
 
 end subroutine efld
 
-!> Compute
-!
-! \zeta(n, i) =
-!
-!  1/2 f(\eps) sum w_n U_n^i Y_l^m(s_n) [S_i]_l^m
-!              l, m
-!
-subroutine get_zeta(self, keps, s, zeta)
-   type(ddx_type), intent(in) :: self
+
+subroutine get_zeta(self, keps)
+   ! type(domain_decomposition), intent(in) :: self
+   type(cpcm_cache), intent(inout) :: self
    real(wp), intent(in) :: keps
-   real(wp), intent(in) :: s(:, :) ! [self%nylm, self%nat]
-   real(wp), intent(inout) :: zeta(:) ! [self%ncav]
+   !real(wp), intent(inout) :: zeta(:) ! [self%ncav]
 
    integer :: its, iat, ii
 
    ii = 0
-   do iat = 1, size(s, 2)
-      do its = 1, size(zeta, 2)
-         if (self%ui(its, iat) > 0.0_wp) then
+   do iat = 1, self%xdd%params%nsph
+      do its = 1, self%xdd%params%ngrid
+         if (self%xdd%constants%ui(its, iat) > 0.0_wp) then
             ii = ii + 1
-            zeta(ii) = keps * self%w(its) * self%ui(its, iat) &
-               & * dot_product(self%basis(:, its), s(:, iat))
+            self%zeta(ii) = keps * self%xdd%constants%wgrid(its) * self%xdd%constants%ui(its, iat) &
+                & * dot_product(self%xdd%constants%vgrid(:, its), self%ddx_state%s(:, iat))
          end if
       end do
    end do
 
 end subroutine get_zeta
-
-
 
 
 end module tblite_solvation_cpcm
