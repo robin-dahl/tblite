@@ -32,13 +32,15 @@ module tblite_solvation_cpcm
    use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
 
+   use iso_fortran_env, only : output_unit
 
    use tblite_disp_d4, only: get_eeq_charges
 
 
    use ddx, only: ddx_type, ddx_error_type, check_error, ddinit, ddx_state_type, allocate_state
-   use ddx, only: fill_guess, fill_guess_adjoint, ddrun
+   use ddx, only: fill_guess, fill_guess_adjoint, ddrun, solvation_force_terms, solve_adjoint
    use ddx_core, only: ddx_electrostatics_type, allocate_electrostatics
+   use ddx_cosmo, only: cosmo_solve, cosmo_solve_adjoint
    implicit none
    private
 
@@ -133,6 +135,8 @@ module tblite_solvation_cpcm
       real(wp) :: esolv
 
       real(wp), allocatable :: zeta(:)
+
+      real(wp), allocatable :: force(:, :)
    
 
    end type cpcm_cache
@@ -175,10 +179,17 @@ subroutine new_cpcm(self, mol, input, error)
       end do
    end if
 
-   self%rvdw(2) = 0.1_wp
+   write(*,*) 'rvdw = ', self%rvdw
 
    ! Epssilon
    self%dielectric_const = input%dielectric_const
+
+   write(*,*) 'dielectric_const = ', self%dielectric_const
+
+   ! keps
+   self%keps = -0.5_wp * (1.0_wp/self%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
+
+   write(*,*) 'keps = ', self%keps
 
 end subroutine new_cpcm
 
@@ -205,15 +216,28 @@ subroutine update(self, mol, cache)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
 
+   !> Number of grid points for each atom
+   integer :: nang = grid_size(6)
+   !> Scaling of van-der-Waals radii
+   real(wp) :: rscale = 1.0_wp
+   !> Maximum angular momentum of basis functions
+   integer :: lmax = 6
+
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
    ! ddinit
-   call ddinit(1, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%xdd, ptr%ddx_error)
+   ! 1-cosmo, 2-pcm
+   call ddinit(1, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%xdd, &
+      & ptr%ddx_error, ngrid=302, lmax=6, nproc=8)
    call check_error(ptr%ddx_error)
    write(*,*) '----------CHECKPOINT: ddinit done----------'
+
+   ptr%xdd%params%force = 1
+   allocate(ptr%force(3, ptr%xdd%params%nsph))
+
 
    call allocate_state(ptr%xdd%params, ptr%xdd%constants,  &
       ptr%ddx_state, ptr%ddx_error)
@@ -231,6 +255,10 @@ subroutine update(self, mol, cache)
    write(*,*) '----------CHECKPOINT: got J matrix----------'
 
    allocate(ptr%zeta(ptr%xdd%params%ngrid * ptr%xdd%params%nsph))
+   write(*,*) '----------CHECKPOINT: got zeta----------'
+
+
+
 end subroutine update
 
 
@@ -251,7 +279,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
-   energies(:) = energies + self%keps * sum(ptr%ddx_state%xs*ptr%ddx_state%psi , 1)
+   energies(:) = energies + self%keps * sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
    write(*,*) 'energy = ', sum(energies(:)) / 627.5095_wp
 
 end subroutine get_energy
@@ -268,47 +296,44 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    !> Density dependent potential
    type(potential_type), intent(inout) :: pot
 
-   
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
+
+   !> Calculate Electric potential at the cavity points. It is used to construct
+   !! the RHS for the primal linear system. Dimension (ncav).
+   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
 
    !> Calculate Representation of the solute density in spherical harmonics
    !! (\f$ \Psi \f$). It is used as RHS for the adjoint linear system.
    !! Dimension (nbasis, nsph).
    call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
 
-   !> Calculate Electric potential at the cavity points. It is used to construct
-   !! the RHS for the primal linear system. Dimension (ncav).
-   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
-
-   ! write(*,*) 'Phi: ', ptr%ddx_electrostatics%phi_cav
-   
    !> Calculate the solvation energy
-   call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, self%ddx_tol, ptr%esolv, ptr%ddx_error)
+   call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, self%ddx_tol, &
+      & ptr%esolv, ptr%ddx_error, ptr%force)
    call check_error(ptr%ddx_error)
 
-   ! write(*,*) ''
+   write(*,*) ''
+   write(*,*) 'qat = ', wfn%qat(:, 1)
+   write(*,*) 'esolv = ', ptr%esolv
 
-   ! write(*,*) 'qat = ', wfn%qat(:, 1)
-
-   ! write(*,*) 'esolv = ', ptr%esolv
-
-   ! we abuse Phi to store the unpacked and scaled value of s
-   !!! No, we don't 
    ! We need the weights w, the switching function ui, the sp harm expansion v (v + w -> vw), and the solution to the COSMO eq S
    ! allocate(ptr%zeta(ptr%xdd%constants%ncav))
-    call get_zeta(ptr, self%keps)
-   ! and contract with the Coulomb matrix
-   ! write(*,*) 'size sphicav ', size(ptr%ddx_state%phi_cav, 1)
-   ! write(*,*) 'size s: ', size(ptr%ddx_state%qgrid, 1), size(ptr%ddx_state%qgrid, 2)
-   ! write(*,*) 'size jmat: ', size(ptr%jmat, 1), size(ptr%jmat, 2)
+   call get_zeta(ptr, self%keps)
+
+   ! Contract with the Coulomb matrix
+   write(*,*) ' pre pot = ', pot%vat(:, 1)
 
    call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t')
 
+   write(*,*) ' past gemv pot = ', pot%vat(:, 1)
+
    !> Caclulate the potential
-   pot%vat(:, 1) = pot%vat(:, 1) + 20.0_wp !(self%keps * sqrt(4*pi)) * ptr%ddx_state%s(1, :)
+   pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%ddx_state%xs(1, :)
+   write(*,*) ' past pot = ', pot%vat(:, 1)
+
 
 end subroutine get_potential
 
@@ -328,47 +353,63 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    !> Strain derivatives of the solvation free energy
    real(wp), contiguous, intent(inout) :: sigma(:, :)
 
-   ! integer :: ii, iat, ig
-   ! real(wp), allocatable :: gx(:, :), zeta(:), ef(:, :)
-   ! type(cpcm_cache), pointer :: ptr
+   integer :: ii, iat, ig
+   real(wp), allocatable :: gx(:, :), zeta(:), ef(:, :)
+   type(cpcm_cache), pointer :: ptr
 
-   ! call view(cache, ptr)
+   call view(cache, ptr)
+
+   write(*,*) '----------CHECKPOINT: get_gradient----------'
 
    ! allocate(gx(3, mol%nat), zeta(ptr%dd%ncav), ef(3, max(mol%nat, ptr%dd%ncav)))
+   allocate(gx(3, mol%nat), zeta(ptr%xdd%constants%ncav), ef(3, max(mol%nat, ptr%xdd%constants%ncav)))
 
    ! call solve_cosmo_adjoint(ptr%dd, ptr%ddx_state%psi, ptr%ddx_state%s, .true., &
    !    & accuracy=ptr%dd%conv*1e-3_wp)
 
-   ! ! reset Phi
+   call solve_adjoint(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, ptr%ddx_state, self%ddx_tol, &
+      & ptr%ddx_error)
+
+   ! reset Phi
    ! call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_state%phi_cav)
+   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
 
-   ! ! now call the routine that computes the ddcosmo specific contributions to the forces.
-   ! call get_deriv(ptr%dd, self%keps, ptr%ddx_state%phi_cav, ptr%ddx_state%xs, ptr%ddx_state%s, gx)
+   ! now call the routine that computes the ddcosmo specific contributions to the forces.
+   !call get_deriv(ptr%dd, self%keps, ptr%ddx_state%phi_cav, ptr%ddx_state%xs, ptr%ddx_state%s, gx)
 
-   ! ! form the "zeta" intermediate
-   ! call get_zeta(ptr%dd, self%keps, ptr%ddx_state%s, zeta)
+   ! form the "zeta" intermediate
+   !call get_zeta(ptr%dd, self%keps, ptr%ddx_state%s, zeta)
+   !call get_zeta(ptr, self%keps)
 
-   ! ! 1. solute's electric field at the cav points times zeta:
-   ! !    compute the electric field
+   ! 1. solute's electric field at the cav points times zeta:
+   !    compute the electric field
    ! call efld(mol%nat, wfn%qat(:, 1), ptr%dd%xyz, ptr%dd%ncav, ptr%dd%ccav, ef)
+   !call efld(mol%nat, wfn%qat(:, 1), mol%xyz, ptr%xdd%constants%ncav, ptr%xdd%constants%ccav, ef)
 
-   ! ! contract it with the zeta intermediate
+
+   call solvation_force_terms(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, ptr%ddx_state, &
+      & ptr%ddx_electrostatics, ptr%force, ptr%ddx_error)
+
+   write(*,*) 'force = ', ptr%force
+
+
+   ! contract it with the zeta intermediate
    ! ii = 0
-   ! do iat = 1, ptr%dd%nat
-   !    do ig = 1, ptr%dd%ngrid
-   !       if (ptr%dd%ui(ig, iat) > 0.0_wp) then
+   ! do iat = 1, mol%nat
+   !    do ig = 1, ptr%xdd%constants%ngrid
+   !       if (self%xdd%constants%ui(ig, iat) > 0.0_wp) then
    !          ii = ii + 1
-   !          gx(:, iat) = gx(:, iat) + zeta(ii)*ef(:, ii)
+   !          gx(:, iat) = gx(:, iat) + ptr%zeta(ii)*ef(:, ii)
    !       end if
    !    end do
    ! end do
 
-   ! ! 2. "zeta's" electric field at the nuclei times the charges.
-   ! !    compute the "electric field"
-   ! call efld(ptr%dd%ncav, zeta, ptr%dd%ccav, mol%nat, ptr%dd%xyz, ef)
+   ! 2. "zeta's" electric field at the nuclei times the charges.
+   !    compute the "electric field"
+   ! call efld(ptr%xxd%constants%ncav, ptr%zeta, ptr%xxd%constants%ccav, mol%nat, mol%xyz, ef)
 
    ! ! contract it with the solute's charges.
-   ! do iat = 1, ptr%dd%nat
+   ! do iat = 1, mol%nat
    !    gx(:, iat) = gx(:, iat) + ef(:, iat)*wfn%qat(iat, 1)
    ! end do
 
@@ -512,6 +553,18 @@ subroutine get_zeta(self, keps)
    !real(wp), intent(inout) :: zeta(:) ! [self%ncav]
 
    integer :: its, iat, ii
+   real, dimension(74, 2) :: ui_temp
+
+   ! write(*,*) 'ngrid = ', self%xdd%params%ngrid yes
+   ! write(*,*) 'keps = ', keps yes
+   ! write(*,*) 'ui = ', 
+   ! call write_2d_matrix(self%xdd%constants%ui, name='ui', step=5) NO
+   ! write(*,*) 'vgrid = ', self%xdd%constants%vgrid yes
+   ! write(*,*) 'wgrid = ', self%xdd%constants%wgrid yes 
+    write(*,*) 's zeta = ', self%ddx_state%s 
+
+   ! => S, XS, AND UI DIFFERENT TO LEGACY CODE
+
 
    ii = 0
    do iat = 1, self%xdd%params%nsph
@@ -524,7 +577,83 @@ subroutine get_zeta(self, keps)
       end do
    end do
 
-end subroutine get_zeta
+
+
+ end subroutine get_zeta
+
+
+
+subroutine write_vector(vector, name, unit)
+   implicit none
+   real(wp),intent(in) :: vector(:)
+   character(len=*),intent(in),optional :: name
+   integer, intent(in),optional :: unit
+   integer :: d
+   integer :: i, j, k, l, istep, iunit
+
+   d = size(vector, dim=1)
+
+   if (present(unit)) then
+       iunit = unit
+   else
+       iunit = output_unit
+   end if
+
+   if (present(name)) write(iunit,'(/,"vector printed:",1x,a)') name
+
+   do j = 1, d
+       write(iunit, '(i6)', advance='no') j
+       write(iunit, '(1x,f15.8)', advance='no') vector(j)
+       write(iunit, '(a)')
+   end do
+
+end subroutine write_vector
+
+
+subroutine write_2d_matrix(matrix, name, unit, step)
+   implicit none
+   real(wp),intent(in) :: matrix(:, :)
+   character(len=*),intent(in),optional :: name
+   integer, intent(in),optional :: unit
+   integer, intent(in),optional :: step
+   integer :: d1, d2
+   integer :: i, j, k, l, istep, iunit
+
+   d1 = size(matrix, dim=1)
+   d2 = size(matrix, dim=2)
+
+   if (present(unit)) then
+       iunit = unit
+   else
+       iunit = output_unit
+   end if
+
+   if (present(step)) then
+       istep = step
+   else
+       istep = 5
+   end if
+
+   if (present(name)) write(iunit,'(/,"matrix printed:",1x,a)') name
+
+   do i = 1, d2, istep
+       l = min(i+istep-1,d2)
+       write(iunit,'(/,6x)',advance='no')
+       do k = i, l
+           write(iunit,'(6x,i12,3x)',advance='no') k
+       end do
+       write(iunit,'(a)')
+       do j = 1, d1
+           write(iunit,'(i6)',advance='no') j
+           do k = i, l
+               write(iunit,'(1x,e20.8)',advance='no') matrix(j,k)
+           end do
+           write(iunit,'(a)')
+       end do
+   end do
+
+end subroutine write_2d_matrix
+
 
 
 end module tblite_solvation_cpcm
