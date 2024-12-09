@@ -228,6 +228,8 @@ subroutine update(self, mol, cache)
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
+   ptr%xdd%params%force = 1
+
    ! ddinit
    ! 1-cosmo, 2-pcm
    call ddinit(1, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%xdd, &
@@ -235,9 +237,7 @@ subroutine update(self, mol, cache)
    call check_error(ptr%ddx_error)
    write(*,*) '----------CHECKPOINT: ddinit done----------'
 
-   ptr%xdd%params%force = 1
    allocate(ptr%force(3, ptr%xdd%params%nsph))
-
 
    call allocate_state(ptr%xdd%params, ptr%xdd%constants,  &
       ptr%ddx_state, ptr%ddx_error)
