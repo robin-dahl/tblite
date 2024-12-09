@@ -32,6 +32,7 @@ module tblite_solvation_cpcm
    use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
 
+
    use iso_fortran_env, only : output_unit
 
    use tblite_disp_d4, only: get_eeq_charges
@@ -78,6 +79,7 @@ module tblite_solvation_cpcm
       !> Van-der-Waal radii for all atoms
       real(wp), allocatable :: rvdw(:)
 
+
       
       real(wp) :: ddx_tol = 1.0e-11_wp
 
@@ -112,7 +114,6 @@ module tblite_solvation_cpcm
 
       type(ddx_electrostatics_type) :: ddx_electrostatics
 
-
       ! !> Electrostatic potential phi(ncav)
       ! ! ddx_state%phi_cav
       ! real(wp), allocatable :: phi(:) !phi_cav ?
@@ -137,6 +138,8 @@ module tblite_solvation_cpcm
       real(wp), allocatable :: zeta(:)
 
       real(wp), allocatable :: force(:, :)
+
+      integer :: do_force = 0
    
 
    end type cpcm_cache
@@ -216,6 +219,9 @@ subroutine update(self, mol, cache)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
 
+
+
+
    !> Number of grid points for each atom
    integer :: nang = grid_size(6)
    !> Scaling of van-der-Waals radii
@@ -228,14 +234,16 @@ subroutine update(self, mol, cache)
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
-   ptr%xdd%params%force = 1
+   ptr%do_force = 0
 
    ! ddinit
    ! 1-cosmo, 2-pcm
    call ddinit(1, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%xdd, &
-      & ptr%ddx_error, ngrid=302, lmax=6, nproc=8)
+      & ptr%ddx_error, ngrid=302, lmax=6, nproc=8, force=ptr%do_force)
    call check_error(ptr%ddx_error)
    write(*,*) '----------CHECKPOINT: ddinit done----------'
+
+   print *, 'ptr%xdd%params%force', ptr%xdd%params%force
 
    allocate(ptr%force(3, ptr%xdd%params%nsph))
 
@@ -256,8 +264,6 @@ subroutine update(self, mol, cache)
 
    allocate(ptr%zeta(ptr%xdd%params%ngrid * ptr%xdd%params%nsph))
    write(*,*) '----------CHECKPOINT: got zeta----------'
-
-
 
 end subroutine update
 
@@ -301,6 +307,7 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
+
    !> Calculate Electric potential at the cavity points. It is used to construct
    !! the RHS for the primal linear system. Dimension (ncav).
    call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
@@ -333,7 +340,6 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    !> Caclulate the potential
    pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%ddx_state%xs(1, :)
    write(*,*) ' past pot = ', pot%vat(:, 1)
-
 
 end subroutine get_potential
 
@@ -561,7 +567,7 @@ subroutine get_zeta(self, keps)
    ! call write_2d_matrix(self%xdd%constants%ui, name='ui', step=5) NO
    ! write(*,*) 'vgrid = ', self%xdd%constants%vgrid yes
    ! write(*,*) 'wgrid = ', self%xdd%constants%wgrid yes 
-    write(*,*) 's zeta = ', self%ddx_state%s 
+   !  write(*,*) 's zeta = ', self%ddx_state%s 
 
    ! => S, XS, AND UI DIFFERENT TO LEGACY CODE
 
