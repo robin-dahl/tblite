@@ -43,7 +43,7 @@ module tblite_solvation_cpcm
    use ddx_core, only: ddx_electrostatics_type, allocate_electrostatics
    use ddx_cosmo, only: cosmo_solve, cosmo_solve_adjoint
 
-   use ddx_multipolar_solutes, only: multipole_electrostatics
+   use ddx_multipolar_solutes, only: multipole_electrostatics, multipole_force_terms
 
    implicit none
    private
@@ -278,7 +278,6 @@ subroutine update(self, mol, cache)
 end subroutine update
 
 
-!!! not needed anymore..?
 !> Get electric field energy
 subroutine get_energy(self, mol, cache, wfn, energies)
    !> Instance of the solvation model
@@ -362,6 +361,104 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 end subroutine get_potential
 
 
+! !> Get electric field gradient
+! subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
+!    !> Instance of the solvation model
+!    class(cpcm_solvation), intent(in) :: self
+!    !> Molecular structure data
+!    type(structure_type), intent(in) :: mol
+!    !> Reusable data container
+!    type(container_cache), intent(inout) :: cache
+!    !> Wavefunction data
+!    type(wavefunction_type), intent(in) :: wfn
+!    !> Molecular gradient of the solvation free energy
+!    real(wp), contiguous, intent(inout) :: gradient(:, :)
+!    !> Strain derivatives of the solvation free energy
+!    real(wp), contiguous, intent(inout) :: sigma(:, :)
+
+!    integer :: ii, iat, ig
+!    real(wp), allocatable :: gx(:, :), zeta(:), ef(:, :)
+
+!    real(wp) :: temp_forces(3, mol%nat)
+
+!    type(cpcm_cache), pointer :: ptr
+!    call view(cache, ptr)
+
+!    write(*,*) '----------CHECKPOINT: get_gradient----------'
+
+!    ! allocate(gx(3, mol%nat), zeta(ptr%dd%ncav), ef(3, max(mol%nat, ptr%dd%ncav)))
+!    allocate(gx(3, mol%nat))
+!    allocate(zeta(ptr%xdd%constants%ncav))
+!    allocate(ef(3, max(mol%nat, ptr%xdd%constants%ncav)))
+
+!    ! call solve_cosmo_adjoint(ptr%dd, ptr%ddx_state%psi, ptr%ddx_state%s, .true., &
+!    !    & accuracy=ptr%dd%conv*1e-3_wp)
+
+!    ! call solve_adjoint(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, ptr%ddx_state, self%ddx_tol, &
+!    !    & ptr%ddx_error)
+
+!    ! ! reset Phi
+!    ! ! call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_state%phi_cav)
+!    ! call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
+
+!    ! now call the routine that computes the ddcosmo specific contributions to the forces.
+!    !call get_deriv(ptr%dd, self%keps, ptr%ddx_state%phi_cav, ptr%ddx_state%xs, ptr%ddx_state%s, gx)
+
+!    ! form the "zeta" intermediate
+!    !call get_zeta(ptr%dd, self%keps, ptr%ddx_state%s, zeta)
+!    !call get_zeta(ptr, self%keps)
+
+!    ! 1. solute's electric field at the cav points times zeta:
+!    !    compute the electric field
+!    ! call efld(mol%nat, wfn%qat(:, 1), ptr%dd%xyz, ptr%dd%ncav, ptr%dd%ccav, ef)
+!    !call efld(mol%nat, wfn%qat(:, 1), mol%xyz, ptr%xdd%constants%ncav, ptr%xdd%constants%ccav, ef)
+
+
+!    ! call solvation_force_terms(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, ptr%ddx_state, &
+!    !    & ptr%ddx_electrostatics, ptr%force, ptr%ddx_error)
+!    call write_2d_matrix(ptr%force, name='force')
+!    call multipole_force_terms(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, &
+!       ptr%ddx_state, 0, ptr%ddx_state%psi, _temp_force, ptr%ddx_error)
+
+
+!    !call write_2d_matrix(temp_forces, name='temp_forces')
+
+!    call write_2d_matrix(ptr%force, name='force')
+!    print *, "Norm2 =", sqrt(sum(ptr%force**2))
+   
+
+!    ! contract it with the zeta intermediate
+!    ! ii = 0
+!    ! do iat = 1, mol%nat
+!    !    do ig = 1, ptr%xdd%constants%ngrid
+!    !       if (self%xdd%constants%ui(ig, iat) > 0.0_wp) then
+!    !          ii = ii + 1
+!    !          gx(:, iat) = gx(:, iat) + ptr%zeta(ii)*ef(:, ii)
+!    !       end if
+!    !    end do
+!    ! end do
+
+!    ! 2. "zeta's" electric field at the nuclei times the charges.
+!    !    compute the "electric field"
+!    ! call efld(ptr%xxd%constants%ncav, ptr%zeta, ptr%xxd%constants%ccav, mol%nat, mol%xyz, ef)
+
+!    ! contract it with the solute's charges.
+!    do iat = 1, mol%nat
+!       gx(:, iat) = gx(:, iat) !+ ef(:, iat)*wfn%qat(iat, 1)
+!    end do
+
+!    call write_2d_matrix(gx, name='gx')
+!    print *, "Norm2 =", sqrt(sum(gx**2))
+
+!    gradient(:, :) = gradient(:, :) + gx
+
+!    call write_2d_matrix(gradient, name='gradient')
+!    print *, "Norm2 =", sqrt(sum(gradient**2))
+!    print *, ''
+
+! end subroutine get_gradient
+
+
 !> Get electric field gradient
 subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    !> Instance of the solvation model
@@ -379,6 +476,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
 
    integer :: ii, iat, ig
    real(wp), allocatable :: gx(:, :), zeta(:), ef(:, :)
+   real(wp) :: tmp_force(3, mol%nat)
 
    type(cpcm_cache), pointer :: ptr
    call view(cache, ptr)
@@ -386,9 +484,9 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    write(*,*) '----------CHECKPOINT: get_gradient----------'
 
    ! allocate(gx(3, mol%nat), zeta(ptr%dd%ncav), ef(3, max(mol%nat, ptr%dd%ncav)))
-   allocate(gx(3, mol%nat))
-   allocate(zeta(ptr%xdd%constants%ncav))
-   allocate(ef(3, max(mol%nat, ptr%xdd%constants%ncav)))
+   ! allocate(gx(3, mol%nat))
+   ! allocate(zeta(ptr%xdd%constants%ncav))
+   ! allocate(ef(3, max(mol%nat, ptr%xdd%constants%ncav)))
 
    ! call solve_cosmo_adjoint(ptr%dd, ptr%ddx_state%psi, ptr%ddx_state%s, .true., &
    !    & accuracy=ptr%dd%conv*1e-3_wp)
@@ -412,38 +510,22 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    ! call efld(mol%nat, wfn%qat(:, 1), ptr%dd%xyz, ptr%dd%ncav, ptr%dd%ccav, ef)
    !call efld(mol%nat, wfn%qat(:, 1), mol%xyz, ptr%xdd%constants%ncav, ptr%xdd%constants%ccav, ef)
 
-
    ! call solvation_force_terms(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, ptr%ddx_state, &
    !    & ptr%ddx_electrostatics, ptr%force, ptr%ddx_error)
 
    call write_2d_matrix(ptr%force, name='force')
    print *, "Norm2 =", sqrt(sum(ptr%force**2))
-   
 
-   ! contract it with the zeta intermediate
-   ! ii = 0
-   ! do iat = 1, mol%nat
-   !    do ig = 1, ptr%xdd%constants%ngrid
-   !       if (self%xdd%constants%ui(ig, iat) > 0.0_wp) then
-   !          ii = ii + 1
-   !          gx(:, iat) = gx(:, iat) + ptr%zeta(ii)*ef(:, ii)
-   !       end if
-   !    end do
-   ! end do
+   tmp_force=0.0_wp
 
-   ! 2. "zeta's" electric field at the nuclei times the charges.
-   !    compute the "electric field"
-   ! call efld(ptr%xxd%constants%ncav, ptr%zeta, ptr%xxd%constants%ccav, mol%nat, mol%xyz, ef)
+   call multipole_force_terms(ptr%xdd%params, ptr%xdd%constants, &
+      & ptr%xdd%workspace, ptr%ddx_state, 0, ptr%ddx_state%psi, tmp_force, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
 
-   ! contract it with the solute's charges.
-   do iat = 1, mol%nat
-      gx(:, iat) = gx(:, iat) !+ ef(:, iat)*wfn%qat(iat, 1)
-   end do
+   call write_2d_matrix(tmp_force, name='tmp_force')
+   print *, "Norm2 =", sqrt(sum(tmp_force**2))
 
-   call write_2d_matrix(gx, name='gx')
-   print *, "Norm2 =", sqrt(sum(gx**2))
-
-   gradient(:, :) = gradient(:, :) + gx
+   gradient(:, :) = gradient(:, :)! + gx
 
    call write_2d_matrix(gradient, name='gradient')
    print *, "Norm2 =", sqrt(sum(gradient**2))
