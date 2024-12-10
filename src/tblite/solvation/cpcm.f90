@@ -142,13 +142,9 @@ module tblite_solvation_cpcm
 
       real(wp), allocatable :: force(:, :)
 
-      real(wp), allocatable :: multipoles(:,:)
-
       integer :: do_force = 0
-   
 
    end type cpcm_cache
-
 
    !> Identifier for container
    character(len=*), parameter :: label = "polarizable continuum model"
@@ -236,8 +232,16 @@ subroutine update(self, mol, cache)
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
+   !> Force calculation (always needed for Fock matrix potential)
    ptr%do_force = 1
+
+   !> Electrostatics at the cavity points
+   ! Electric potential
    ptr%ddx_electrostatics%do_phi = 1
+   ! Electric field
+   ptr%ddx_electrostatics%do_e = 1
+   ! Electric field gradient
+   ptr%ddx_electrostatics%do_g = 1
 
    ! ddinit
    ! 1-cosmo, 2-pcm
@@ -254,8 +258,10 @@ subroutine update(self, mol, cache)
    call check_error(ptr%ddx_error)
    write(*,*) '----------CHECKPOINT: allocate state done----------'
 
-   allocate(ptr%multipoles(1, ptr%xdd%params%nsph))
-   write(*,*) '----------CHECKPOINT: allocate multipoles done----------'
+   call allocate_electrostatics(ptr%xdd%params, ptr%xdd%constants,  &
+   ptr%ddx_electrostatics, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
+   write(*,*) '----------CHECKPOINT: allocate electrostatics done----------'
  
    allocate(ptr%jmat(ptr%xdd%constants%ncav, mol%nat))
 
@@ -290,7 +296,6 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    call taint(cache, ptr)
 
    energies(:) = energies + self%keps * sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
-   write(*,*) 'energy = ', sum(energies(:)) / 627.5095_wp
 
 end subroutine get_energy
 
@@ -311,31 +316,35 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
-   !> Calculate the multipole moments
-   ! With maximum angular momentum of the multipoles = 1:
-   ! We have charges, so we need to convert them to monopoles.
-   ! For charges the conversion is simply a scaling by 1/sqrt(4*pi).
-   ptr%multipoles(1, :) = wfn%qat(:, 1) / ( sqrt( 4 * pi ))
+   print *, '------------------------------------------------------------'
 
+   !> Multipole psi
+   ! Calculates the representation of the solute density in spherical harmonics.
+   !! (\f$ \Psi \f$). It is used as RHS for the adjoint linear system.
+   !! Dimension (nbasis, nsph).
+   !! This is identical to 'multipoles' in ddx_multipolar_solutes.
+   !! With maximum angular momentum of the multipoles = 1:
+   !! We have charges, so we need to convert them to monopoles.
+   !! For charges the conversion is simply a scaling by 1/sqrt(4*pi).
+   call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
+
+   ! todo: Do we need this?
    !> Multipole electrostatics
    ! Compute the electrostatic properties for a multipolar distributions of 
    ! arbitrary order, provided that they are given in real spherical harmonics.
    call multipole_electrostatics(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, &
-      ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
+      ptr%ddx_state%psi, 0, ptr%ddx_electrostatics, ptr%ddx_error)
    call check_error(ptr%ddx_error)
 
-   !> Calculate Representation of the solute density in spherical harmonics
-   !! (\f$ \Psi \f$). It is used as RHS for the adjoint linear system.
-   !! Dimension (nbasis, nsph).
-   call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
+   !> Contract with coulomb matrix to get phi_cav
+   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
 
    !> Calculate all solvation terms
-   call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, self%ddx_tol, &
-      & ptr%esolv, ptr%ddx_error, ptr%force)
+   call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
+      self%ddx_tol, ptr%esolv, ptr%ddx_error, ptr%force)
    call check_error(ptr%ddx_error)
 
-   write(*,*) ''
-   write(*,*) 'qat = ', wfn%qat(:, 1)
+   call write_vector(wfn%qat(:, 1), name='qat' )
    write(*,*) 'esolv = ', ptr%esolv
 
    ! We need the weights w, the switching function ui, the sp harm expansion v (v + w -> vw), and the solution to the COSMO eq S
@@ -347,6 +356,8 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    !> Caclulate the potential
    pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%ddx_state%xs(1, :)
+
+   call write_2d_matrix(ptr%force, name='force')
 
 end subroutine get_potential
 
@@ -368,24 +379,26 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
 
    integer :: ii, iat, ig
    real(wp), allocatable :: gx(:, :), zeta(:), ef(:, :)
-   type(cpcm_cache), pointer :: ptr
 
+   type(cpcm_cache), pointer :: ptr
    call view(cache, ptr)
 
    write(*,*) '----------CHECKPOINT: get_gradient----------'
 
    ! allocate(gx(3, mol%nat), zeta(ptr%dd%ncav), ef(3, max(mol%nat, ptr%dd%ncav)))
-   allocate(gx(3, mol%nat), zeta(ptr%xdd%constants%ncav), ef(3, max(mol%nat, ptr%xdd%constants%ncav)))
+   allocate(gx(3, mol%nat))
+   allocate(zeta(ptr%xdd%constants%ncav))
+   allocate(ef(3, max(mol%nat, ptr%xdd%constants%ncav)))
 
    ! call solve_cosmo_adjoint(ptr%dd, ptr%ddx_state%psi, ptr%ddx_state%s, .true., &
    !    & accuracy=ptr%dd%conv*1e-3_wp)
 
-   call solve_adjoint(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, ptr%ddx_state, self%ddx_tol, &
-      & ptr%ddx_error)
+   ! call solve_adjoint(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, ptr%ddx_state, self%ddx_tol, &
+   !    & ptr%ddx_error)
 
-   ! reset Phi
-   ! call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_state%phi_cav)
-   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
+   ! ! reset Phi
+   ! ! call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_state%phi_cav)
+   ! call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
 
    ! now call the routine that computes the ddcosmo specific contributions to the forces.
    !call get_deriv(ptr%dd, self%keps, ptr%ddx_state%phi_cav, ptr%ddx_state%xs, ptr%ddx_state%s, gx)
@@ -400,11 +413,12 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    !call efld(mol%nat, wfn%qat(:, 1), mol%xyz, ptr%xdd%constants%ncav, ptr%xdd%constants%ccav, ef)
 
 
-   call solvation_force_terms(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, ptr%ddx_state, &
-      & ptr%ddx_electrostatics, ptr%force, ptr%ddx_error)
+   ! call solvation_force_terms(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, ptr%ddx_state, &
+   !    & ptr%ddx_electrostatics, ptr%force, ptr%ddx_error)
 
-   write(*,*) 'force = ', ptr%force
-
+   call write_2d_matrix(ptr%force, name='force')
+   print *, "Norm2 =", sqrt(sum(ptr%force**2))
+   
 
    ! contract it with the zeta intermediate
    ! ii = 0
@@ -421,12 +435,20 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    !    compute the "electric field"
    ! call efld(ptr%xxd%constants%ncav, ptr%zeta, ptr%xxd%constants%ccav, mol%nat, mol%xyz, ef)
 
-   ! ! contract it with the solute's charges.
-   ! do iat = 1, mol%nat
-   !    gx(:, iat) = gx(:, iat) + ef(:, iat)*wfn%qat(iat, 1)
-   ! end do
+   ! contract it with the solute's charges.
+   do iat = 1, mol%nat
+      gx(:, iat) = gx(:, iat) !+ ef(:, iat)*wfn%qat(iat, 1)
+   end do
 
-   ! gradient(:, :) = gradient(:, :) + gx
+   call write_2d_matrix(gx, name='gx')
+   print *, "Norm2 =", sqrt(sum(gx**2))
+
+   gradient(:, :) = gradient(:, :) + gx
+
+   call write_2d_matrix(gradient, name='gradient')
+   print *, "Norm2 =", sqrt(sum(gradient**2))
+   print *, ''
+
 end subroutine get_gradient
 
 
@@ -612,7 +634,7 @@ subroutine write_vector(vector, name, unit)
        iunit = output_unit
    end if
 
-   if (present(name)) write(iunit,'(/,"vector printed:",1x,a)') name
+   if (present(name)) write(iunit,'(/,"vector:",1x,a)') name
 
    do j = 1, d
        write(iunit, '(i6)', advance='no') j
@@ -647,11 +669,11 @@ subroutine write_2d_matrix(matrix, name, unit, step)
        istep = 5
    end if
 
-   if (present(name)) write(iunit,'(/,"matrix printed:",1x,a)') name
+   if (present(name)) write(iunit,'(/,"matrix:",1x,a)') name
 
    do i = 1, d2, istep
        l = min(i+istep-1,d2)
-       write(iunit,'(/,6x)',advance='no')
+       write(iunit,'(6x)',advance='no')
        do k = i, l
            write(iunit,'(6x,i12,3x)',advance='no') k
        end do
