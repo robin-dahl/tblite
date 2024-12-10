@@ -42,6 +42,9 @@ module tblite_solvation_cpcm
    use ddx, only: fill_guess, fill_guess_adjoint, ddrun, solvation_force_terms, solve_adjoint
    use ddx_core, only: ddx_electrostatics_type, allocate_electrostatics
    use ddx_cosmo, only: cosmo_solve, cosmo_solve_adjoint
+
+   use ddx_multipolar_solutes, only: multipole_electrostatics
+
    implicit none
    private
 
@@ -139,6 +142,8 @@ module tblite_solvation_cpcm
 
       real(wp), allocatable :: force(:, :)
 
+      real(wp), allocatable :: multipoles(:,:)
+
       integer :: do_force = 0
    
 
@@ -219,9 +224,6 @@ subroutine update(self, mol, cache)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
 
-
-
-
    !> Number of grid points for each atom
    integer :: nang = grid_size(6)
    !> Scaling of van-der-Waals radii
@@ -234,7 +236,8 @@ subroutine update(self, mol, cache)
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
-   ptr%do_force = 0
+   ptr%do_force = 1
+   ptr%ddx_electrostatics%do_phi = 1
 
    ! ddinit
    ! 1-cosmo, 2-pcm
@@ -244,7 +247,6 @@ subroutine update(self, mol, cache)
    write(*,*) '----------CHECKPOINT: ddinit done----------'
 
    print *, 'ptr%xdd%params%force', ptr%xdd%params%force
-
    allocate(ptr%force(3, ptr%xdd%params%nsph))
 
    call allocate_state(ptr%xdd%params, ptr%xdd%constants,  &
@@ -252,10 +254,8 @@ subroutine update(self, mol, cache)
    call check_error(ptr%ddx_error)
    write(*,*) '----------CHECKPOINT: allocate state done----------'
 
-   call allocate_electrostatics(ptr%xdd%params, ptr%xdd%constants,  &
-      ptr%ddx_electrostatics, ptr%ddx_error)
-   call check_error(ptr%ddx_error)
-   write(*,*) '----------CHECKPOINT: allocate electrostatics done----------'
+   allocate(ptr%multipoles(1, ptr%xdd%params%nsph))
+   write(*,*) '----------CHECKPOINT: allocate multipoles done----------'
  
    allocate(ptr%jmat(ptr%xdd%constants%ncav, mol%nat))
 
@@ -264,6 +264,10 @@ subroutine update(self, mol, cache)
 
    allocate(ptr%zeta(ptr%xdd%params%ngrid * ptr%xdd%params%nsph))
    write(*,*) '----------CHECKPOINT: got zeta----------'
+
+   ! Activate fast multipole method
+   ptr%xdd%params%fmm = .true.
+
 
 end subroutine update
 
@@ -307,17 +311,25 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
+   !> Calculate the multipole moments
+   ! With maximum angular momentum of the multipoles = 1:
+   ! We have charges, so we need to convert them to monopoles.
+   ! For charges the conversion is simply a scaling by 1/sqrt(4*pi).
+   ptr%multipoles(1, :) = wfn%qat(:, 1) / ( sqrt( 4 * pi ))
 
-   !> Calculate Electric potential at the cavity points. It is used to construct
-   !! the RHS for the primal linear system. Dimension (ncav).
-   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
+   !> Multipole electrostatics
+   ! Compute the electrostatic properties for a multipolar distributions of 
+   ! arbitrary order, provided that they are given in real spherical harmonics.
+   call multipole_electrostatics(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, &
+      ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
 
    !> Calculate Representation of the solute density in spherical harmonics
    !! (\f$ \Psi \f$). It is used as RHS for the adjoint linear system.
    !! Dimension (nbasis, nsph).
    call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
 
-   !> Calculate the solvation energy
+   !> Calculate all solvation terms
    call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, self%ddx_tol, &
       & ptr%esolv, ptr%ddx_error, ptr%force)
    call check_error(ptr%ddx_error)
@@ -331,15 +343,10 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    call get_zeta(ptr, self%keps)
 
    ! Contract with the Coulomb matrix
-   write(*,*) ' pre pot = ', pot%vat(:, 1)
-
    call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t')
-
-   write(*,*) ' past gemv pot = ', pot%vat(:, 1)
 
    !> Caclulate the potential
    pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%ddx_state%xs(1, :)
-   write(*,*) ' past pot = ', pot%vat(:, 1)
 
 end subroutine get_potential
 
