@@ -52,7 +52,7 @@ module tblite_solvation_ddx
       !> Regularization parameter
       real(wp) :: eta = 2.0_wp
       !> Maximum angular momentum of basis functions
-      integer :: lmax = 6
+      integer :: lmax =  6
       !> Van-der-Waals radii for all species
       real(wp), allocatable :: rvdw(:)
    end type ddx_input
