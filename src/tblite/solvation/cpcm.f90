@@ -62,7 +62,7 @@ module tblite_solvation_cpcm
       !> Accuracy for iterative solver
       real(wp) :: conv = 1.0e-8_wp
       !> Regularization parameter
-      real(wp) :: eta = 2.0_wp
+      real(wp) :: eta = 0.1_wp ! 2.0_wp
       !> Maximum angular momentum of basis functions
       integer :: lmax = 6
       !> Van-der-Waals radii for all species
@@ -189,7 +189,7 @@ subroutine new_cpcm(self, mol, input, error)
 
    write(*,*) 'rvdw = ', self%rvdw
 
-   ! Epssilon
+   ! Epsilon
    self%dielectric_const = input%dielectric_const
 
    write(*,*) 'dielectric_const = ', self%dielectric_const
@@ -247,15 +247,11 @@ subroutine update(self, mol, cache)
    ! Electric field gradient
    ptr%ddx_electrostatics%do_g = 1
 
-   ! Multipoles allocation 
-   allocate(ptr%multipoles(1, mol%nat))
-
-
 
    ! ddinit
    ! 1-cosmo, 2-pcm
    call ddinit(1, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%xdd, &
-      & ptr%ddx_error, ngrid=302, lmax=6, nproc=8, force=ptr%do_force)
+      & ptr%ddx_error, ngrid=302, lmax=6, nproc=8, force=ptr%do_force, eta=1.0_wp)
    call check_error(ptr%ddx_error)
    write(*,*) '----------CHECKPOINT: ddinit done----------'
 
@@ -267,21 +263,31 @@ subroutine update(self, mol, cache)
    call check_error(ptr%ddx_error)
    write(*,*) '----------CHECKPOINT: allocate state done----------'
 
-   call allocate_electrostatics(ptr%xdd%params, ptr%xdd%constants,  &
-   ptr%ddx_electrostatics, ptr%ddx_error)
-   call check_error(ptr%ddx_error)
-   write(*,*) '----------CHECKPOINT: allocate electrostatics done----------'
+
+   ! call allocate_electrostatics(ptr%xdd%params, ptr%xdd%constants,  &
+   ! ptr%ddx_electrostatics, ptr%ddx_error)
+   ! call check_error(ptr%ddx_error)
+   ! write(*,*) '----------CHECKPOINT: allocate electrostatics done----------'
  
    allocate(ptr%jmat(ptr%xdd%constants%ncav, mol%nat))
 
    call get_coulomb_matrix(mol%xyz, ptr%xdd%constants%ccav, ptr%jmat)
    write(*,*) '----------CHECKPOINT: got J matrix----------'
 
-   allocate(ptr%zeta(ptr%xdd%params%ngrid * ptr%xdd%params%nsph))
-   write(*,*) '----------CHECKPOINT: got zeta----------'
+   allocate(ptr%zeta(ptr%xdd%constants%ncav))
+   write(*,*) '----------CHECKPOINT: allocate zeta----------'
 
    ! Activate fast multipole method
    ptr%xdd%params%fmm = .true.
+
+
+   ! Multipoles allocation 
+   allocate(ptr%multipoles(1, mol%nat))
+
+
+   ! write(*,*) 'ccav = ', ptr%xdd%constants%ccav 
+   write(*,*) 'ncav', ptr%xdd%constants%ncav 
+   ! stop  
 
 
 end subroutine update
@@ -297,13 +303,24 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    type(wavefunction_type), intent(in) :: wfn
    !> Solvation free energy
    real(wp), intent(inout) :: energies(:)
+   real(wp), external :: ddot
+
 
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
+   
+   
+   ! energies(:) = energies + self%keps * sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
+   energies(:) = energies + self%keps *sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
 
-   energies(:) = energies + self%keps * sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
+   !call write_vector(energies, name='energies')
+
+   write(*,*) 'xs', ptr%ddx_state%xs
+
+   write(*,*) 'energy = ', sum(energies(:))
+
    
 end subroutine get_energy
 
@@ -327,6 +344,19 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    print *, '------------------------------------------------------------'
 
+
+    !>Calculate electrostatic properties
+   ! Compute the electrostatic properties for a multipolar distributions of 
+   ! arbitrary order, provided that they are given in real spherical harmonics.
+   ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4*pi)
+   call multipole_electrostatics(ptr%xdd % params, ptr%xdd % constants, &
+      & ptr%xdd % workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
+
+
+   !> Contract with coulomb matrix to get phi_cav
+   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
+   write(*,*) 'phi: ', ptr%ddx_electrostatics%phi_cav
+
    !> Multipole psi
    ! Calculates the representation of the solute density in spherical harmonics.
    !! (\f$ \Psi \f$). It is used as RHS for the adjoint linear system.
@@ -336,21 +366,18 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    !! We have charges, so we need to convert them to monopoles.
    !! For charges the conversion is simply a scaling by 1/sqrt(4*pi).
    call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
-
-   !> Contract with coulomb matrix to get phi_cav
-   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
-
-   !>Calculate electrostatic properties
-   ! Compute the electrostatic properties for a multipolar distributions of 
-   ! arbitrary order, provided that they are given in real spherical harmonics.
-   ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4*pi)
-   call multipole_electrostatics(ptr%xdd % params, ptr%xdd % constants, &
-      & ptr%xdd % workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
+   !write(*,*) 'psi: ', ptr%ddx_state%psi
 
    !> Calculate all solvation terms
    call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
       self%ddx_tol, ptr%esolv, ptr%ddx_error, ptr%force)
    call check_error(ptr%ddx_error)
+
+   ! write(*,*) 'phi: ', ptr%ddx_electrostatics%phi_cav
+   write(*,*) 'size phi: ', size(ptr%ddx_electrostatics%phi_cav)
+   write(*,*) 'ncav :', ptr%xdd%constants%ncav 
+   write(*,*) 'ncav sph :', ptr%xdd%constants%ncav_sph 
+   write(*,*) 'ngrid :', ptr%xdd%params%ngrid
 
    call write_vector(wfn%qat(:, 1), name='qat' )
    write(*,*) 'esolv = ', ptr%esolv
@@ -359,13 +386,27 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    ! allocate(ptr%zeta(ptr%xdd%constants%ncav))
    call get_zeta(ptr, self%keps)
 
+
+   ! write(*,*) 'jmat: ', ptr%jmat
+   write(*,*) 'zeta:', ptr%zeta
+   write(*,*) 'size zeta', size(ptr%zeta)
+   write(*,*) ' '
+   write(*,*) '-----------------------------------'
+
+   write(*,*) 'pre pre pot: ', pot%vat(:, 1)
    ! Contract with the Coulomb matrix
    call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t')
 
+   write(*,*) ' pre pot = ', pot%vat(:, 1)
    !> Caclulate the potential
    pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%ddx_state%xs(1, :)
+   write(*,*) 'pot: ', pot%vat(:, 1)
 
-   call write_2d_matrix(ptr%force, name='force')
+   write(*,*) '-----------------------------------'
+   write(*,*) ' '
+
+  
+   !call write_2d_matrix(ptr%force, name='force')
 
 end subroutine get_potential
 
@@ -384,7 +425,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    real(wp), contiguous, intent(inout) :: gradient(:, :)
    !> Strain derivatives of the solvation free energy
    real(wp), contiguous, intent(inout) :: sigma(:, :)
-
+   
    integer :: ii, iat, ig
    real(wp), allocatable :: gx(:, :), zeta(:), ef(:, :)
 
@@ -395,22 +436,27 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
 
    write(*,*) '----------CHECKPOINT: get_gradient----------'
 
+   
    ! Solute-aspecific force term from <solvation_force_terms> in ddrun
-   call write_2d_matrix(ptr%force , name='solvation force')
+   !call write_2d_matrix(ptr%force , name='solvation force')
 
+   temp_forces = 0.0_wp
    ! Solute specific term
    call multipole_force_terms(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, &
       ptr%ddx_state, 0, ptr%multipoles, temp_forces, ptr%ddx_error)
    call write_2d_matrix(temp_forces, name='solute force')
 
+
    ! Total force
-   ptr%force = ptr%force + temp_forces
-   call write_2d_matrix(ptr%force, name='total force')
+   ptr%force =  2.0_wp * self%keps * (ptr%force + temp_forces) 
+   !call write_2d_matrix(ptr%force, name='total force')
+   !print *, "Norm1 =", sqrt(sum(ptr%force**2))
+   print *, ''
 
    ! Gradient
-   gradient =  (gradient + ptr%force)
+   gradient =  gradient + ptr%force
    call write_2d_matrix(gradient, name='gradient + force')
-   print *, "Norm2 =", sqrt(sum(gradient**2))
+   !print *, "Norm2 =", sqrt(sum(gradient**2))
    print *, ''
 
 end subroutine get_gradient
@@ -557,12 +603,12 @@ subroutine get_zeta(self, keps)
    ! write(*,*) 'ngrid = ', self%xdd%params%ngrid yes
    ! write(*,*) 'keps = ', keps yes
    ! write(*,*) 'ui = ', 
-   ! call write_2d_matrix(self%xdd%constants%ui, name='ui', step=5) NO
+   call write_2d_matrix(self%xdd%constants%ui, name='ui') 
    ! write(*,*) 'vgrid = ', self%xdd%constants%vgrid yes
    ! write(*,*) 'wgrid = ', self%xdd%constants%wgrid yes 
-   !  write(*,*) 's zeta = ', self%ddx_state%s 
+   ! write(*,*) 's = ', self%ddx_state%s 
 
-   ! => S, XS, AND UI DIFFERENT TO LEGACY CODE
+   ! => S AND UI DIFFERENT TO LEGACY CODE
 
 
    ii = 0

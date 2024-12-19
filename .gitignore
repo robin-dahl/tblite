@@ -37,3 +37,10 @@
 
 # Python files
 __pycache__
+
+/nacl
+
+/lif
+/kbr
+
+/pyddx

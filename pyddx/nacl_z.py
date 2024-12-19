@@ -5,14 +5,15 @@ tobohr = 1 / 0.52917721092
 
 charges = np.array([
    #   -0.50000000000000000,      -0.50000000000000000
-   -0.79715541, 0.79715541
+   #-0.79715541, 0.79715541
+   -0.80414555, -0.80414555
 ])
 rvdw =  np.array([
     3.8739385554719026,        3.4015070243167926
 ])
 centres = tobohr *  np.array([
     [ 0.00000,  0.00000, 0.00000],
-    [ 0.00000,  0.00000, 2.50000],
+    [ 0.00000,  0.00000, 3.100000],
 ]).T
 
 model = pyddx.Model("cosmo", centres, rvdw, solvent_epsilon=78.359999999999999,
@@ -38,12 +39,13 @@ state.solve_adjoint()
 energy = 0.5 * np.sum(state.x * solute_psi)
 force = state.solvation_force_terms(solute_field)
 force += state.multipole_force_terms(solute_multipoles);
-
+norm_force = np.sqrt(sum(force**2))
 print(f'multipole force term {state.multipole_force_terms(solute_multipoles)}')
 
 # Show results
 print('energy',energy)
 print('force',force)
+print('norm force', norm_force)
 #print('x',state.x)
 #print('s',state.s)
 
