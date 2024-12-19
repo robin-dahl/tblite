@@ -203,7 +203,7 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
       call calc%coulomb%update(mol, ccache)
       call timer%pop
    end if
-
+   print*,"JOJOJOJOJO"
    if (prlevel > 1) &
       call ctx%message(label_electrons // format_string(wfn%nocc, real_format) // " e")
 
