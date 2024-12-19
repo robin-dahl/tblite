@@ -284,12 +284,6 @@ subroutine update(self, mol, cache)
    ! Multipoles allocation 
    allocate(ptr%multipoles(1, mol%nat))
 
-
-   ! write(*,*) 'ccav = ', ptr%xdd%constants%ccav 
-   write(*,*) 'ncav', ptr%xdd%constants%ncav 
-   ! stop  
-
-
 end subroutine update
 
 
@@ -314,12 +308,6 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    
    ! energies(:) = energies + self%keps * sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
    energies(:) = energies + self%keps *sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
-
-   !call write_vector(energies, name='energies')
-
-   write(*,*) 'xs', ptr%ddx_state%xs
-
-   write(*,*) 'energy = ', sum(energies(:))
 
    
 end subroutine get_energy
@@ -355,7 +343,6 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    !> Contract with coulomb matrix to get phi_cav
    call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
-   write(*,*) 'phi: ', ptr%ddx_electrostatics%phi_cav
 
    !> Multipole psi
    ! Calculates the representation of the solute density in spherical harmonics.
@@ -373,40 +360,18 @@ subroutine get_potential(self, mol, cache, wfn, pot)
       self%ddx_tol, ptr%esolv, ptr%ddx_error, ptr%force)
    call check_error(ptr%ddx_error)
 
-   ! write(*,*) 'phi: ', ptr%ddx_electrostatics%phi_cav
-   write(*,*) 'size phi: ', size(ptr%ddx_electrostatics%phi_cav)
-   write(*,*) 'ncav :', ptr%xdd%constants%ncav 
-   write(*,*) 'ncav sph :', ptr%xdd%constants%ncav_sph 
-   write(*,*) 'ngrid :', ptr%xdd%params%ngrid
 
    call write_vector(wfn%qat(:, 1), name='qat' )
-   write(*,*) 'esolv = ', ptr%esolv
 
    ! We need the weights w, the switching function ui, the sp harm expansion v (v + w -> vw), and the solution to the COSMO eq S
    ! allocate(ptr%zeta(ptr%xdd%constants%ncav))
    call get_zeta(ptr, self%keps)
 
-
-   ! write(*,*) 'jmat: ', ptr%jmat
-   write(*,*) 'zeta:', ptr%zeta
-   write(*,*) 'size zeta', size(ptr%zeta)
-   write(*,*) ' '
-   write(*,*) '-----------------------------------'
-
-   write(*,*) 'pre pre pot: ', pot%vat(:, 1)
    ! Contract with the Coulomb matrix
    call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t')
 
-   write(*,*) ' pre pot = ', pot%vat(:, 1)
    !> Caclulate the potential
    pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%ddx_state%xs(1, :)
-   write(*,*) 'pot: ', pot%vat(:, 1)
-
-   write(*,*) '-----------------------------------'
-   write(*,*) ' '
-
-  
-   !call write_2d_matrix(ptr%force, name='force')
 
 end subroutine get_potential
 
@@ -437,8 +402,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    write(*,*) '----------CHECKPOINT: get_gradient----------'
 
    
-   ! Solute-aspecific force term from <solvation_force_terms> in ddrun
-   !call write_2d_matrix(ptr%force , name='solvation force')
+   
 
    temp_forces = 0.0_wp
    ! Solute specific term
@@ -449,8 +413,8 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
 
    ! Total force
    ptr%force =  2.0_wp * self%keps * (ptr%force + temp_forces) 
-   !call write_2d_matrix(ptr%force, name='total force')
-   !print *, "Norm1 =", sqrt(sum(ptr%force**2))
+   call write_2d_matrix(ptr%force, name='total force')
+   print *, "Norm1 =", sqrt(sum(ptr%force**2))
    print *, ''
 
    ! Gradient
@@ -599,16 +563,6 @@ subroutine get_zeta(self, keps)
 
    integer :: its, iat, ii
    real, dimension(74, 2) :: ui_temp
-
-   ! write(*,*) 'ngrid = ', self%xdd%params%ngrid yes
-   ! write(*,*) 'keps = ', keps yes
-   ! write(*,*) 'ui = ', 
-   call write_2d_matrix(self%xdd%constants%ui, name='ui') 
-   ! write(*,*) 'vgrid = ', self%xdd%constants%vgrid yes
-   ! write(*,*) 'wgrid = ', self%xdd%constants%wgrid yes 
-   ! write(*,*) 's = ', self%ddx_state%s 
-
-   ! => S AND UI DIFFERENT TO LEGACY CODE
 
 
    ii = 0
