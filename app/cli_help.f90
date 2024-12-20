@@ -125,8 +125,13 @@ module tblite_cli_help
       "                           Solvent is specified by dielectric constant."//nl//&
       "--gbsa <real>              Use generalized Born solvation model."//nl//&
       "                           Solvent is specified by dielectric constant."//nl//&
-      "--cpcm <real>              Use polarizable continuum solvation model."//nl//&
+      "--cpcm <real>              Use conductor-like polarizable continuum solvation model."//nl//&
       "                           Solvent is specified by dielectric constant."//nl//&
+      "--pcm <real>               Use polarizable continuum solvation model."//nl//&
+      "                           Solvent is specified by dielectric constant."//nl//&
+      "--lpb <real>               Use linearized poisson-boltzmann solvation model."//nl//&
+      "                           Solvent is specified by dielectric constant."//nl//&
+
       "      --spin-polarized     Use spin-polarized xTB Hamiltonian"//nl//&
       "--post-processing <file>   Add post processing methods to the calculation"//nl//&
       "                           by using a toml file as input."//nl//&

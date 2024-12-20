@@ -25,7 +25,7 @@ module tblite_solvation
    use mctc_env, only : error_type, fatal_error
    use mctc_io, only : structure_type
    use tblite_solvation_alpb, only : alpb_solvation, new_alpb, alpb_input
-   use tblite_solvation_cpcm, only : cpcm_solvation, new_cpcm, cpcm_input
+   use tblite_solvation_ddx, only : ddx_solvation, new_ddx, ddx_input
    use tblite_solvation_data, only : solvent_data, get_solvent_data
    use tblite_solvation_input, only : solvation_input
    use tblite_solvation_type, only : solvation_type
@@ -33,7 +33,7 @@ module tblite_solvation
    private
 
    public :: alpb_solvation, new_alpb, alpb_input
-   public :: cpcm_solvation, new_cpcm, cpcm_input
+   public :: ddx_solvation, new_ddx, ddx_input
    public :: solvent_data, get_solvent_data
    public :: solvation_input, new_solvation, solvation_type
 
@@ -56,8 +56,8 @@ subroutine new_solvation(solv, mol, input, error)
       return
    end if
 
-   if (allocated(input%cpcm)) then
-      solv = cpcm_solvation(mol, input%cpcm)
+   if (allocated(input%ddx)) then
+      solv = ddx_solvation(mol, input%ddx)
       return
    end if
 

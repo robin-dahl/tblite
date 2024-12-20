@@ -20,15 +20,15 @@
 !> Collection of the configuration types for all available implicit solvation models
 module tblite_solvation_input
    use tblite_solvation_alpb, only : alpb_input
-   use tblite_solvation_cpcm, only : cpcm_input
+   use tblite_solvation_ddx, only : ddx_input
    implicit none
    private
 
 
    !> Collection of possible solvation models
    type, public :: solvation_input
-      !> Input for CPCM solvation model
-      type(cpcm_input), allocatable :: cpcm
+      !> Input for ddX solvation model
+      type(ddx_input), allocatable :: ddx
       !> Input for ALPB solvation model
       type(alpb_input), allocatable :: alpb
    end type solvation_input

@@ -50,7 +50,7 @@ tests = [
   'slater-expansion',
   'spin',
   'solvation-born',
-  'solvation-cpcm',
+  'solvation-ddx',
   'solvation-surface',
   'tagged-io',
   'xtb-param',

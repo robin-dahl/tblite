@@ -66,7 +66,7 @@ Supported geometry input formats are:
      Solvent is specified by dielectric constant or solvent name.
      **Important**: This feature is not stable and results are subject to change.
 
-*--cpcm* _real_|_string_::
+*--ddx* _real_|_string_::
      Use conductor-like polarizable continuum solvation model.
      Solvent is specified by dielectric constant or solvent name.
      **Important**: This feature is not stable and results are subject to change.

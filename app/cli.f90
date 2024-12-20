@@ -24,7 +24,7 @@ module tblite_cli
       & help_text_fit, help_text_tagdiff, help_text_guess
    use tblite_features, only : get_tblite_feature
    use tblite_lapack_solver, only : lapack_algorithm
-   use tblite_solvation, only : solvation_input, cpcm_input, alpb_input, &
+   use tblite_solvation, only : solvation_input, ddx_input, alpb_input, &
       & solvent_data, get_solvent_data
    use tblite_version, only : get_tblite_version
    implicit none
@@ -249,6 +249,7 @@ subroutine get_run_arguments(config, list, start, error)
    logical :: getopts
    character(len=:), allocatable :: arg
    logical :: alpb
+   integer :: ddx_model
    type(solvent_data) :: solvent
 
    iarg = start
@@ -335,15 +336,25 @@ subroutine get_run_arguments(config, list, start, error)
          iarg = iarg + 1
          call list%get(iarg, config%guess)
 
-      case("--cpcm")
+      case("--cpcm" , "--cosmo", "--pcm", "--lpb")
          if (allocated(config%solvation)) then
-            call fatal_error(error, "Cannot use CPCM if ALPB/GBSA is enabled")
+            call fatal_error(error, "Cannot use ddX if ALPB/GBSA is enabled")
+            exit
+         end if
+         if (arg == "--cpcm" .or. arg == "--cosmo") then
+            ddx_model = 1
+         else if (arg == "--pcm") then
+            ddx_model = 2
+         else if (arg == "--lpb") then
+            ddx_model = 3
+         else 
+            call fatal_error(error, "Unknown ddX solvation model '"//arg//"' specified")
             exit
          end if
          iarg = iarg + 1
          call list%get(iarg, arg)
          if (.not.allocated(arg)) then
-            call fatal_error(error, "Missing argument for CPCM")
+            call fatal_error(error, "Missing argument for ddX solvation")
             exit
          end if
 
@@ -353,11 +364,11 @@ subroutine get_run_arguments(config, list, start, error)
          end if
          if (allocated(error)) exit
          allocate(config%solvation)
-         config%solvation%cpcm = cpcm_input(solvent%eps)
+         config%solvation%ddx = ddx_input(solvent%eps, ddx_model)
 
       case("--alpb", "--gbsa")
          if (allocated(config%solvation)) then
-            call fatal_error(error, "Cannot use ALPB/GBSA if CPCM is enabled")
+            call fatal_error(error, "Cannot use ALPB/GBSA if ddX is enabled")
             exit
          end if
          alpb = arg == "--alpb"

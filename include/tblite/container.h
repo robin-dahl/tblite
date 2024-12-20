@@ -50,15 +50,15 @@ tblite_new_spin_polarization(tblite_context ctx,
                              tblite_calculator calc,
                              double wscale);
 
-#define tblite_new_cpcm_solvation(ctx, mol, calc, x)            \
+#define tblite_new_ddx_solvation(ctx, mol, calc, x)            \
                         _Generic((x),                           \
                                 char*                           \
-                                : tblite_new_cpcm_solvation_solvent,\
+                                : tblite_new_ddx_solvation_solvent,\
                                 double                          \
-                                : tblite_new_cpcm_solvation_epsilon \
+                                : tblite_new_ddx_solvation_epsilon \
                                 ) (ctx, mol, calc, x)
 
-/// Create new CPCM implicit solvation container using internal parameters
+/// Create new ddX implicit solvation container using internal parameters
 ///
 /// @param ctx: Context handle
 /// @param mol: Molecular structure data
@@ -66,12 +66,12 @@ tblite_new_spin_polarization(tblite_context ctx,
 /// @param eps: epsilon value for solvent
 /// @return New interaction container
 TBLITE_API_ENTRY tblite_container TBLITE_API_CALL
-tblite_new_cpcm_solvation_epsilon(tblite_context ctx,
+tblite_new_ddx_solvation_epsilon(tblite_context ctx,
                           tblite_structure mol,
                           tblite_calculator calc,
                           double eps);
 
-/// Create new CPCM implicit solvation container using internal parameters
+/// Create new ddX implicit solvation container using internal parameters
 ///
 /// @param ctx: Context handle
 /// @param mol: Molecular structure data
@@ -79,7 +79,7 @@ tblite_new_cpcm_solvation_epsilon(tblite_context ctx,
 /// @param solvent: Solvent to be modelled, can be given as name of solvent or epsilon value
 /// @return New interaction container
 TBLITE_API_ENTRY tblite_container TBLITE_API_CALL
-tblite_new_cpcm_solvation_solvent(tblite_context ctx,
+tblite_new_ddx_solvation_solvent(tblite_context ctx,
                           tblite_structure mol,
                           tblite_calculator calc,
                           char* solvent);
