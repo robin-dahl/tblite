@@ -28,10 +28,10 @@ module tblite_solvation_cpcm
    use tblite_scf_info, only : scf_info, atom_resolved
    use tblite_scf_potential, only : potential_type
    use tblite_wavefunction_type, only : wavefunction_type
-   ! use tblite_solvation_cpcm_dd
    use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
 
+   use omp_lib, only : omp_get_max_threads
 
    use iso_fortran_env, only : output_unit
 
@@ -55,37 +55,34 @@ module tblite_solvation_cpcm
    type :: cpcm_input
       !> Dielectric constant
       real(wp) :: dielectric_const
-      !> Number of grid points for each atom
-      integer :: nang = grid_size(6)
+      !> ddx model
+      integer :: ddx_model = 1
       !> Scaling of van-der-Waals radii
       real(wp) :: rscale = 1.0_wp
       !> Accuracy for iterative solver
       real(wp) :: conv = 1.0e-8_wp
       !> Regularization parameter
-      real(wp) :: eta = 0.1_wp ! 2.0_wp
+      real(wp) :: eta = 1.0_wp
+      !> Number of grid points for each atom
+      integer :: nang = grid_size(14)
       !> Maximum angular momentum of basis functions
       integer :: lmax = 6
       !> Van-der-Waals radii for all species
       real(wp), allocatable :: rvdw(:)
+      !> Number of OMP threads
+      integer :: nproc = 1
    end type cpcm_input
-
 
    !> Definition of polarizable continuum model
    type, extends(solvation_type) :: cpcm_solvation
-      !> Actual domain decomposition calculator
-      ! type(domain_decomposition) :: dd
-
+      ! !> ddX instance
+      type(cpcm_input) :: cpcm_input
       !> Dielectric function
       real(wp) :: keps
       !> Dielctric constant
       real(wp) :: dielectric_const
       !> Van-der-Waal radii for all atoms
       real(wp), allocatable :: rvdw(:)
-
-
-      
-      real(wp) :: ddx_tol = 1.0e-11_wp
-
    contains
       !> Update cache from container
       procedure :: update
@@ -107,55 +104,29 @@ module tblite_solvation_cpcm
 
    !> Restart data for CPCM calculation
    type :: cpcm_cache
-      !> Actual domain decomposition calculator
-      ! type(domain_decomposition) :: dd
+      !> ddX instance
       type(ddx_type) :: xdd 
-
+      !> ddX container with quantities common to all models
       type(ddx_state_type) :: ddx_state
-      
-      type(ddx_error_type) :: ddx_error
-
+      !> ddX container for the electrostatic properties  
       type(ddx_electrostatics_type) :: ddx_electrostatics
-
-      ! !> Electrostatic potential phi(ncav)
-      ! ! ddx_state%phi_cav
-      ! real(wp), allocatable :: phi(:) !phi_cav ?
-
-      ! !> Psi vector psi(nylm, n)
-      ! ! ddx_state%psi
-      ! real(wp), allocatable :: psi(:, :)
-
-      ! !> CPCM solution sigma(nylm, n)
-      ! ! ddx_state%xs
-      ! real(wp), allocatable :: sigma(:, :)
-
-      ! !> CPCM adjoint solution s(nylm, n)
-      ! ! ddx_state%s
-      ! real(wp), allocatable :: s(:, :)
-
+      !> ddX error handling
+      type(ddx_error_type) :: ddx_error
       !> Interaction matrix with surface charges jmat(ncav, nat)
       real(wp), allocatable :: jmat(:, :)
-
+      !> Solvation energy as returned by ddx
       real(wp) :: esolv
-
+      !> ddx 
       real(wp), allocatable :: zeta(:)
-
+      !> ddx multipole, (1, mol%nat)
       real(wp), allocatable :: multipoles(:, :)
-
+      !> ddx forces (i.e. gradient of the solvation energy)
       real(wp), allocatable :: force(:, :)
 
-      integer :: do_force = 0
-
-      
 
    end type cpcm_cache
 
-   !> Identifier for container
-   character(len=*), parameter :: label = "polarizable continuum model"
-
    real(wp), parameter :: alpha_alpb = 0.571412_wp
-   integer, parameter :: ndiis = 25
-
 
 contains
 
@@ -172,35 +143,35 @@ subroutine new_cpcm(self, mol, input, error)
    type(error_type), allocatable, intent(out) :: error
 
    integer :: iat, izp
-   ! real(wp), allocatable :: ang_grid(:, :), ang_weight(:)
 
-   self%label = label
+   ! Set label
+   if (input%ddx_model == 1) then
+      self%label = "ddcpcm solvation model"
+   else if (input%ddx_model == 2) then
+      self%label = "ddpcm solvation model"
+   else if (input%ddx_model == 3) then
+      self%label = "ddlpb solvation model"
+   end if
 
-   ! Radii for all atoms
+   ! Get number of OMP threads
+   self%cpcm_input%nproc = omp_get_max_threads()
+
+   ! Get radii for all atoms
    allocate(self%rvdw(mol%nat))
    if (allocated(input%rvdw)) then
-      self%rvdw(:) = input%rscale*input%rvdw(mol%id)
+      self%rvdw(:) = input%rscale * input%rvdw(mol%id)
    else
       do iat = 1, mol%nat
          izp = mol%num(mol%id(iat))
-         self%rvdw(iat) = input%rscale*get_vdw_rad_cosmo(izp)
+         self%rvdw(iat) = input%rscale * get_vdw_rad_cosmo(izp)
       end do
    end if
 
-   write(*,*) 'rvdw = ', self%rvdw
-
-   ! Epsilon
+   ! Calculate Epsilon and keps
    self%dielectric_const = input%dielectric_const
-
-   write(*,*) 'dielectric_const = ', self%dielectric_const
-
-   ! keps
    self%keps = -0.5_wp * (1.0_wp/self%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
 
-   write(*,*) 'keps = ', self%keps
-
 end subroutine new_cpcm
-
 
 !> Type constructor for CPCM splvation
 function create_cpcm(mol, input) result(self)
@@ -210,10 +181,15 @@ function create_cpcm(mol, input) result(self)
    type(cpcm_input), intent(in) :: input
    !> Instance of the solvation model
    type(cpcm_solvation) :: self
-
+   !> Error handling
    type(error_type), allocatable :: error
 
+   !> Create new instance of the solvation model
    call new_cpcm(self, mol, input, error)
+   if (allocated(error)) then
+      call fatal_error(error)
+   end if
+
 end function create_cpcm
 
 
@@ -224,68 +200,45 @@ subroutine update(self, mol, cache)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
 
-   !> Number of grid points for each atom
-   integer :: nang = grid_size(6)
-   !> Scaling of van-der-Waals radii
-   real(wp) :: rscale = 1.0_wp
-   !> Maximum angular momentum of basis functions
-   integer :: lmax = 6
-
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
 
-   !> Force calculation (always needed for Fock matrix potential)
-   ptr%do_force = 1
-
    !> Electrostatics at the cavity points
    ! Electric potential
-   ptr%ddx_electrostatics%do_phi = 1
+   ptr%ddx_electrostatics%do_phi = .true.
    ! Electric field
-   ptr%ddx_electrostatics%do_e = 1
+   ptr%ddx_electrostatics%do_e = .true.
    ! Electric field gradient
-   ptr%ddx_electrostatics%do_g = 1
+   ptr%ddx_electrostatics%do_g = .true.
 
-
-   ! ddinit
-   ! 1-cosmo, 2-pcm
-   call ddinit(1, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%xdd, &
-      & ptr%ddx_error, ngrid=302, lmax=6, nproc=8, force=ptr%do_force, eta=1.0_wp)
+   ! initialize ddx
+   call ddinit(self%cpcm_input%ddx_model, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%xdd, &
+      & ptr%ddx_error, force=1, &
+      & ngrid=self%cpcm_input%nang, lmax=self%cpcm_input%lmax, &
+      & nproc=self%cpcm_input%nproc , eta=self%cpcm_input%eta)
    call check_error(ptr%ddx_error)
-   write(*,*) '----------CHECKPOINT: ddinit done----------'
 
-   print *, 'ptr%xdd%params%force', ptr%xdd%params%force
+   ! Allocate forces
    allocate(ptr%force(3, ptr%xdd%params%nsph))
 
+   ! Initialize ddx_state
    call allocate_state(ptr%xdd%params, ptr%xdd%constants,  &
       ptr%ddx_state, ptr%ddx_error)
    call check_error(ptr%ddx_error)
-   write(*,*) '----------CHECKPOINT: allocate state done----------'
 
-
-   ! call allocate_electrostatics(ptr%xdd%params, ptr%xdd%constants,  &
-   ! ptr%ddx_electrostatics, ptr%ddx_error)
-   ! call check_error(ptr%ddx_error)
-   ! write(*,*) '----------CHECKPOINT: allocate electrostatics done----------'
- 
+   ! Allocate and get coulomb matrix
    allocate(ptr%jmat(ptr%xdd%constants%ncav, mol%nat))
-
    call get_coulomb_matrix(mol%xyz, ptr%xdd%constants%ccav, ptr%jmat)
-   write(*,*) '----------CHECKPOINT: got J matrix----------'
 
+   ! Allocate zeta
    allocate(ptr%zeta(ptr%xdd%constants%ncav))
-   write(*,*) '----------CHECKPOINT: allocate zeta----------'
 
-   ! Activate fast multipole method
-   ptr%xdd%params%fmm = .true.
-
-
-   ! Multipoles allocation 
+   ! Allocate multipoles
    allocate(ptr%multipoles(1, mol%nat))
 
 end subroutine update
-
 
 !> Get electric field energy
 subroutine get_energy(self, mol, cache, wfn, energies)
@@ -299,19 +252,15 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    real(wp), intent(inout) :: energies(:)
    real(wp), external :: ddot
 
-
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
    type(cpcm_cache), pointer :: ptr
    call taint(cache, ptr)
    
-   
-   ! energies(:) = energies + self%keps * sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
+   !> Add solvation energy to total energy
    energies(:) = energies + self%keps *sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
-
    
 end subroutine get_energy
-
 
 !> Get electric field potential
 subroutine get_potential(self, mol, cache, wfn, pot)
@@ -327,45 +276,30 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
    type(cpcm_cache), pointer :: ptr
-
    call taint(cache, ptr)
 
-   print *, '------------------------------------------------------------'
-
-
-    !>Calculate electrostatic properties
-   ! Compute the electrostatic properties for a multipolar distributions of 
-   ! arbitrary order, provided that they are given in real spherical harmonics.
+   ! Calculate ddx electrostatic properties
    ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4*pi)
    call multipole_electrostatics(ptr%xdd % params, ptr%xdd % constants, &
       & ptr%xdd % workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
 
-
-   !> Contract with coulomb matrix to get phi_cav
+   ! Contract with coulomb matrix to get phi_cav (potential vector at cavity points)
    call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
 
-   !> Multipole psi
-   ! Calculates the representation of the solute density in spherical harmonics.
-   !! (\f$ \Psi \f$). It is used as RHS for the adjoint linear system.
-   !! Dimension (nbasis, nsph).
-   !! This is identical to 'multipoles' in ddx_multipolar_solutes.
-   !! With maximum angular momentum of the multipoles = 1:
-   !! We have charges, so we need to convert them to monopoles.
-   !! For charges the conversion is simply a scaling by 1/sqrt(4*pi).
+   ! Calculate psi (representation of the solute density in spherical harmonics)
    call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
-   !write(*,*) 'psi: ', ptr%ddx_state%psi
 
-   !> Calculate all solvation terms
+   ! Calculate all solvation terms
+   ! todo: this currently also always calculates all force terms
+   ! todo: unly guess and solve the normal and adjoint systems
+   ! todo: calculate the explicit force terms only when gradient is requested
    call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
-      self%ddx_tol, ptr%esolv, ptr%ddx_error, ptr%force)
+      self%cpcm_input%conv, ptr%esolv, ptr%ddx_error, ptr%force)
    call check_error(ptr%ddx_error)
-
-
-   call write_vector(wfn%qat(:, 1), name='qat' )
 
    ! We need the weights w, the switching function ui, the sp harm expansion v (v + w -> vw), and the solution to the COSMO eq S
    ! allocate(ptr%zeta(ptr%xdd%constants%ncav))
-   call get_zeta(ptr, self%keps)
+   call get_zeta(ptr, self%keps, ptr%zeta)
 
    ! Contract with the Coulomb matrix
    call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t')
@@ -375,53 +309,35 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
 end subroutine get_potential
 
-
 !> Get electric field gradient
 subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    !> Instance of the solvation model
    class(cpcm_solvation), intent(in) :: self
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
-   !> Reusable data container
-   type(container_cache), intent(inout) :: cache
    !> Wavefunction data
    type(wavefunction_type), intent(in) :: wfn
    !> Molecular gradient of the solvation free energy
    real(wp), contiguous, intent(inout) :: gradient(:, :)
    !> Strain derivatives of the solvation free energy
    real(wp), contiguous, intent(inout) :: sigma(:, :)
-   
-   integer :: ii, iat, ig
-   real(wp), allocatable :: gx(:, :), zeta(:), ef(:, :)
 
-   real(wp) :: temp_forces(3, mol%nat)
-
+   !> Reusable data container
+   type(container_cache), intent(inout) :: cache
    type(cpcm_cache), pointer :: ptr
    call view(cache, ptr)
 
-   write(*,*) '----------CHECKPOINT: get_gradient----------'
-
-   
-   
-
-   temp_forces = 0.0_wp
-   ! Solute specific term
+   ! Given a multipolar distribution in real spherical harmonics and centered on the
+   ! spheres, Compute the contributions to the forces stemming from electrostatic 
+   ! interactions with multipolar distribution in real spherical harmonics and centered ! on the spheres
    call multipole_force_terms(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, &
-      ptr%ddx_state, 0, ptr%multipoles, temp_forces, ptr%ddx_error)
-   call write_2d_matrix(temp_forces, name='solute force')
+      ptr%ddx_state, 0, ptr%multipoles, ptr%force, ptr%ddx_error)
 
+   ! Calculate the gradient of the solvation energy
+   ptr%force =  2.0_wp * self%keps * ptr%force 
 
-   ! Total force
-   ptr%force =  2.0_wp * self%keps * (ptr%force + temp_forces) 
-   call write_2d_matrix(ptr%force, name='total force')
-   print *, "Norm1 =", sqrt(sum(ptr%force**2))
-   print *, ''
-
-   ! Gradient
+   ! Add the gradient of the solvation energy to the total gradient
    gradient =  gradient + ptr%force
-   call write_2d_matrix(gradient, name='gradient + force')
-   !print *, "Norm2 =", sqrt(sum(gradient**2))
-   print *, ''
 
 end subroutine get_gradient
 
@@ -468,7 +384,6 @@ subroutine view(cache, ptr)
    end select
 end subroutine view
 
-
 !> Evaluate the Coulomb interactions between the atomic sides (xyz) and the
 !> surface elements of the cavity (ccav).
 subroutine get_coulomb_matrix(xyz, ccav, jmat)
@@ -493,7 +408,6 @@ subroutine get_coulomb_matrix(xyz, ccav, jmat)
 
 end subroutine get_coulomb_matrix
 
-
 !> Routine to compute the psi vector
 subroutine get_psi(charge, psi)
    real(wp), intent(in) :: charge(:)
@@ -510,7 +424,6 @@ subroutine get_psi(charge, psi)
 
 end subroutine get_psi
 
-
 !> Routine to compute the potential vector
 subroutine get_phi(charge, jmat, phi)
    real(wp), intent(in) :: charge(:)
@@ -524,63 +437,36 @@ subroutine get_phi(charge, jmat, phi)
 end subroutine get_phi
 
 
-!> Computes the electric field produced by the sources src (nsrc point charges
-!  with coordinates csrc) at the ntrg target points ctrg:
-subroutine efld(nsrc, src, csrc, ntrg, ctrg, ef)
-   integer, intent(in) :: nsrc, ntrg
-   real(wp), intent(in) :: src(:)
-   real(wp), intent(in) :: csrc(:, :)
-   real(wp), intent(in) :: ctrg(:, :)
-   real(wp), intent(inout) :: ef(:, :)
-
-   integer :: i, j
-   real(wp) :: vec(3), r2, rr, r3, f
-   real(wp), parameter :: zero=0.0_wp
-
-   ef(:, :) = 0.0_wp
-   !$omp parallel do default(none) schedule(runtime) collapse(2) &
-   !$omp reduction(+:ef) shared(ntrg, nsrc, ctrg, csrc, src) &
-   !$omp private(j, i, f, vec, r2, rr, r3)
-   do j = 1, ntrg
-      do i = 1, nsrc
-         vec(:) = ctrg(:, j) - csrc(:, i)
-         r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
-         rr = sqrt(r2)
-         r3 = r2*rr
-         f = src(i)/r3
-         ef(:, j) = ef(:, j) + f*vec
-      end do
-   end do
-
-end subroutine efld
-
-
-subroutine get_zeta(self, keps)
-   ! type(domain_decomposition), intent(in) :: self
-   type(cpcm_cache), intent(inout) :: self
+subroutine get_zeta(self, keps, zeta)
+   type(cpcm_cache), intent(in) :: self
    real(wp), intent(in) :: keps
-   !real(wp), intent(inout) :: zeta(:) ! [self%ncav]
+   real(wp), intent(out) :: zeta(self%xdd%constants%ncav)
 
-   integer :: its, iat, ii
-   real, dimension(74, 2) :: ui_temp
-
+   integer :: iat, its, ii
 
    ii = 0
    do iat = 1, self%xdd%params%nsph
       do its = 1, self%xdd%params%ngrid
          if (self%xdd%constants%ui(its, iat) > 0.0_wp) then
             ii = ii + 1
-            self%zeta(ii) = keps * self%xdd%constants%wgrid(its) * self%xdd%constants%ui(its, iat) &
-                & * dot_product(self%xdd%constants%vgrid(:, its), self%ddx_state%s(:, iat))
+            zeta(ii) = keps * self%xdd%constants%wgrid(its) &
+               & * self%xdd%constants%ui(its, iat) &
+               & * dot_product(self%xdd%constants%vgrid(:, its), self%ddx_state%s(:, iat))
          end if
       end do
    end do
 
-
-
  end subroutine get_zeta
 
 
+subroutine write_solvation_file()
+
+end subroutine write_solvation_file
+
+
+!**************************************************************
+!********************* Dev Routines ***************************
+!**************************************************************
 
 subroutine write_vector(vector, name, unit)
    implicit none
@@ -601,9 +487,9 @@ subroutine write_vector(vector, name, unit)
    if (present(name)) write(iunit,'(/,"vector:",1x,a)') name
 
    do j = 1, d
-       write(iunit, '(i6)', advance='no') j
-       write(iunit, '(1x,f15.8)', advance='no') vector(j)
-       write(iunit, '(a)')
+      write(iunit, '(i6)', advance='no') j
+      write(iunit, '(1x,f15.8)', advance='no') vector(j)
+      write(iunit, '(a)')
    end do
 
 end subroutine write_vector
@@ -636,23 +522,21 @@ subroutine write_2d_matrix(matrix, name, unit, step)
    if (present(name)) write(iunit,'(/,"matrix:",1x,a)') name
 
    do i = 1, d2, istep
-       l = min(i+istep-1,d2)
-       write(iunit,'(6x)',advance='no')
-       do k = i, l
-           write(iunit,'(6x,i12,3x)',advance='no') k
-       end do
-       write(iunit,'(a)')
-       do j = 1, d1
-           write(iunit,'(i6)',advance='no') j
-           do k = i, l
-               write(iunit,'(1x,e20.8)',advance='no') matrix(j,k)
-           end do
-           write(iunit,'(a)')
-       end do
+      l = min(i+istep-1,d2)
+      write(iunit,'(6x)',advance='no')
+      do k = i, l
+         write(iunit,'(6x,i12,3x)',advance='no') k
+      end do
+      write(iunit,'(a)')
+      do j = 1, d1
+         write(iunit,'(i6)',advance='no') j
+         do k = i, l
+            write(iunit,'(1x,e20.8)',advance='no') matrix(j,k)
+         end do
+         write(iunit,'(a)')
+      end do
    end do
 
 end subroutine write_2d_matrix
-
-
 
 end module tblite_solvation_cpcm

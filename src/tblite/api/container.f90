@@ -185,7 +185,7 @@ function new_cpcm_solvation_solvent_api(vctx, vmol, vcalc, solvstr) result(vcont
       call ctx%ptr%set_error(error)
       return
    end if
-   solvmodel%cpcm = cpcm_input(solvent%eps)
+   solvmodel%cpcm = cpcm_input(solvent%eps, 1)
    call new_solvation(solv, mol%ptr, solvmodel, error)
    if (allocated(error)) return
    
@@ -218,7 +218,7 @@ function new_cpcm_solvation_epsilon_api(vctx, vmol, vcalc, eps) result(vcont) &
    call resolve_ptr_input(vctx, vmol, vcalc, ctx, mol, calc, ok)
    if (.not.ok) return
 
-   solvmodel%cpcm = cpcm_input(eps)
+   solvmodel%cpcm = cpcm_input(eps, 1)
    call new_solvation(solv, mol%ptr, solvmodel, error)
    if (allocated(error)) return
    

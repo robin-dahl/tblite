@@ -75,7 +75,7 @@ subroutine test_e(error, mol, qat, ref)
    allocate(pot%vat(size(qat, 1), 1))
    energy = 0.0_wp
 
-   solv = cpcm_solvation(mol, cpcm_input(feps, nang=nang, rscale=rscale))
+   solv = cpcm_solvation(mol, cpcm_input(feps, 1, nang=nang, rscale=rscale))
 
    call solv%update(mol, cache)
    call solv%get_potential(mol, cache, wfn, pot)
@@ -114,7 +114,7 @@ subroutine test_g(error, mol, qat)
    wfn%qat = reshape(qat, [size(qat), 1])
    allocate(pot%vat(size(qat, 1), 1))
 
-   solv = cpcm_solvation(mol, cpcm_input(feps, nang=nang, rscale=rscale))
+   solv = cpcm_solvation(mol, cpcm_input(feps, 1, nang=nang, rscale=rscale))
 
    allocate(numg(3, mol%nat), gradient(3, mol%nat))
    do ii = 1, mol%nat
@@ -181,7 +181,7 @@ subroutine test_p(error, mol, qat)
    wfn%qat = reshape(qat, [size(qat), 1])
    allocate(pot%vat(size(qat, 1), 1))
 
-   solv = cpcm_solvation(mol, cpcm_input(feps, nang=nang, rscale=rscale))
+   solv = cpcm_solvation(mol, cpcm_input(feps, 1, nang=nang, rscale=rscale))
 
    call solv%update(mol, cache)
 
