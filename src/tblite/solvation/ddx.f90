@@ -39,11 +39,10 @@ module tblite_solvation_ddx
 
 
    use ddx, only: ddx_type, ddx_error_type, check_error, ddinit, ddx_state_type, allocate_state
-   use ddx, only: fill_guess, fill_guess_adjoint, ddrun, solvation_force_terms, solve_adjoint
-   use ddx_core, only: ddx_electrostatics_type, allocate_electrostatics
-   use ddx_cosmo, only: cosmo_solve, cosmo_solve_adjoint
-
-   use ddx_multipolar_solutes, only: multipole_electrostatics, multipole_force_terms, multipole_psi
+   use ddx, only: ddrun
+   use ddx, only: fill_guess, solve, fill_guess_adjoint, solve_adjoint
+   use ddx_core, only: ddx_electrostatics_type
+   use ddx_multipolar_solutes, only: multipole_electrostatics, multipole_force_terms
 
    implicit none
    private
@@ -64,7 +63,7 @@ module tblite_solvation_ddx
       !> Regularization parameter
       real(wp) :: eta = 1.0_wp
       !> Number of grid points for each atom
-      integer :: nang = grid_size(14)
+      integer :: nang = grid_size(6)
       !> Maximum angular momentum of basis functions
       integer :: lmax = 6
       !> Van-der-Waals radii for all species
@@ -101,11 +100,10 @@ module tblite_solvation_ddx
       module procedure :: create_ddx
    end interface
 
-
    !> Restart data for ddX calculation
    type :: ddx_cache
       !> ddX instance
-      type(ddx_type) :: xdd 
+      type(ddx_type) :: ddx 
       !> ddX container with quantities common to all models
       type(ddx_state_type) :: ddx_state
       !> ddX container for the electrostatic properties  
@@ -122,14 +120,11 @@ module tblite_solvation_ddx
       real(wp), allocatable :: multipoles(:, :)
       !> ddx forces (i.e. gradient of the solvation energy)
       real(wp), allocatable :: force(:, :)
-
-
    end type ddx_cache
 
    real(wp), parameter :: alpha_alpb = 0.571412_wp
 
 contains
-
 
 !> Create new electric field container
 subroutine new_ddx(self, mol, input, error)
@@ -214,26 +209,26 @@ subroutine update(self, mol, cache)
    ptr%ddx_electrostatics%do_g = .true.
 
    ! initialize ddx
-   call ddinit(self%ddx_input%ddx_model, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%xdd, &
+   call ddinit(self%ddx_input%ddx_model, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%ddx, &
       & ptr%ddx_error, force=1, &
       & ngrid=self%ddx_input%nang, lmax=self%ddx_input%lmax, &
       & nproc=self%ddx_input%nproc , eta=self%ddx_input%eta)
    call check_error(ptr%ddx_error)
 
    ! Allocate forces
-   allocate(ptr%force(3, ptr%xdd%params%nsph))
+   allocate(ptr%force(3, ptr%ddx%params%nsph))
 
    ! Initialize ddx_state
-   call allocate_state(ptr%xdd%params, ptr%xdd%constants,  &
+   call allocate_state(ptr%ddx%params, ptr%ddx%constants,  &
       ptr%ddx_state, ptr%ddx_error)
    call check_error(ptr%ddx_error)
 
    ! Allocate and get coulomb matrix
-   allocate(ptr%jmat(ptr%xdd%constants%ncav, mol%nat))
-   call get_coulomb_matrix(mol%xyz, ptr%xdd%constants%ccav, ptr%jmat)
+   allocate(ptr%jmat(ptr%ddx%constants%ncav, mol%nat))
+   call get_coulomb_matrix(mol%xyz, ptr%ddx%constants%ccav, ptr%jmat)
 
    ! Allocate zeta
-   allocate(ptr%zeta(ptr%xdd%constants%ncav))
+   allocate(ptr%zeta(ptr%ddx%constants%ncav))
 
    ! Allocate multipoles
    allocate(ptr%multipoles(1, mol%nat))
@@ -280,8 +275,8 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    ! Calculate ddx electrostatic properties
    ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4*pi)
-   call multipole_electrostatics(ptr%xdd % params, ptr%xdd % constants, &
-      & ptr%xdd % workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
+   call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
 
    ! Contract with coulomb matrix to get phi_cav (potential vector at cavity points)
    call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
@@ -291,14 +286,30 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    ! Calculate all solvation terms
    ! todo: this currently also always calculates all force terms
-   ! todo: unly guess and solve the normal and adjoint systems
-   ! todo: calculate the explicit force terms only when gradient is requested
-   call ddrun(ptr%xdd, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
+   call ddrun(ptr%ddx, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
       self%ddx_input%conv, ptr%esolv, ptr%ddx_error, ptr%force)
    call check_error(ptr%ddx_error)
 
+   ! todo: the guess should be read from the cache if available
+   ! call fill_guess(ptr%ddx%params, ptr%ddx%constants, &
+   !    & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+   ! call check_error(ptr%ddx_error)
+
+   ! call solve(ptr%ddx%params, ptr%ddx%constants, &
+   !    & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+   ! call check_error(ptr%ddx_error)
+
+   ! todo:the guess should be read from the cache if available
+   ! call fill_guess_adjoint(ptr%ddx%params, ptr%ddx%constants, &
+   !    & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+   !    call check_error(ptr%ddx_error)
+
+   ! call solve_adjoint(ptr%ddx%params, ptr%ddx%constants, &
+   !    & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+   !    call check_error(ptr%ddx_error)
+
    ! We need the weights w, the switching function ui, the sp harm expansion v (v + w -> vw), and the solution to the COSMO eq S
-   ! allocate(ptr%zeta(ptr%xdd%constants%ncav))
+   ! allocate(ptr%zeta(ptr%ddx%constants%ncav))
    call get_zeta(ptr, self%keps, ptr%zeta)
 
    ! Contract with the Coulomb matrix
@@ -330,7 +341,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    ! Given a multipolar distribution in real spherical harmonics and centered on the
    ! spheres, Compute the contributions to the forces stemming from electrostatic 
    ! interactions with multipolar distribution in real spherical harmonics and centered ! on the spheres
-   call multipole_force_terms(ptr%xdd%params, ptr%xdd%constants, ptr%xdd%workspace, &
+   call multipole_force_terms(ptr%ddx%params, ptr%ddx%constants, ptr%ddx%workspace, &
       ptr%ddx_state, 0, ptr%multipoles, ptr%force, ptr%ddx_error)
 
    ! Calculate the gradient of the solvation energy
@@ -440,18 +451,18 @@ end subroutine get_phi
 subroutine get_zeta(self, keps, zeta)
    type(ddx_cache), intent(in) :: self
    real(wp), intent(in) :: keps
-   real(wp), intent(out) :: zeta(self%xdd%constants%ncav)
+   real(wp), intent(out) :: zeta(self%ddx%constants%ncav)
 
    integer :: iat, its, ii
 
    ii = 0
-   do iat = 1, self%xdd%params%nsph
-      do its = 1, self%xdd%params%ngrid
-         if (self%xdd%constants%ui(its, iat) > 0.0_wp) then
+   do iat = 1, self%ddx%params%nsph
+      do its = 1, self%ddx%params%ngrid
+         if (self%ddx%constants%ui(its, iat) > 0.0_wp) then
             ii = ii + 1
-            zeta(ii) = keps * self%xdd%constants%wgrid(its) &
-               & * self%xdd%constants%ui(its, iat) &
-               & * dot_product(self%xdd%constants%vgrid(:, its), self%ddx_state%s(:, iat))
+            zeta(ii) = keps * self%ddx%constants%wgrid(its) &
+               & * self%ddx%constants%ui(its, iat) &
+               & * dot_product(self%ddx%constants%vgrid(:, its), self%ddx_state%s(:, iat))
          end if
       end do
    end do
