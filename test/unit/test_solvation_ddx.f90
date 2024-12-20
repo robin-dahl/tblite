@@ -14,7 +14,7 @@
 ! You should have received a copy of the GNU Lesser General Public License
 ! along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
-module test_solvation_cpcm
+module test_solvation_ddx
    use mctc_env, only : wp
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, check, &
       & test_failed
@@ -22,19 +22,19 @@ module test_solvation_cpcm
    use mstore, only : get_structure
    use tblite_container, only : container_cache
    use tblite_scf_potential, only : potential_type
-   use tblite_solvation_cpcm, only : cpcm_solvation, new_cpcm, cpcm_input
+   use tblite_solvation_ddx, only : ddx_solvation, new_ddx, ddx_input
    use tblite_wavefunction_type, only : wavefunction_type
    implicit none
    private
 
-   public :: collect_solvation_cpcm
+   public :: collect_solvation_ddx
 
 
 contains
 
 
 !> Collect all exported unit tests
-subroutine collect_solvation_cpcm(testsuite)
+subroutine collect_solvation_ddx(testsuite)
 
    !> Collection of tests
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
@@ -45,7 +45,7 @@ subroutine collect_solvation_cpcm(testsuite)
       new_unittest("potential-mol", test_p_m03) &
       ]
 
-end subroutine collect_solvation_cpcm
+end subroutine collect_solvation_ddx
 
 
 subroutine test_e(error, mol, qat, ref)
@@ -62,7 +62,7 @@ subroutine test_e(error, mol, qat, ref)
    !> Reference energy
    real(wp), intent(in) :: ref
 
-   type(cpcm_solvation) :: solv
+   type(ddx_solvation) :: solv
    type(wavefunction_type) :: wfn
    type(potential_type) :: pot
    type(container_cache) :: cache
@@ -75,7 +75,7 @@ subroutine test_e(error, mol, qat, ref)
    allocate(pot%vat(size(qat, 1), 1))
    energy = 0.0_wp
 
-   solv = cpcm_solvation(mol, cpcm_input(feps, nang=nang, rscale=rscale))
+   solv = ddx_solvation(mol, ddx_input(feps, 1, nang=nang, rscale=rscale))
 
    call solv%update(mol, cache)
    call solv%get_potential(mol, cache, wfn, pot)
@@ -99,7 +99,7 @@ subroutine test_g(error, mol, qat)
    !> Atomic partial charges
    real(wp), intent(in) :: qat(:)
 
-   type(cpcm_solvation) :: solv
+   type(ddx_solvation) :: solv
    type(wavefunction_type) :: wfn
    type(potential_type) :: pot
    type(container_cache) :: cache
@@ -114,7 +114,7 @@ subroutine test_g(error, mol, qat)
    wfn%qat = reshape(qat, [size(qat), 1])
    allocate(pot%vat(size(qat, 1), 1))
 
-   solv = cpcm_solvation(mol, cpcm_input(feps, nang=nang, rscale=rscale))
+   solv = ddx_solvation(mol, ddx_input(feps, 1, nang=nang, rscale=rscale))
 
    allocate(numg(3, mol%nat), gradient(3, mol%nat))
    do ii = 1, mol%nat
@@ -166,7 +166,7 @@ subroutine test_p(error, mol, qat)
    !> Atomic partial charges
    real(wp), intent(in) :: qat(:)
 
-   type(cpcm_solvation) :: solv
+   type(ddx_solvation) :: solv
    type(wavefunction_type) :: wfn
    type(potential_type) :: pot
    type(container_cache) :: cache
@@ -181,7 +181,7 @@ subroutine test_p(error, mol, qat)
    wfn%qat = reshape(qat, [size(qat), 1])
    allocate(pot%vat(size(qat, 1), 1))
 
-   solv = cpcm_solvation(mol, cpcm_input(feps, nang=nang, rscale=rscale))
+   solv = ddx_solvation(mol, ddx_input(feps, 1, nang=nang, rscale=rscale))
 
    call solv%update(mol, cache)
 
@@ -277,4 +277,4 @@ subroutine test_p_m03(error)
 end subroutine test_p_m03
 
 
-end module test_solvation_cpcm
+end module test_solvation_ddx

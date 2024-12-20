@@ -31,7 +31,7 @@ module tblite_api_container
    use tblite_data_spin, only : get_spin_constant
    use tblite_external_field, only : electric_field
    use tblite_spin, only : spin_polarization, new_spin_polarization
-   use tblite_solvation, only : solvation_input, cpcm_input, alpb_input, &
+   use tblite_solvation, only : solvation_input, ddx_input, alpb_input, &
       & solvent_data, get_solvent_data, solvation_type, new_solvation
    use tblite_api_utils, only: c_f_character
    implicit none
@@ -152,8 +152,8 @@ function new_spin_polarization_api(vctx, vmol, vcalc, wscale) result(vcont) &
    vcont = c_loc(cont)
 end function new_spin_polarization_api
 
-function new_cpcm_solvation_solvent_api(vctx, vmol, vcalc, solvstr) result(vcont) &
-   & bind(C, name=namespace//"new_cpcm_solvation_solvent")
+function new_ddx_solvation_solvent_api(vctx, vmol, vcalc, solvstr) result(vcont) &
+   & bind(C, name=namespace//"new_ddx_solvation_solvent")
    type(c_ptr), value :: vctx
    type(vp_context), pointer :: ctx
    type(c_ptr), value :: vmol
@@ -171,7 +171,7 @@ function new_cpcm_solvation_solvent_api(vctx, vmol, vcalc, solvstr) result(vcont
    integer :: stat
    logical :: ok
 
-   if (debug) print '("[Info]", 1x, a)', "new_cpcm_solvation"
+   if (debug) print '("[Info]", 1x, a)', "new_ddx_solvation"
    vcont = c_null_ptr
 
    call resolve_ptr_input(vctx, vmol, vcalc, ctx, mol, calc, ok)
@@ -185,7 +185,7 @@ function new_cpcm_solvation_solvent_api(vctx, vmol, vcalc, solvstr) result(vcont
       call ctx%ptr%set_error(error)
       return
    end if
-   solvmodel%cpcm = cpcm_input(solvent%eps)
+   solvmodel%ddx = ddx_input(solvent%eps, 1)
    call new_solvation(solv, mol%ptr, solvmodel, error)
    if (allocated(error)) return
    
@@ -196,8 +196,8 @@ function new_cpcm_solvation_solvent_api(vctx, vmol, vcalc, solvstr) result(vcont
 
 end function
 
-function new_cpcm_solvation_epsilon_api(vctx, vmol, vcalc, eps) result(vcont) &
-   & bind(C, name=namespace//"new_cpcm_solvation_epsilon")
+function new_ddx_solvation_epsilon_api(vctx, vmol, vcalc, eps) result(vcont) &
+   & bind(C, name=namespace//"new_ddx_solvation_epsilon")
    type(c_ptr), value :: vctx
    type(vp_context), pointer :: ctx
    type(c_ptr), value :: vmol
@@ -212,13 +212,13 @@ function new_cpcm_solvation_epsilon_api(vctx, vmol, vcalc, eps) result(vcont) &
    type(error_type), allocatable :: error
    integer :: stat
    logical :: ok
-   if (debug) print '("[Info]", 1x, a)', "new_cpcm_solvation"
+   if (debug) print '("[Info]", 1x, a)', "new_ddx_solvation"
    vcont = c_null_ptr
 
    call resolve_ptr_input(vctx, vmol, vcalc, ctx, mol, calc, ok)
    if (.not.ok) return
 
-   solvmodel%cpcm = cpcm_input(eps)
+   solvmodel%ddx = ddx_input(eps, 1)
    call new_solvation(solv, mol%ptr, solvmodel, error)
    if (allocated(error)) return
    
