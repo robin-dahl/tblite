@@ -40,7 +40,7 @@ module tblite_solvation_ddx
 
    use ddx, only: ddx_type, ddx_error_type, check_error, ddinit, ddx_state_type, allocate_state
    use ddx, only: ddrun
-   use ddx, only: fill_guess, solve, fill_guess_adjoint, solve_adjoint
+   use ddx, only: fill_guess, solve, fill_guess_adjoint, solve_adjoint, solvation_force_terms
    use ddx_core, only: ddx_electrostatics_type
    use ddx_multipolar_solutes, only: multipole_electrostatics, multipole_force_terms
 
@@ -164,7 +164,8 @@ subroutine new_ddx(self, mol, input, error)
 
    ! Calculate Epsilon and keps
    self%dielectric_const = input%dielectric_const
-   self%keps = -0.5_wp * (1.0_wp/self%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
+   !self%keps = -(1.0_wp/self%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
+   self%keps = (self%dielectric_const - 1.0_wp) / (self%dielectric_const + 0.5_wp)
 
 end subroutine new_ddx
 
@@ -253,7 +254,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    call taint(cache, ptr)
    
    !> Add solvation energy to total energy
-   energies(:) = energies + self%keps *sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1)
+   energies(:) = energies + self%keps *sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1) 
    
 end subroutine get_energy
 
@@ -284,6 +285,10 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    ! Calculate psi (representation of the solute density in spherical harmonics)
    call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
 
+   ! write(*,*) 'qat: ', wfn%qat(:, 1)
+   ! ! write(*,*) "psi: ", ptr%ddx_state%psi
+   ! call write_2d_matrix(ptr%ddx_state%psi, "psi", unit=output_unit, step=5)
+
    ! Calculate all solvation terms
    ! todo: this currently also always calculates all force terms
    call ddrun(ptr%ddx, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
@@ -310,13 +315,15 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    ! We need the weights w, the switching function ui, the sp harm expansion v (v + w -> vw), and the solution to the COSMO eq S
    ! allocate(ptr%zeta(ptr%ddx%constants%ncav))
-   call get_zeta(ptr, self%keps, ptr%zeta)
+   call get_zeta(ptr, self%keps, ptr%zeta) ! see Eq. 2-26 
 
    ! Contract with the Coulomb matrix
-   call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t')
+   call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t') ! to give second term of 2-30
 
-   !> Caclulate the potential
-   pot%vat(:, 1) = pot%vat(:, 1) + (self%keps * sqrt(4*pi)) * ptr%ddx_state%xs(1, :)
+   ! Caclulate the potential
+   pot%vat(:, 1) = self%keps  * (pot%vat(:, 1) + (sqrt(pi) * ptr%ddx_state%xs(1, :))) ! see Eq. 2-30
+   !call write_2d_matrix(ptr%ddx_state%xs, "xs", unit=output_unit, step=5)
+
 
 end subroutine get_potential
 
@@ -337,6 +344,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    type(container_cache), intent(inout) :: cache
    type(ddx_cache), pointer :: ptr
    call view(cache, ptr)
+
 
    ! Given a multipolar distribution in real spherical harmonics and centered on the
    ! spheres, Compute the contributions to the forces stemming from electrostatic 
@@ -425,7 +433,7 @@ subroutine get_psi(charge, psi)
    real(wp), intent(out) :: psi(:, :)
 
    integer :: iat
-   real(wp), parameter :: fac = sqrt(4*pi)
+   real(wp), parameter :: fac = sqrt(pi)
 
    psi(:,:) = 0.0_wp
 
@@ -460,7 +468,7 @@ subroutine get_zeta(self, keps, zeta)
       do its = 1, self%ddx%params%ngrid
          if (self%ddx%constants%ui(its, iat) > 0.0_wp) then
             ii = ii + 1
-            zeta(ii) = keps * self%ddx%constants%wgrid(its) &
+            zeta(ii) = self%ddx%constants%wgrid(its) &
                & * self%ddx%constants%ui(its, iat) &
                & * dot_product(self%ddx%constants%vgrid(:, its), self%ddx_state%s(:, iat))
          end if
