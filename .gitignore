@@ -44,3 +44,9 @@ __pycache__
 /kbr
 
 /pyddx
+benchmarks/
+benchmarks.zip
+run.py
+run.sh
+tblite.txt
+results.csv

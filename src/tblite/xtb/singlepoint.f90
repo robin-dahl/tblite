@@ -203,7 +203,6 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
       call calc%coulomb%update(mol, ccache)
       call timer%pop
    end if
-   print*,"JOJOJOJOJO"
    if (prlevel > 1) &
       call ctx%message(label_electrons // format_string(wfn%nocc, real_format) // " e")
 
@@ -285,6 +284,13 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
       call ctx%message("")
    end if
 
+   ! call ctx%message(repeat("-", 60))
+   ! call num_scf(iscf, mol, calc%bas, wfn, solver, mixer, info, &
+   !       & calc%coulomb, calc%dispersion, calc%interactions, ints, pot, &
+   !       & ccache, dcache, icache, eelec, error)
+   ! call ctx%message(repeat("-", 60))
+   ! call ctx%message("")
+   
    call ctx%delete_solver(solver)
    if (ctx%failed()) return
 

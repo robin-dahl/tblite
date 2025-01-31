@@ -34,6 +34,10 @@ module tblite_scf_iterator
    use tblite_scf_info, only : scf_info
    use tblite_scf_potential, only : potential_type, add_pot_to_h1
    use tblite_scf_solver, only : solver_type
+
+
+   use iso_fortran_env, only : output_unit
+
    implicit none
    private
 
@@ -79,6 +83,7 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
 
    !> Self-consistent energy
    real(wp), intent(inout) :: energies(:)
+   
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -135,6 +140,7 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
    if (present(interactions)) then
       call interactions%get_energy(mol, icache, wfn, energies)
    end if
+
 end subroutine next_scf
 
 
@@ -345,5 +351,9 @@ subroutine get_electronic_entropy(occ, kt, s)
 
    s = sum(log(occ ** occ * (1 - occ) ** (1 - occ))) * kt
 end subroutine get_electronic_entropy
+
+
+
+
 
 end module tblite_scf_iterator

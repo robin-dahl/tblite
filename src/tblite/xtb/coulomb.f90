@@ -83,6 +83,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    !> Electrostatic energy
    real(wp), intent(inout) :: energies(:)
 
+
    if (allocated(self%es2)) then
       call self%es2%get_energy(mol, cache, wfn, energies)
    end if

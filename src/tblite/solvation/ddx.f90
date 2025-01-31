@@ -40,9 +40,10 @@ module tblite_solvation_ddx
 
    use ddx, only: ddx_type, ddx_error_type, check_error, ddinit, ddx_state_type, allocate_state
    use ddx, only: ddrun
-   use ddx, only: fill_guess, solve, fill_guess_adjoint, solve_adjoint, solvation_force_terms
+   use ddx, only: setup, fill_guess, solve, fill_guess_adjoint, solve_adjoint, solvation_force_terms
    use ddx_core, only: ddx_electrostatics_type
-   use ddx_multipolar_solutes, only: multipole_electrostatics, multipole_force_terms
+   use ddx_multipolar_solutes, only: multipole_electrostatics, multipole_force_terms, multipole_psi
+
 
    implicit none
    private
@@ -59,13 +60,13 @@ module tblite_solvation_ddx
       !> Scaling of van-der-Waals radii
       real(wp) :: rscale = 1.0_wp
       !> Accuracy for iterative solver
-      real(wp) :: conv = 1.0e-8_wp
+      real(wp) :: conv = 1.0e-9_wp
       !> Regularization parameter
       real(wp) :: eta = 1.0_wp
       !> Number of grid points for each atom
       integer :: nang = grid_size(6)
       !> Maximum angular momentum of basis functions
-      integer :: lmax = 6
+      integer :: lmax = 1
       !> Van-der-Waals radii for all species
       real(wp), allocatable :: rvdw(:)
       !> Number of OMP threads
@@ -153,6 +154,7 @@ subroutine new_ddx(self, mol, input, error)
 
    ! Get radii for all atoms
    allocate(self%rvdw(mol%nat))
+   self%rvdw(mol%nat) = 0.0_wp
    if (allocated(input%rvdw)) then
       self%rvdw(:) = input%rscale * input%rvdw(mol%id)
    else
@@ -164,8 +166,10 @@ subroutine new_ddx(self, mol, input, error)
 
    ! Calculate Epsilon and keps
    self%dielectric_const = input%dielectric_const
-   !self%keps = -(1.0_wp/self%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
-   self%keps = (self%dielectric_const - 1.0_wp) / (self%dielectric_const + 0.5_wp)
+   self%keps = -(1.0_wp/self%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
+   ! self%keps = (self%dielectric_const - 1.0_wp) / (self%dielectric_const + 0.5_wp)
+
+
 
 end subroutine new_ddx
 
@@ -209,6 +213,7 @@ subroutine update(self, mol, cache)
    ! Electric field gradient
    ptr%ddx_electrostatics%do_g = .true.
 
+
    ! initialize ddx
    call ddinit(self%ddx_input%ddx_model, mol%nat, mol%xyz, self%rvdw, self%dielectric_const, ptr%ddx, &
       & ptr%ddx_error, force=1, &
@@ -217,6 +222,9 @@ subroutine update(self, mol, cache)
    call check_error(ptr%ddx_error)
 
    ! Allocate forces
+   if (allocated(ptr%force)) then
+      deallocate(ptr%force)
+  end if
    allocate(ptr%force(3, ptr%ddx%params%nsph))
 
    ! Initialize ddx_state
@@ -225,13 +233,23 @@ subroutine update(self, mol, cache)
    call check_error(ptr%ddx_error)
 
    ! Allocate and get coulomb matrix
+   if (allocated(ptr%jmat)) then
+      deallocate(ptr%jmat)
+  end if
    allocate(ptr%jmat(ptr%ddx%constants%ncav, mol%nat))
    call get_coulomb_matrix(mol%xyz, ptr%ddx%constants%ccav, ptr%jmat)
 
    ! Allocate zeta
-   allocate(ptr%zeta(ptr%ddx%constants%ncav))
+   ! allocate(ptr%zeta(ptr%ddx%constants%ncav))
+   if (allocated(ptr%zeta)) then
+      deallocate(ptr%zeta)
+  end if
+   allocate(ptr%zeta(ptr%ddx%params%nsph*ptr%ddx%params%ngrid))
 
    ! Allocate multipoles
+   if (allocated(ptr%multipoles)) then
+      deallocate(ptr%multipoles)
+  end if
    allocate(ptr%multipoles(1, mol%nat))
 
 end subroutine update
@@ -251,10 +269,14 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
    type(ddx_cache), pointer :: ptr
+
    call taint(cache, ptr)
+
    
+      
    !> Add solvation energy to total energy
-   energies(:) = energies + self%keps *sum(ptr%ddx_state%xs * ptr%ddx_state%psi , 1) 
+   ! The factor of 0.5 is correct here
+   energies(:) = energies +  self%keps * 0.5_wp * sum(ptr%ddx_state%xs * ptr%ddx_state%psi, 1) 
    
 end subroutine get_energy
 
@@ -272,57 +294,63 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
    type(ddx_cache), pointer :: ptr
+
    call taint(cache, ptr)
 
    ! Calculate ddx electrostatic properties
-   ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4*pi)
+   ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4.0_wp*pi)
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
 
    ! Contract with coulomb matrix to get phi_cav (potential vector at cavity points)
+   ! multipoles_electrostatics already computes phi_cav, so no need to recompute here. However, the version match
    call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
 
    ! Calculate psi (representation of the solute density in spherical harmonics)
    call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
-
-   ! write(*,*) 'qat: ', wfn%qat(:, 1)
-   ! ! write(*,*) "psi: ", ptr%ddx_state%psi
-   ! call write_2d_matrix(ptr%ddx_state%psi, "psi", unit=output_unit, step=5)
+   
 
    ! Calculate all solvation terms
    ! todo: this currently also always calculates all force terms
-   call ddrun(ptr%ddx, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
-      self%ddx_input%conv, ptr%esolv, ptr%ddx_error, ptr%force)
+   ! call ddrun(ptr%ddx, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
+   !    self%ddx_input%conv, ptr%esolv, ptr%ddx_error, ptr%force)
+   ! call check_error(ptr%ddx_error)
+
+
+   call setup(ptr%ddx%params,ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, &
+      & ptr%ddx_state%psi, ptr%ddx_error)
    call check_error(ptr%ddx_error)
 
    ! todo: the guess should be read from the cache if available
-   ! call fill_guess(ptr%ddx%params, ptr%ddx%constants, &
-   !    & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
-   ! call check_error(ptr%ddx_error)
+   call fill_guess(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
 
-   ! call solve(ptr%ddx%params, ptr%ddx%constants, &
-   !    & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
-   ! call check_error(ptr%ddx_error)
+   call solve(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
 
    ! todo:the guess should be read from the cache if available
-   ! call fill_guess_adjoint(ptr%ddx%params, ptr%ddx%constants, &
-   !    & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
-   !    call check_error(ptr%ddx_error)
+   call fill_guess_adjoint(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+      call check_error(ptr%ddx_error)
 
-   ! call solve_adjoint(ptr%ddx%params, ptr%ddx%constants, &
-   !    & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
-   !    call check_error(ptr%ddx_error)
+   call solve_adjoint(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+      call check_error(ptr%ddx_error)
 
+  
    ! We need the weights w, the switching function ui, the sp harm expansion v (v + w -> vw), and the solution to the COSMO eq S
    ! allocate(ptr%zeta(ptr%ddx%constants%ncav))
+   ! No need to calculate this either
    call get_zeta(ptr, self%keps, ptr%zeta) ! see Eq. 2-26 
 
    ! Contract with the Coulomb matrix
    call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t') ! to give second term of 2-30
 
-   ! Caclulate the potential
-   pot%vat(:, 1) = self%keps  * (pot%vat(:, 1) + (sqrt(pi) * ptr%ddx_state%xs(1, :))) ! see Eq. 2-30
-   !call write_2d_matrix(ptr%ddx_state%xs, "xs", unit=output_unit, step=5)
+   pot%vat(:, 1) = 0.5_wp * self%keps * (pot%vat(:, 1) + (sqrt(4.0_wp*pi)) * ptr%ddx_state%xs(1, :)) ! see Eq. 2-30
+
 
 
 end subroutine get_potential
@@ -345,18 +373,27 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    type(ddx_cache), pointer :: ptr
    call view(cache, ptr)
 
+   call solvation_force_terms(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, ptr%force, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
 
    ! Given a multipolar distribution in real spherical harmonics and centered on the
    ! spheres, Compute the contributions to the forces stemming from electrostatic 
    ! interactions with multipolar distribution in real spherical harmonics and centered ! on the spheres
    call multipole_force_terms(ptr%ddx%params, ptr%ddx%constants, ptr%ddx%workspace, &
       ptr%ddx_state, 0, ptr%multipoles, ptr%force, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
 
    ! Calculate the gradient of the solvation energy
-   ptr%force =  2.0_wp * self%keps * ptr%force 
+   ! We needed the factor 2 here because 0.5 was falsly included in keps
+   ptr%force = self%keps * ptr%force 
+
+   call write_2d_matrix(ptr%force, "force", unit=output_unit, step=5)
 
    ! Add the gradient of the solvation energy to the total gradient
    gradient =  gradient + ptr%force
+
+   ! call test_potential
 
 end subroutine get_gradient
 
@@ -433,7 +470,7 @@ subroutine get_psi(charge, psi)
    real(wp), intent(out) :: psi(:, :)
 
    integer :: iat
-   real(wp), parameter :: fac = sqrt(pi)
+   real(wp), parameter :: fac = sqrt(4.0_wp*pi) 
 
    psi(:,:) = 0.0_wp
 
@@ -463,6 +500,8 @@ subroutine get_zeta(self, keps, zeta)
 
    integer :: iat, its, ii
 
+   zeta = 0.0_wp
+
    ii = 0
    do iat = 1, self%ddx%params%nsph
       do its = 1, self%ddx%params%ngrid
@@ -481,6 +520,8 @@ subroutine get_zeta(self, keps, zeta)
 subroutine write_solvation_file()
 
 end subroutine write_solvation_file
+
+
 
 
 !**************************************************************
