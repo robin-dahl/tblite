@@ -97,6 +97,8 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
       call get_mixer(mixer, bas, wfn, info)
    end if
 
+   ! write(*,*) 'qat start', wfn%qat
+
    iscf = iscf + 1
    call pot%reset
    if (present(coulomb)) then
@@ -140,6 +142,8 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
    if (present(interactions)) then
       call interactions%get_energy(mol, icache, wfn, energies)
    end if
+
+   ! write(*,*) 'qat end', wfn%qat
 
 end subroutine next_scf
 

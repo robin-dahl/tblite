@@ -99,7 +99,7 @@ module tblite_solvation_ddx
    !> Provide constructor for ddX solvation
    interface ddx_solvation
       module procedure :: create_ddx
-   end interface
+   end interface ddX_solvation
 
    !> Restart data for ddX calculation
    type :: ddx_cache
@@ -166,7 +166,7 @@ subroutine new_ddx(self, mol, input, error)
 
    ! Calculate Epsilon and keps
    self%dielectric_const = input%dielectric_const
-   self%keps = -(1.0_wp/self%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
+   self%keps = 1 !-(1.0_wp/self%dielectric_const - 1.0_wp) / (1.0_wp + alpha_alpb)
    ! self%keps = (self%dielectric_const - 1.0_wp) / (self%dielectric_const + 0.5_wp)
 
 
@@ -270,10 +270,42 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    type(container_cache), intent(inout) :: cache
    type(ddx_cache), pointer :: ptr
 
+   real(wp), allocatable :: vat_en(:, :)
+
    call taint(cache, ptr)
 
+   ! Calculate ddx electrostatic properties
+   ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4.0_wp*pi)
+   call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
+
+   ! Contract with coulomb matrix to get phi_cav (potential vector at cavity points)
+   ! multipoles_electrostatics already computes phi_cav, so no need to recompute here. However, the version match
+   call get_phi(wfn%qat(:, 1), ptr%jmat, ptr%ddx_electrostatics%phi_cav)
+
+   ! Calculate psi (representation of the solute density in spherical harmonics)
+   call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
    
-      
+   ! Calculate all solvation terms
+   ! todo: this currently also always calculates all force terms
+   ! call ddrun(ptr%ddx, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
+   !    self%ddx_input%conv, ptr%esolv, ptr%ddx_error, ptr%force)
+   ! call check_error(ptr%ddx_error)
+
+   call setup(ptr%ddx%params,ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, &
+      & ptr%ddx_state%psi, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
+
+   ! todo: the guess should be read from the cache if available
+   call fill_guess(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
+
+   call solve(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
+
    !> Add solvation energy to total energy
    ! The factor of 0.5 is correct here
    energies(:) = energies +  self%keps * 0.5_wp * sum(ptr%ddx_state%xs * ptr%ddx_state%psi, 1) 
@@ -309,7 +341,6 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    ! Calculate psi (representation of the solute density in spherical harmonics)
    call get_psi(wfn%qat(:, 1), ptr%ddx_state%psi)
    
-
    ! Calculate all solvation terms
    ! todo: this currently also always calculates all force terms
    ! call ddrun(ptr%ddx, ptr%ddx_state, ptr%ddx_electrostatics, ptr%ddx_state%psi, &
@@ -344,15 +375,14 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    ! We need the weights w, the switching function ui, the sp harm expansion v (v + w -> vw), and the solution to the COSMO eq S
    ! allocate(ptr%zeta(ptr%ddx%constants%ncav))
    ! No need to calculate this either
-   call get_zeta(ptr, self%keps, ptr%zeta) ! see Eq. 2-26 
+   ! call get_zeta(ptr, self%keps, ptr%zeta) ! see Eq. 2-26 
+
 
    ! Contract with the Coulomb matrix
-   call gemv(ptr%jmat, ptr%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t') ! to give second term of 2-30
+   call gemv(ptr%jmat, ptr%ddx_state%zeta, pot%vat(:, 1), alpha=-1.0_wp, beta=1.0_wp, trans='t') ! to give second term of 2-30
 
-   pot%vat(:, 1) = 0.5_wp * self%keps * (pot%vat(:, 1) + (sqrt(4.0_wp*pi)) * ptr%ddx_state%xs(1, :)) ! see Eq. 2-30
-
-
-
+   pot%vat(:, 1) = 1.0_wp * self%keps * (pot%vat(:, 1) + (sqrt(4.0_wp*pi)) * ptr%ddx_state%xs(1, :)) ! see Eq. 2-30
+   ! write(*,*) 'shape pot%vat', shape(pot%vat)
 end subroutine get_potential
 
 !> Get electric field gradient
@@ -388,7 +418,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    ! We needed the factor 2 here because 0.5 was falsly included in keps
    ptr%force = self%keps * ptr%force 
 
-   call write_2d_matrix(ptr%force, "force", unit=output_unit, step=5)
+   ! call write_2d_matrix(ptr%force, "force", unit=output_unit, step=5)
 
    ! Add the gradient of the solvation energy to the total gradient
    gradient =  gradient + ptr%force

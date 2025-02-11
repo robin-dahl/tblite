@@ -48,6 +48,8 @@ print('force',force)
 print('norm force', norm_force)
 #print('x',state.x)
 #print('s',state.s)
+print('s',state.zeta)
+#help(pyddx)
 
 # dimension of x
 #print('dimension of x',state.x.shape)

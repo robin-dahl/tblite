@@ -94,7 +94,7 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
    
    logical :: grad, converged, econverged, pconverged
    integer :: prlevel
-   real(wp) :: econv, pconv, cutoff, elast, nel
+   real(wp) :: econv, pconv, cutoff, elast, nel, elow
    real(wp), allocatable :: energies(:), edisp(:), erep(:), exbond(:), eint(:), eelec(:)
    real(wp), allocatable :: cn(:), dcndr(:, :, :), dcndL(:, :, :), dEdcn(:)
    real(wp), allocatable :: selfenergy(:), dsedcn(:), lattr(:, :), wdensity(:, :, :)
@@ -121,6 +121,7 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
    end if
 
    econv = 1.e-6_wp*accuracy
+   ! econv = 1.e-10_wp*accuracy
    pconv = 2.e-5_wp*accuracy
 
    call ctx%new_solver(solver, calc%bas%nao)
@@ -136,6 +137,8 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
       gradient(:, :) = 0.0_wp
       sigma(:, :) = 0.0_wp
    end if
+
+   elow = 0.0_wp
 
    call get_occupation(mol, calc%bas, calc%h0, wfn%nocc, wfn%n0at, wfn%n0sh)
    nel = sum(wfn%n0at) - mol%charge
@@ -253,6 +256,7 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
       econverged = abs(sum(eelec) - elast) < econv
       pconverged = mixer%get_error() < pconv
       converged = econverged .and. pconverged
+      elow = min(elow, sum(eelec))
       if (prlevel > 0) then
          call ctx%message(format_string(iscf, "(i7)") // &
             & format_string(sum(eelec + energies), "(g24.13)") // &
@@ -282,6 +286,13 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
       call ctx%message(label_electronic // format_string(sum(eelec), real_format) // " Eh")
       call ctx%message(label_total // format_string(sum(energies), real_format) // " Eh")
       call ctx%message("")
+      ! check if elow lower than the total energy
+      if (elow < sum(eelec)) then
+         call ctx%message("WARNING: Total energy is not the lowest energy with error of "// &
+            & format_string(sum(eelec) - elow, real_format) // " Eh")
+         call ctx%message("")
+   end if
+
    end if
 
    ! call ctx%message(repeat("-", 60))
