@@ -212,9 +212,11 @@ subroutine test_p(error, mol, qat)
       er = 0.0_wp
       el = 0.0_wp
       wfn%qat(ii, 1) = wfn%qat(ii, 1) + step
+      call solv%get_potential(mol, cache, wfn, pot)
       call solv%get_energy(mol, cache, wfn, er)
 
       wfn%qat(ii, 1) = wfn%qat(ii, 1) - 2*step
+      call solv%get_potential(mol, cache, wfn, pot)
       call solv%get_energy(mol, cache, wfn, el)
 
       wfn%qat(ii, 1) = wfn%qat(ii, 1) + step
@@ -324,6 +326,7 @@ subroutine test_fock(error, mol, wfn, calc)
 
          energies = 0.00_wp
          call pot%reset
+         ! call solv%get_potential(mol, cache, wfn, pot)
          call solv%get_energy(mol, cache, wfn, energies)
          er = 0.0_wp
          er = sum(energies)

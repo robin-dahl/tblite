@@ -91,13 +91,16 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
    real(wp), allocatable :: eao(:)
    real(wp) :: ts
 
+
+   ! WE HAVE A SET OF CHARGES AND A DENSITY...
+   
+   ! DIIS MIXING
    if (iscf > 0) then
       call mixer%next(error)
       if (allocated(error)) return
       call get_mixer(mixer, bas, wfn, info)
    end if
 
-   ! write(*,*) 'qat start', wfn%qat
 
    iscf = iscf + 1
    call pot%reset
@@ -107,6 +110,7 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
    if (present(dispersion)) then
       call dispersion%get_potential(mol, dcache, wfn, pot)
    end if
+   ! GET POTENTIAL CONTRIBUTIONS FROM SOLVATION
    if (present(interactions)) then
       call interactions%get_potential(mol, icache, wfn, pot)
    end if
@@ -114,9 +118,11 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
 
    call set_mixer(mixer, wfn, info)
 
+   ! CALCULATE NEW DENSITY BASED ON THE POTENTIAL
    call get_density(wfn, solver, ints, ts, error)
    if (allocated(error)) return
 
+   ! NEW DENSITY GIVES NEW SET OF CHARGES
    call get_mulliken_shell_charges(bas, ints%overlap, wfn%density, wfn%n0sh, &
       & wfn%qsh)
    call get_qat_from_qsh(bas, wfn%qsh, wfn%qat)
@@ -128,6 +134,7 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
 
    call diff_mixer(mixer, wfn, info)
 
+   ! (GET ELECTRONIC ENERGY)
    allocate(eao(bas%nao), source=0.0_wp)
    call get_electronic_energy(ints%hamiltonian, wfn%density, eao)
 
@@ -139,11 +146,13 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
    if (present(dispersion)) then
       call dispersion%get_energy(mol, dcache, wfn, energies)
    end if
+   ! SOLVATION ENERGY, BASED ON NEW DENSITY, BUT CORRESPONDS TO FOMRER POTENTIAL 
    if (present(interactions)) then
       call interactions%get_energy(mol, icache, wfn, energies)
    end if
 
-   ! write(*,*) 'qat end', wfn%qat
+   ! GO BACK TO THE TOP...
+
 
 end subroutine next_scf
 
