@@ -121,7 +121,7 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
    end if
 
    econv = 1.e-6_wp*accuracy
-   ! econv = 1.e-10_wp*accuracy
+   econv = 1.e-10_wp*accuracy
    pconv = 2.e-5_wp*accuracy
 
    call ctx%new_solver(solver, calc%bas%nao)

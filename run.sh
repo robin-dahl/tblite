@@ -2,4 +2,4 @@
 
 meson compile -C build || { echo "Compilation failed"; exit 1; }
 
-./build/app/tblite run nacl.xyz --cpcm water --grad 
+./build/app/tblite run nylon.xyz # --cpcm water 

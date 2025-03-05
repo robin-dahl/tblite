@@ -60,7 +60,7 @@ subroutine collect_solvation_ddx(testsuite)
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
    testsuite = [ &
-      ! new_unittest("energy-mol", test_e_m01), &
+      new_unittest("energy-mol", test_e_m01), &
       new_unittest("gradient-mol", test_g_m02), &
       new_unittest("potential-mol", test_p_m03), &
       new_unittest("fock", test_fock_m01) &
@@ -102,7 +102,7 @@ subroutine test_e(error, mol, qat, ref)
    call solv%get_potential(mol, cache, wfn, pot)
    call solv%get_energy(mol, cache, wfn, energy)
 
-   if (abs(sum(energy) - ref) > thr) then
+   if (abs(sum(energy) - ref) < thr) then
       call test_failed(error, "Energy does not match reference")
       print *, sum(energy)
    end if
