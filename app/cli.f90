@@ -254,6 +254,7 @@ subroutine get_run_arguments(config, list, start, error)
    integer :: ddx_model
    integer, allocatable :: kernel, sol_state
    real(wp) :: kappa = 0.0_wp
+   integer :: nang = 110
    type(solvent_data), allocatable :: solvent
 
    iarg = start
@@ -421,6 +422,12 @@ subroutine get_run_arguments(config, list, start, error)
          iarg = iarg + 1
          call list%get(iarg, arg)
          call get_argument_as_real(arg, kappa, error)
+         if (allocated(error)) exit
+
+      case("--grid")
+         iarg = iarg + 1
+         call list%get(iarg, arg)
+         call get_argument_as_int(arg, nang, error)
          if (allocated(error)) exit
 
       case("--gb", "--gbe")
@@ -603,7 +610,7 @@ subroutine get_run_arguments(config, list, start, error)
             return
          end if
          allocate(config%solvation)
-         config%solvation%ddx = ddx_input(solvent%eps, ddx_model, kappa=kappa)
+         config%solvation%ddx = ddx_input(solvent%eps, ddx_model, kappa=kappa, nang=nang)
       end if
    end if
 

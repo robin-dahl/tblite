@@ -285,6 +285,7 @@ subroutine update(self, mol, cache)
       model = self%ddx_input%ddx_model
    end if
 
+   write(*,*) 'GRID SIZE', self%ddx_input%nang
    call ddinit(model, mol%nat, mol%xyz, &
       & self%rvdw, self%dielectric_const, ptr%ddx, &
       & ptr%ddx_error, force=1, ngrid=self%ddx_input%nang, &
