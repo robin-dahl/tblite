@@ -38,6 +38,8 @@ module tblite_solvation_ddx
    use ddx_core, only: ddx_electrostatics_type
    use ddx_multipolar_solutes, only: multipole_electrostatics, multipole_force_terms, multipole_psi
 
+   use tblite_integral_trafo, only: transform0
+
 
    implicit none
    private
@@ -48,7 +50,7 @@ module tblite_solvation_ddx
    !> Possible solvation models to be used within the dd framework
    type :: enum_ddx_solvation_model
       ! COSMO and CPCM temporary defined as 11 and 12 to get correct feps in the first step
-      ! Labels are dumbed to 1 before passing the model input to the ddX routine,
+      ! Labels are dumped to 1 before passing the model input to the ddX routine,
       ! where both models are handeled the same way
       !> Conductor like screening model
       integer :: cosmo = 11
@@ -79,7 +81,7 @@ module tblite_solvation_ddx
       !> Number of grid points for each atom (=110)
       integer :: nang = grid_size(8)
       !> Maximum angular momentum of basis functions
-      integer :: lmax = 1 ! 2
+      integer :: lmax = 2 ! 2
       !> Van-der-Waals radii for all species
       real(wp), allocatable :: rvdw(:)
       !> Number of OMP threads
@@ -144,9 +146,11 @@ module tblite_solvation_ddx
       !> Interaction matrix with surface charges jmat(ncav, nat)
       real(wp), allocatable :: jmat(:, :)
       real(wp), allocatable :: adpmat(:, :, :)
+      real(wp), allocatable :: aqpmat(:, :, :)
       !> ddX potential
       real(wp), allocatable :: ddx_pot(:)
       real(wp), allocatable :: ddx_dppot(:, :)
+      real(wp), allocatable :: ddx_qppot(:, :)
       !> Solvation energy as returned by ddx
       real(wp) :: esolv
       !> ddx multipole, (1, mol%nat) -> To change: 1 comes from the multipole order, will be increased to 9
@@ -305,7 +309,7 @@ subroutine update(self, mol, cache)
    if (allocated(ptr%multipoles)) then
       deallocate(ptr%multipoles)
    end if
-   allocate(ptr%multipoles(4, mol%nat), source=0.0_wp) !9
+   allocate(ptr%multipoles(9, mol%nat), source=0.0_wp) !9
 
    if (allocated(ptr%jmat)) then
       deallocate(ptr%jmat)
@@ -317,6 +321,11 @@ subroutine update(self, mol, cache)
    end if
    allocate(ptr%adpmat(3, ptr%ddx%constants%ncav, mol%nat), source=0.0_wp)
    call get_adp_matrix(mol%xyz, ptr%ddx%constants%ccav, ptr%adpmat)
+   if (allocated(ptr%aqpmat)) then
+      deallocate(ptr%aqpmat)
+   end if
+   allocate(ptr%aqpmat(5, ptr%ddx%constants%ncav, mol%nat), source=0.0_wp)
+   call get_aqp_matrix(mol%xyz, ptr%ddx%constants%ccav, ptr%aqpmat)
 
    if (allocated(ptr%force)) then
       deallocate(ptr%force)
@@ -327,14 +336,20 @@ subroutine update(self, mol, cache)
       deallocate(ptr%ddx_pot)
    end if
    allocate(ptr%ddx_pot(mol%nat), source=0.0_wp)
+
    if (allocated(ptr%ddx_dppot)) then
       deallocate(ptr%ddx_dppot)
    end if
    allocate(ptr%ddx_dppot(3, mol%nat), source=0.0_wp)
 
+   if (allocated(ptr%ddx_qppot)) then
+      deallocate(ptr%ddx_qppot)
+   end if
+   allocate(ptr%ddx_qppot(6, mol%nat), source=0.0_wp)
+
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
-      & ptr%ddx%workspace, ptr%multipoles, 1, ptr%ddx_electrostatics, ptr%ddx_error)
-   call multipole_psi(ptr%ddx%params, ptr%multipoles, 1, ptr%ddx_state%psi)
+      & ptr%ddx%workspace, ptr%multipoles, 2, ptr%ddx_electrostatics, ptr%ddx_error)
+   call multipole_psi(ptr%ddx%params, ptr%multipoles, 2, ptr%ddx_state%psi)
 
    call setup(ptr%ddx%params,ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, &
@@ -365,9 +380,26 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    type(container_cache), intent(inout) :: cache
    type(ddx_cache), pointer :: ptr
 
-   real(wp) :: fac
+   real(wp) :: fac, trans_fac(5)
+
+   real(wp), parameter :: s3 = sqrt(3.0_wp)
+   real(wp), parameter :: s3_4 = s3 * 0.5_wp
+   real(wp), parameter :: dtrafo(5,6) =  sqrt(5.0_wp/(4.0_wp*pi)) * reshape([ &
+         !   m=-2     m=-1      m=0      m=+1     m=+2
+         & 0.0_wp,   0.0_wp,  -0.5_wp,  0.0_wp,   s3_4,   &  ! xx
+         &    s3 ,   0.0_wp,   0.0_wp,  0.0_wp,   0.0_wp, &  ! xy
+         & 0.0_wp,   0.0_wp,  -0.5_wp,  0.0_wp,  -s3_4,   &  ! yy
+         & 0.0_wp,   0.0_wp,   0.0_wp,     s3 ,   0.0_wp, &  ! xz
+         & 0.0_wp,      s3 ,   0.0_wp,  0.0_wp,   0.0_wp, &  ! yz
+         & 0.0_wp,   0.0_wp,   1.0_wp,  0.0_wp,   0.0_wp  &  ! zz
+   ], shape(dtrafo))
+
+
+   real(wp), parameter :: tol = 1.0d-10
+   integer :: i, k
 
    call view(cache, ptr)
+
 
    ! Recalculate the solution of the ddX system with the new charges after diagonalization
    ! This solution cannot be reused in the potential due to intermediate mixing
@@ -380,17 +412,15 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    ptr%multipoles(2, :) = wfn%dpat(1,:,1) * fac
    ptr%multipoles(3, :) = wfn%dpat(2,:,1) * fac
    ptr%multipoles(4, :) = wfn%dpat(3,:,1) * fac
+   
    ! Quadrupoles
-   ! ptr%multipoles(5, :) = wfn%qpat(1,:,1) * 5 / sqrt(4.0_wp*pi)
-   ! ptr%multipoles(6, :) = wfn%qpat(2,:,1) * 5 / sqrt(4.0_wp*pi)
-   ! ptr%multipoles(7, :) = wfn%qpat(3,:,1) * 5 / sqrt(4.0_wp*pi)
-   ! ptr%multipoles(8, :) = wfn%qpat(4,:,1) * 5 / sqrt(4.0_wp*pi)
-   ! ptr%multipoles(9, :) = wfn%qpat(5,:,1) * 5 / sqrt(4.0_wp*pi)
+   do i = 1, mol%nat
+      ptr%multipoles(5:9,i) = matmul(dtrafo, wfn%qpat(:,i,1))
+   end do
 
-     
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
-      & ptr%ddx%workspace, ptr%multipoles, 1, ptr%ddx_electrostatics, ptr%ddx_error) !2
-   call multipole_psi(ptr%ddx%params, ptr%multipoles, 1, ptr%ddx_state%psi) !2
+      & ptr%ddx%workspace, ptr%multipoles, 2, ptr%ddx_electrostatics, ptr%ddx_error) !2
+   call multipole_psi(ptr%ddx%params, ptr%multipoles, 2, ptr%ddx_state%psi) !2
 
    call setup(ptr%ddx%params,ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, &
@@ -407,6 +437,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    else
       energies(:) = energies + 0.5_wp * self%feps * sum(ptr%ddx_state%xs * ptr%ddx_state%psi, 1)
    end if
+
 end subroutine get_energy
 
 !> Get electric field potential
@@ -423,32 +454,52 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    type(container_cache), intent(inout) :: cache
    type(ddx_cache), pointer :: ptr
    integer :: k, i
-   real(wp) :: fac
+   real(wp) :: fac, trans_fac(5), ddx_qppot_trans(5,mol%nat)
+
+   real(wp), parameter :: s3 = sqrt(3.0_wp)
+   real(wp), parameter :: s3_4 = s3 * 0.5_wp
+   real(wp), parameter :: dtrafo(5,6) = sqrt(5.0_wp/(4.0_wp*pi)) * reshape([ &
+         !   m=-2     m=-1      m=0      m=+1     m=+2
+         & 0.0_wp,   0.0_wp,  -0.5_wp,  0.0_wp,   s3_4,   &  ! xx
+         &    s3 ,   0.0_wp,   0.0_wp,  0.0_wp,   0.0_wp, &  ! xy
+         & 0.0_wp,   0.0_wp,  -0.5_wp,  0.0_wp,  -s3_4,   &  ! yy
+         & 0.0_wp,   0.0_wp,   0.0_wp,     s3 ,   0.0_wp, &  ! xz
+         & 0.0_wp,      s3 ,   0.0_wp,  0.0_wp,   0.0_wp, &  ! yz
+         & 0.0_wp,   0.0_wp,   1.0_wp,  0.0_wp,   0.0_wp  &  ! zz
+         ], shape(dtrafo))
+
+   real(wp), parameter :: pinv(6,5) = transpose( sqrt(4.0_wp*pi/5.0_wp) * reshape([ &
+        & 0.000000_wp, 0.000000_wp, -1.0_wp/3.0_wp, 0.000000_wp,  1.0_wp/s3,   & 
+        & 1.0_wp/s3,   0.000000_wp,  0.000000_wp,   0.000000_wp,  0.000000_wp, &  
+        & 0.000000_wp, 0.000000_wp, -1.0_wp/3.0_wp, 0.000000_wp, -1.0_wp/s3,   & 
+        & 0.000000_wp, 0.000000_wp,  0.000000_wp,   1.0_wp/s3,    0.000000_wp, & 
+        & 0.000000_wp, 1.0_wp/s3,    0.000000_wp,   0.000000_wp,  0.000000_wp, & 
+        & 0.000000_wp, 0.000000_wp,  2.0_wp/3.0_wp, 0.000000_wp,  0.000000_wp  & 
+        ], [5,6]) )
 
    call view(cache, ptr)
 
    ! Solution of the ddX system (direct and adjoint) with the mixed charges
    ! This solution cannot be reused in the energy calculation due to intermediate diagonalization
 
+   ! Transformation into spherical harmonics, according to https://en.wikipedia.org/wiki/Table_of_spherical_harmonics#Real_spherical_harmonics
    ! Monopole
    ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4.0_wp*pi)
    ! Dipoles
-   ! This prefactor should be correct, according to https://en.wikipedia.org/wiki/Table_of_spherical_harmonics#Real_spherical_harmonics
    fac = sqrt(3.0_wp/(4.0_wp*pi))
    ptr%multipoles(2, :) = wfn%dpat(1,:,1) * fac
    ptr%multipoles(3, :) = wfn%dpat(2,:,1) * fac
    ptr%multipoles(4, :) = wfn%dpat(3,:,1) * fac
-
    ! Quadrupoles
-   ! ptr%multipoles(5, :) = wfn%qpat(1,:,1) * 5 / sqrt(4.0_wp*pi)
-   ! ptr%multipoles(6, :) = wfn%qpat(2,:,1) * 5 / sqrt(4.0_wp*pi)
-   ! ptr%multipoles(7, :) = wfn%qpat(3,:,1) * 5 / sqrt(4.0_wp*pi)
-   ! ptr%multipoles(8, :) = wfn%qpat(4,:,1) * 5 / sqrt(4.0_wp*pi)
-   ! ptr%multipoles(9, :) = wfn%qpat(5,:,1) * 5 / sqrt(4.0_wp*pi)
+   do i = 1, mol%nat
+      ptr%multipoles(5:9,i) = matmul(dtrafo, wfn%qpat(:,i,1)) 
+   end do
 
+! write(*,*) wfn%qpat(:,:,1) - matmul(transpose(dtrafo), ptr%multipoles(5:9,:))
+! stop
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
-      & ptr%ddx%workspace, ptr%multipoles, 1, ptr%ddx_electrostatics, ptr%ddx_error) 
-   call multipole_psi(ptr%ddx%params, ptr%multipoles, 1, ptr%ddx_state%psi)
+      & ptr%ddx%workspace, ptr%multipoles, 2, ptr%ddx_electrostatics, ptr%ddx_error) 
+   call multipole_psi(ptr%ddx%params, ptr%multipoles, 2, ptr%ddx_state%psi)
 
    call setup(ptr%ddx%params,ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, &
@@ -463,31 +514,44 @@ subroutine get_potential(self, mol, cache, wfn, pot)
       & ptr%ddx%workspace, ptr%ddx_state, self%ddx_input%conv, ptr%ddx_error)
    call check_error(ptr%ddx_error)
 
-   ! Contract with the Coulomb matrix
+   !%%%%%%%%%% MONOPOLE POTENTIAL %%%%%%%%%% 
    ptr%ddx_pot = 0.0_wp
+   ! Contract with the Coulomb matrix
    call gemv(ptr%jmat, ptr%ddx_state%zeta, ptr%ddx_pot(:), alpha=-1.0_wp, beta=1.0_wp, trans='t') 
    ! Scale with 0.5*feps, and get second contribution to potential
    if (self%ddx_input%ddx_model == ddx_solvation_model%lpb) then
       ptr%ddx_pot(:) = 0.5_wp * self%feps * (ptr%ddx_pot(:) + sqrt(4.0_wp*pi) * ptr%ddx_state%x_lpb(1, :, 1))
    else
-      ptr%ddx_pot(:) = 0.5_wp * self%feps * (ptr%ddx_pot(:) + sqrt(4.0_wp*pi) * ptr%ddx_state%xs(1, :))
+      ptr%ddx_pot(:) = 0.5_wp * self%feps * (ptr%ddx_pot(:) + sqrt(4.0_wp*pi) * 1.0_wp/(ptr%ddx%params%rsph(:)**(0)) * ptr%ddx_state%xs(1, :))
    end if
+   ! Add potential to overall potential for new SCF step 
+   pot%vat(:,1) = pot%vat(:,1) + ptr%ddx_pot(:)
 
-   ! Dipole potential
+   !%%%%%%%%%% DIPOLE POTENTIAL %%%%%%%%%%
    ptr%ddx_dppot = 0.0_wp
    do k = 1, 3
       call gemv(ptr%adpmat(k,:,:), ptr%ddx_state%zeta, ptr%ddx_dppot(k,:), alpha=-1.0_wp, beta=1.0_wp, trans='t') 
-      ptr%ddx_dppot(k,:) = 0.5_wp * self%feps * (ptr%ddx_dppot(k,:) + fac*4.0_wp*pi/3.0_wp * 1.0_wp/ptr%ddx%params%rsph(:) * ptr%ddx_state%xs(k+1, :))
+      ptr%ddx_dppot(k,:) = 0.5_wp * self%feps * (ptr%ddx_dppot(k,:) + fac*4.0_wp*pi/3.0_wp * 1.0_wp/(ptr%ddx%params%rsph(:)**(1)) * ptr%ddx_state%xs(k+1, :))
    end do
-
- 
-   ! Add potential to overall potential for new SCF step 
-   pot%vat(:,1) = pot%vat(:,1) + ptr%ddx_pot(:)
    pot%vdp(:,:,1) = pot%vdp(:,:,1) + ptr%ddx_dppot(:,:)
-   !pot%vdp(:,:,1) = pot%vdp(:,:,1) * (-1.0_wp) 
-   !pot%vdp(1,:,1) = pot%vdp(1,:,1) + ptr%ddx_dppot(3,:)
-   !pot%vdp(2,:,1) = pot%vdp(2,:,1) + ptr%ddx_dppot(1,:)
-   !pot%vdp(3,:,1) = pot%vdp(3,:,1) + ptr%ddx_dppot(2,:)
+
+   !%%%%%%%%%%% QUADRUPOLE POTENTIAL %%%%%%%%%%
+   ptr%ddx_qppot = 0.0_wp
+   ddx_qppot_trans = 0.0_wp
+   trans_fac = [ sqrt(15.0_wp/(4.0_wp*pi)),              & ! m = -2,  * Theta_xy
+              sqrt(15.0_wp/(4.0_wp*pi)),     & ! m = -1,  * Theta_yz   
+              1.0_wp/4.0_wp*sqrt(5.0_wp/(pi)),    & ! m =  0,  * (2 Tzz - Txx - Tyy)
+              sqrt(15.0_wp/(4.0_wp*pi)),     & ! m = +1,  * Theta_xz  
+              1.0_wp/4.0_wp*sqrt(15.0_wp/(pi)) ]      ! m = +2,  * (Txx - Tyy)
+   do k = 1, 5
+      call gemv(ptr%aqpmat(k,:,:), ptr%ddx_state%zeta, ddx_qppot_trans(k,:), alpha=-1.0_wp, beta=1.0_wp, trans='t') 
+      ddx_qppot_trans(k,:) = 0.5_wp * self%feps * (ddx_qppot_trans(k,:) + trans_fac(k) * 4.0_wp*pi/5.0_wp * 1.0_wp/(ptr%ddx%params%rsph(:)**2) * ptr%ddx_state%xs(k+4, :))
+   end do
+   ! Transform the quadrupole potential back to Cartesian form with Moore-Penrose pseudo-inverse of the transformation matrix
+   do i = 1, mol%nat
+      ptr%ddx_qppot(:,i) = matmul(pinv, ddx_qppot_trans(:,i))
+   end do
+   pot%vqp(:,:,1) = pot%vqp(:,:,1) + ptr%ddx_qppot(:,:)
 
 end subroutine get_potential
 
@@ -638,5 +702,141 @@ subroutine get_adp_matrix(xyz, ccav, adpmat)
    end do
 
 end subroutine get_adp_matrix
+
+
+subroutine get_aqp_matrix(xyz, ccav, aqpmat)
+   real(wp), intent(in) :: xyz(:, :)
+   real(wp), intent(in) :: ccav(:, :)
+   real(wp), intent(inout) :: aqpmat(:, :, :)
+
+   integer :: ic, j
+   real(wp) :: vec(3), vec2(3), d2, d, rrT(3,3), rrTcomp(6), rtrans(5)
+
+   real(wp), parameter :: s3 = sqrt(3.0_wp)
+   real(wp), parameter :: s3_4 = s3 * 0.5_wp
+
+   real(wp), parameter :: dtrafo(5,6) = sqrt(5.0_wp/(4.0_wp*pi)) * reshape([ &
+      !   m=-2     m=-1      m=0      m=+1     m=+2
+      & 0.0_wp,   0.0_wp,  -0.5_wp,  0.0_wp,   s3_4,   &  ! xx
+      &    s3 ,   0.0_wp,   0.0_wp,  0.0_wp,   0.0_wp, &  ! xy
+      & 0.0_wp,   0.0_wp,  -0.5_wp,  0.0_wp,  -s3_4,   &  ! yy
+      & 0.0_wp,   0.0_wp,   0.0_wp,     s3 ,   0.0_wp, &  ! xz
+      & 0.0_wp,      s3 ,   0.0_wp,  0.0_wp,   0.0_wp, &  ! yz
+      & 0.0_wp,   0.0_wp,   1.0_wp,  0.0_wp,   0.0_wp  &  ! zz
+      ], shape(dtrafo))
+
+      real(wp) :: Y2(5), err
+
+
+   aqpmat(:, :, :) = 0.0_wp
+   ! $omp parallel do default(none) schedule(runtime) collapse(2) &
+   ! $omp shared(ccav, xyz, aqpmat) private(ic, j, vec, vec2, rrT, rrTcomp, rtrans, d2, d, c22s, c21, c20, c22c, c6)
+   do ic = 1, size(ccav, 2)
+      do j = 1, size(xyz, 2)
+         vec(:) = ccav(:, ic) - xyz(:, j)
+         d2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+         d = sqrt(d2)
+
+         rrT = matmul(reshape(vec, [3,1]), reshape(vec, [1,3]))
+
+         ! Loose trace 
+         rrT(1,1) = rrT(1,1) - d2/3.0_wp
+         rrT(2,2) = rrT(2,2) - d2/3.0_wp
+         rrT(3,3) = rrT(3,3) - d2/3.0_wp
+
+         ! aqpmat(:, ic, j) = rtrans(:) / (d**5)
+         ! pack Cartesian, trace-free rr^T into your order
+         rrTcomp(1) = rrT(1,1)   ! xx
+         rrTcomp(2) = rrT(2,1)   ! xy
+         rrTcomp(3) = rrT(2,2)   ! yy
+         rrTcomp(4) = rrT(3,1)   ! xz
+         rrTcomp(5) = rrT(3,2)   ! yz
+         rrTcomp(6) = rrT(3,3)   ! zz
+               
+         ! --- Voigt scale the off-diagonals before transforming ---
+          rrTcomp(2) = sqrt(2.0_wp) * rrTcomp(2)   ! xy
+          rrTcomp(4) = sqrt(2.0_wp) * rrTcomp(4)   ! xz
+          rrTcomp(5) = sqrt(2.0_wp) * rrTcomp(5)   ! yz
+               
+         ! spherical kernel (5) via dtrafo
+         rtrans = matmul(dtrafo, rrTcomp)
+         aqpmat(:, ic, j) = 1.0_wp * rtrans(:) / (d**5)
+
+         ! call Y2m_real_from_vec(vec, Y2)
+         ! err = maxval( abs( aqpmat(:,ic,j) * d**3 / 1.0_wp - Y2(:) ) )
+
+         ! print *, 'error: ', err
+
+      end do
+   end do
+
+end subroutine get_aqp_matrix
+
+pure subroutine Y2m_real_from_vec(vec, Y2)  ! vec(3) -> Y2(5) in order [-2,-1,0,+1,+2]
+  use, intrinsic :: iso_fortran_env, only: wp => real64
+  real(wp), intent(in)  :: vec(3)
+  real(wp), intent(out) :: Y2(5)
+  real(wp), parameter :: pi = acos(-1.0_wp)
+  real(wp), parameter :: c15_4pi  = sqrt(15.0_wp/(4.0_wp*pi))
+  real(wp), parameter :: c5_16pi  = sqrt( 5.0_wp/(16.0_wp*pi))
+  real(wp), parameter :: c15_16pi = sqrt(15.0_wp/(16.0_wp*pi))
+  real(wp) :: r, x, y, z, invr
+
+  r = sqrt(vec(1)*vec(1) + vec(2)*vec(2) + vec(3)*vec(3))
+  if (r == 0.0_wp) then
+     Y2 = 0.0_wp
+     return
+  end if
+  invr = 1.0_wp / r
+  x = vec(1) * invr
+  y = vec(2) * invr
+  z = vec(3) * invr
+
+  Y2(1) = c15_4pi  * (x*y)             ! m = -2
+  Y2(2) = c15_4pi  * (y*z)             ! m = -1
+  Y2(3) = c5_16pi  * (3.0_wp*z*z - 1.0_wp)  ! m =  0
+  Y2(4) = c15_4pi  * (z*x)             ! m = +1
+  Y2(5) = c15_16pi * (x*x - y*y)       ! m = +2
+end subroutine
+
+
+
+  subroutine inv_spd_5x5_chol(A, Ainv)
+    implicit none
+    real(wp), intent(in)  :: A(5,5)
+    real(wp), intent(out) :: Ainv(5,5)
+    real(wp) :: L(5,5), z(5), x(5), s
+    integer  :: i, j, k
+
+    L = 0.0_wp
+    do j = 1, 5
+       do i = j, 5
+          s = A(i,j); do k = 1, j-1; s = s - L(i,k)*L(j,k); end do
+          if (i == j) then
+             if (s <= 0.0_wp) stop "inv_spd_5x5_chol: matrix not SPD"
+             L(i,j) = sqrt(s)
+          else
+             L(i,j) = s / L(j,j)
+          end if
+       end do
+    end do
+
+    do j = 1, 5
+       do i = 1, 5
+          s = merge(1.0_wp, 0.0_wp, i==j)
+          do k = 1, i-1; s = s - L(i,k)*z(k); end do
+          z(i) = s / L(i,i)
+       end do
+       do i = 5, 1, -1
+          s = z(i); do k = i+1, 5; s = s - L(k,i)*x(k); end do
+          x(i) = s / L(i,i)
+       end do
+       do i = 1, 5
+          Ainv(i,j) = x(i)
+       end do
+    end do
+  end subroutine inv_spd_5x5_chol
+
+
 
 end module tblite_solvation_ddx
