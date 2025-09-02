@@ -406,16 +406,16 @@ subroutine get_energy(self, mol, cache, wfn, energies)
 
    ! Monopole
    ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4.0_wp*pi)
-   ! Dipoles
+   ! Dipole
    ! This prefactor should be correct, according to https://en.wikipedia.org/wiki/Table_of_spherical_harmonics#Real_spherical_harmonics
-   fac = sqrt(3.0_wp/(4.0_wp*pi))
+   fac = sqrt(3.0_wp/(4.0_wp*pi)) 
    ptr%multipoles(2, :) = wfn%dpat(1,:,1) * fac
    ptr%multipoles(3, :) = wfn%dpat(2,:,1) * fac
    ptr%multipoles(4, :) = wfn%dpat(3,:,1) * fac
    
    ! Quadrupoles
    do i = 1, mol%nat
-      ptr%multipoles(5:9,i) = matmul(dtrafo, wfn%qpat(:,i,1))
+      ptr%multipoles(5:9,i) = matmul(dtrafo, wfn%qpat(:,i,1)) 
    end do
 
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
@@ -486,7 +486,7 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    ! Monopole
    ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4.0_wp*pi)
    ! Dipoles
-   fac = sqrt(3.0_wp/(4.0_wp*pi))
+   fac = sqrt(3.0_wp/(4.0_wp*pi)) 
    ptr%multipoles(2, :) = wfn%dpat(1,:,1) * fac
    ptr%multipoles(3, :) = wfn%dpat(2,:,1) * fac
    ptr%multipoles(4, :) = wfn%dpat(3,:,1) * fac
@@ -495,7 +495,7 @@ subroutine get_potential(self, mol, cache, wfn, pot)
       ptr%multipoles(5:9,i) = matmul(dtrafo, wfn%qpat(:,i,1)) 
    end do
 
-! write(*,*) wfn%qpat(:,:,1) - matmul(transpose(dtrafo), ptr%multipoles(5:9,:))
+! write(*,*) wfn%qpat(:,:,1) - matmul(pinv, ptr%multipoles(5:9,:))
 ! stop
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%multipoles, 2, ptr%ddx_electrostatics, ptr%ddx_error) 
@@ -535,14 +535,15 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    end do
    pot%vdp(:,:,1) = pot%vdp(:,:,1) + ptr%ddx_dppot(:,:)
 
+
    !%%%%%%%%%%% QUADRUPOLE POTENTIAL %%%%%%%%%%
    ptr%ddx_qppot = 0.0_wp
    ddx_qppot_trans = 0.0_wp
    trans_fac = [ sqrt(15.0_wp/(4.0_wp*pi)),              & ! m = -2,  * Theta_xy
-              sqrt(15.0_wp/(4.0_wp*pi)),     & ! m = -1,  * Theta_yz   
-              1.0_wp/4.0_wp*sqrt(5.0_wp/(pi)),    & ! m =  0,  * (2 Tzz - Txx - Tyy)
-              sqrt(15.0_wp/(4.0_wp*pi)),     & ! m = +1,  * Theta_xz  
-              1.0_wp/4.0_wp*sqrt(15.0_wp/(pi)) ]      ! m = +2,  * (Txx - Tyy)
+                 sqrt(15.0_wp/(4.0_wp*pi)),              & ! m = -1,  * Theta_yz   
+                 1.0_wp/4.0_wp*sqrt(5.0_wp/(pi)),        & ! m =  0,  * (2 Tzz - Txx - Tyy)
+                 sqrt(15.0_wp/(4.0_wp*pi)),              & ! m = +1,  * Theta_xz  
+                 1.0_wp/4.0_wp*sqrt(15.0_wp/(pi)) ]        ! m = +2,  * (Txx - Tyy)
    do k = 1, 5
       call gemv(ptr%aqpmat(k,:,:), ptr%ddx_state%zeta, ddx_qppot_trans(k,:), alpha=-1.0_wp, beta=1.0_wp, trans='t') 
       ddx_qppot_trans(k,:) = 0.5_wp * self%feps * (ddx_qppot_trans(k,:) + trans_fac(k) * 4.0_wp*pi/5.0_wp * 1.0_wp/(ptr%ddx%params%rsph(:)**2) * ptr%ddx_state%xs(k+4, :))
@@ -571,15 +572,43 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    !> Reusable data container
    type(container_cache), intent(inout) :: cache
    type(ddx_cache), pointer :: ptr
+
+   real(wp) :: fac, trans_fac(5), ddx_qppot_trans(5,mol%nat)
+
+   real(wp), parameter :: s3 = sqrt(3.0_wp)
+   real(wp), parameter :: s3_4 = s3 * 0.5_wp
+
+   real(wp), parameter :: dtrafo(5,6) = sqrt(5.0_wp/(4.0_wp*pi)) * reshape([ &
+         !   m=-2     m=-1      m=0      m=+1     m=+2
+         & 0.0_wp,   0.0_wp,  -0.5_wp,  0.0_wp,   s3_4,   &  ! xx
+         &    s3 ,   0.0_wp,   0.0_wp,  0.0_wp,   0.0_wp, &  ! xy
+         & 0.0_wp,   0.0_wp,  -0.5_wp,  0.0_wp,  -s3_4,   &  ! yy
+         & 0.0_wp,   0.0_wp,   0.0_wp,     s3 ,   0.0_wp, &  ! xz
+         & 0.0_wp,      s3 ,   0.0_wp,  0.0_wp,   0.0_wp, &  ! yz
+         & 0.0_wp,   0.0_wp,   1.0_wp,  0.0_wp,   0.0_wp  &  ! zz
+         ], shape(dtrafo))
+         
+
+   integer :: i   
    
    call view(cache, ptr)
 
    ptr%force = 0.0_wp
 
+   ! Monopole
    ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4.0_wp*pi)
+   ! Dipoles
+   fac = sqrt(3.0_wp/(4.0_wp*pi))
+   ptr%multipoles(2, :) = wfn%dpat(1,:,1) * fac
+   ptr%multipoles(3, :) = wfn%dpat(2,:,1) * fac
+   ptr%multipoles(4, :) = wfn%dpat(3,:,1) * fac
+   ! Quadrupoles
+   do i = 1, mol%nat
+      ptr%multipoles(5:9,i) = matmul(dtrafo, wfn%qpat(:,i,1)) 
+   end do
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
-      & ptr%ddx%workspace, ptr%multipoles, 1, ptr%ddx_electrostatics, ptr%ddx_error)
-   call multipole_psi(ptr%ddx%params, ptr%multipoles, 1, ptr%ddx_state%psi)
+      & ptr%ddx%workspace, ptr%multipoles, 2, ptr%ddx_electrostatics, ptr%ddx_error)
+   call multipole_psi(ptr%ddx%params, ptr%multipoles, 2, ptr%ddx_state%psi)
 
    call setup(ptr%ddx%params,ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, &
@@ -599,7 +628,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    call check_error(ptr%ddx_error)
 
    call multipole_force_terms(ptr%ddx%params, ptr%ddx%constants, ptr%ddx%workspace, &
-      ptr%ddx_state, 1, ptr%multipoles, ptr%force, ptr%ddx_error)
+      ptr%ddx_state, 2, ptr%multipoles, ptr%force, ptr%ddx_error)
    call check_error(ptr%ddx_error)
 
    ! Calculate the gradient of the solvation energy
@@ -671,7 +700,7 @@ subroutine get_coulomb_matrix(xyz, ccav, jmat)
          vec(:) = ccav(:, ic) - xyz(:, j)
          d2 = vec(1)**2 + vec(2)**2 + vec(3)**2
          d = sqrt(d2)
-         jmat(ic, j) = 1.0_wp / d
+         jmat(ic, j) = 1.0_wp / d 
       end do
    end do
 
@@ -685,6 +714,10 @@ subroutine get_adp_matrix(xyz, ccav, adpmat)
    integer :: ic, j
    real(wp) :: vec(3), vec2(3), d2, d
 
+   d2 = 0.0_wp
+   d = 0.0_wp
+   vec2 = 0.0_wp  
+
    adpmat(:, :, :) = 0.0_wp
    !$omp parallel do default(none) schedule(runtime) collapse(2) &
    !$omp shared(ccav, xyz, adpmat) private(ic, j, vec, vec2, d2, d)
@@ -693,7 +726,7 @@ subroutine get_adp_matrix(xyz, ccav, adpmat)
          vec(:) = ccav(:, ic) - xyz(:, j)
          d2 = vec(1)**2 + vec(2)**2 + vec(3)**2
          d = sqrt(d2)
-         ! yzx vector that maps to l+m=-1,0,1 (z,y,x)
+         ! yzx vector that maps to l=1, m=-1,0,1 (z,y,x)
          vec2(1) = vec(2)
          vec2(2) = vec(3)
          vec2(3) = vec(1)
@@ -727,12 +760,20 @@ subroutine get_aqp_matrix(xyz, ccav, aqpmat)
 
       real(wp) :: Y2(5), err
 
-
+   
+   rrTcomp = 0.0_wp
+   rrT = 0.0_wp
+   rtrans = 0.0_wp
+   vec2 = 0.0_wp
    aqpmat(:, :, :) = 0.0_wp
-   ! $omp parallel do default(none) schedule(runtime) collapse(2) &
-   ! $omp shared(ccav, xyz, aqpmat) private(ic, j, vec, vec2, rrT, rrTcomp, rtrans, d2, d, c22s, c21, c20, c22c, c6)
+   !! $omp parallel do default(none) schedule(runtime) collapse(2) &
+   !! $omp shared(ccav, xyz, aqpmat) private(ic, j, vec, vec2, rrT, rrTcomp, rtrans, d2, d, c22s, c21, c20, c22c, c6)
    do ic = 1, size(ccav, 2)
       do j = 1, size(xyz, 2)
+         rrTcomp = 0.0_wp
+   rrT = 0.0_wp
+   rtrans = 0.0_wp
+   vec2 = 0.0_wp
          vec(:) = ccav(:, ic) - xyz(:, j)
          d2 = vec(1)**2 + vec(2)**2 + vec(3)**2
          d = sqrt(d2)
@@ -754,13 +795,14 @@ subroutine get_aqp_matrix(xyz, ccav, aqpmat)
          rrTcomp(6) = rrT(3,3)   ! zz
                
          ! --- Voigt scale the off-diagonals before transforming ---
-          rrTcomp(2) = sqrt(2.0_wp) * rrTcomp(2)   ! xy
-          rrTcomp(4) = sqrt(2.0_wp) * rrTcomp(4)   ! xz
-          rrTcomp(5) = sqrt(2.0_wp) * rrTcomp(5)   ! yz
+         !  rrTcomp(2) = 2.0_wp * rrTcomp(2)   ! xy
+         !  rrTcomp(4) = 2.0_wp * rrTcomp(4)   ! xz
+         !  rrTcomp(5) = 2.0_wp * rrTcomp(5)   ! yz
+
                
          ! spherical kernel (5) via dtrafo
          rtrans = matmul(dtrafo, rrTcomp)
-         aqpmat(:, ic, j) = 1.0_wp * rtrans(:) / (d**5)
+         aqpmat(:, ic, j) = rtrans(:) / (d**5)
 
          ! call Y2m_real_from_vec(vec, Y2)
          ! err = maxval( abs( aqpmat(:,ic,j) * d**3 / 1.0_wp - Y2(:) ) )

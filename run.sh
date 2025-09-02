@@ -2,4 +2,4 @@
 
 meson compile -C build || { echo "Compilation failed"; exit 1; }
 
-./build/app/tblite nacl.xyz --cosmo water
+./build/app/tblite ibu.xyz --cpcm water  
