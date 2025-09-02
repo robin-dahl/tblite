@@ -495,6 +495,7 @@ subroutine get_potential(self, mol, cache, wfn, pot)
       ptr%multipoles(5:9,i) = matmul(dtrafo, wfn%qpat(:,i,1)) 
    end do
 
+
 ! write(*,*) wfn%qpat(:,:,1) - matmul(pinv, ptr%multipoles(5:9,:))
 ! stop
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
@@ -771,9 +772,9 @@ subroutine get_aqp_matrix(xyz, ccav, aqpmat)
    do ic = 1, size(ccav, 2)
       do j = 1, size(xyz, 2)
          rrTcomp = 0.0_wp
-   rrT = 0.0_wp
-   rtrans = 0.0_wp
-   vec2 = 0.0_wp
+         rrT = 0.0_wp
+         rtrans = 0.0_wp
+         vec2 = 0.0_wp
          vec(:) = ccav(:, ic) - xyz(:, j)
          d2 = vec(1)**2 + vec(2)**2 + vec(3)**2
          d = sqrt(d2)
@@ -804,80 +805,12 @@ subroutine get_aqp_matrix(xyz, ccav, aqpmat)
          rtrans = matmul(dtrafo, rrTcomp)
          aqpmat(:, ic, j) = rtrans(:) / (d**5)
 
-         ! call Y2m_real_from_vec(vec, Y2)
-         ! err = maxval( abs( aqpmat(:,ic,j) * d**3 / 1.0_wp - Y2(:) ) )
-
-         ! print *, 'error: ', err
 
       end do
    end do
 
 end subroutine get_aqp_matrix
 
-pure subroutine Y2m_real_from_vec(vec, Y2)  ! vec(3) -> Y2(5) in order [-2,-1,0,+1,+2]
-  use, intrinsic :: iso_fortran_env, only: wp => real64
-  real(wp), intent(in)  :: vec(3)
-  real(wp), intent(out) :: Y2(5)
-  real(wp), parameter :: pi = acos(-1.0_wp)
-  real(wp), parameter :: c15_4pi  = sqrt(15.0_wp/(4.0_wp*pi))
-  real(wp), parameter :: c5_16pi  = sqrt( 5.0_wp/(16.0_wp*pi))
-  real(wp), parameter :: c15_16pi = sqrt(15.0_wp/(16.0_wp*pi))
-  real(wp) :: r, x, y, z, invr
-
-  r = sqrt(vec(1)*vec(1) + vec(2)*vec(2) + vec(3)*vec(3))
-  if (r == 0.0_wp) then
-     Y2 = 0.0_wp
-     return
-  end if
-  invr = 1.0_wp / r
-  x = vec(1) * invr
-  y = vec(2) * invr
-  z = vec(3) * invr
-
-  Y2(1) = c15_4pi  * (x*y)             ! m = -2
-  Y2(2) = c15_4pi  * (y*z)             ! m = -1
-  Y2(3) = c5_16pi  * (3.0_wp*z*z - 1.0_wp)  ! m =  0
-  Y2(4) = c15_4pi  * (z*x)             ! m = +1
-  Y2(5) = c15_16pi * (x*x - y*y)       ! m = +2
-end subroutine
-
-
-
-  subroutine inv_spd_5x5_chol(A, Ainv)
-    implicit none
-    real(wp), intent(in)  :: A(5,5)
-    real(wp), intent(out) :: Ainv(5,5)
-    real(wp) :: L(5,5), z(5), x(5), s
-    integer  :: i, j, k
-
-    L = 0.0_wp
-    do j = 1, 5
-       do i = j, 5
-          s = A(i,j); do k = 1, j-1; s = s - L(i,k)*L(j,k); end do
-          if (i == j) then
-             if (s <= 0.0_wp) stop "inv_spd_5x5_chol: matrix not SPD"
-             L(i,j) = sqrt(s)
-          else
-             L(i,j) = s / L(j,j)
-          end if
-       end do
-    end do
-
-    do j = 1, 5
-       do i = 1, 5
-          s = merge(1.0_wp, 0.0_wp, i==j)
-          do k = 1, i-1; s = s - L(i,k)*z(k); end do
-          z(i) = s / L(i,i)
-       end do
-       do i = 5, 1, -1
-          s = z(i); do k = i+1, 5; s = s - L(k,i)*x(k); end do
-          x(i) = s / L(i,i)
-       end do
-       do i = 1, 5
-          Ainv(i,j) = x(i)
-       end do
-    end do
-  end subroutine inv_spd_5x5_chol
 
 
 
