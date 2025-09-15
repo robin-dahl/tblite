@@ -409,9 +409,9 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    ! Dipole
    ! This prefactor should be correct, according to https://en.wikipedia.org/wiki/Table_of_spherical_harmonics#Real_spherical_harmonics
    fac = sqrt(3.0_wp/(4.0_wp*pi)) 
-   ptr%multipoles(2, :) = wfn%dpat(1,:,1) * fac
-   ptr%multipoles(3, :) = wfn%dpat(2,:,1) * fac
-   ptr%multipoles(4, :) = wfn%dpat(3,:,1) * fac
+   ptr%multipoles(2, :) = wfn%dpat(2,:,1) * fac
+   ptr%multipoles(3, :) = wfn%dpat(3,:,1) * fac
+   ptr%multipoles(4, :) = wfn%dpat(1,:,1) * fac
    
    ! Quadrupoles
    do i = 1, mol%nat
@@ -437,6 +437,8 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    else
       energies(:) = energies + 0.5_wp * self%feps * sum(ptr%ddx_state%xs * ptr%ddx_state%psi, 1)
    end if
+
+   ! write(*,*)  "NCAV", ptr%ddx%constants%ncav
 
 end subroutine get_energy
 
@@ -487,14 +489,13 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4.0_wp*pi)
    ! Dipoles
    fac = sqrt(3.0_wp/(4.0_wp*pi)) 
-   ptr%multipoles(2, :) = wfn%dpat(1,:,1) * fac
-   ptr%multipoles(3, :) = wfn%dpat(2,:,1) * fac
-   ptr%multipoles(4, :) = wfn%dpat(3,:,1) * fac
+   ptr%multipoles(2, :) = wfn%dpat(2,:,1) * fac
+   ptr%multipoles(3, :) = wfn%dpat(3,:,1) * fac
+   ptr%multipoles(4, :) = wfn%dpat(1,:,1) * fac
    ! Quadrupoles
    do i = 1, mol%nat
-      ptr%multipoles(5:9,i) = matmul(dtrafo, wfn%qpat(:,i,1)) 
+      ptr%multipoles(5:9,i) = 3 * matmul(dtrafo, wfn%qpat(:,i,1)) 
    end do
-
 
 ! write(*,*) wfn%qpat(:,:,1) - matmul(pinv, ptr%multipoles(5:9,:))
 ! stop
@@ -534,7 +535,9 @@ subroutine get_potential(self, mol, cache, wfn, pot)
       call gemv(ptr%adpmat(k,:,:), ptr%ddx_state%zeta, ptr%ddx_dppot(k,:), alpha=-1.0_wp, beta=1.0_wp, trans='t') 
       ptr%ddx_dppot(k,:) = 0.5_wp * self%feps * (ptr%ddx_dppot(k,:) + fac*4.0_wp*pi/3.0_wp * 1.0_wp/(ptr%ddx%params%rsph(:)**(1)) * ptr%ddx_state%xs(k+1, :))
    end do
-   pot%vdp(:,:,1) = pot%vdp(:,:,1) + ptr%ddx_dppot(:,:)
+   pot%vdp(1,:,1) = pot%vdp(1,:,1) + ptr%ddx_dppot(3,:)
+   pot%vdp(2,:,1) = pot%vdp(2,:,1) + ptr%ddx_dppot(1,:)
+   pot%vdp(3,:,1) = pot%vdp(3,:,1) + ptr%ddx_dppot(2,:)
 
 
    !%%%%%%%%%%% QUADRUPOLE POTENTIAL %%%%%%%%%%
@@ -554,6 +557,7 @@ subroutine get_potential(self, mol, cache, wfn, pot)
       ptr%ddx_qppot(:,i) = matmul(pinv, ddx_qppot_trans(:,i))
    end do
    pot%vqp(:,:,1) = pot%vqp(:,:,1) + ptr%ddx_qppot(:,:)
+
 
 end subroutine get_potential
 
@@ -731,7 +735,7 @@ subroutine get_adp_matrix(xyz, ccav, adpmat)
          vec2(1) = vec(2)
          vec2(2) = vec(3)
          vec2(3) = vec(1)
-         adpmat(:, ic, j) = vec2(:) / (d**3)
+         adpmat(:, ic, j) = vec(:) / (d**3)
       end do
    end do
 
@@ -779,22 +783,32 @@ subroutine get_aqp_matrix(xyz, ccav, aqpmat)
          d2 = vec(1)**2 + vec(2)**2 + vec(3)**2
          d = sqrt(d2)
 
-         rrT = matmul(reshape(vec, [3,1]), reshape(vec, [1,3]))
+         ! vec2(1) = vec(3)
+         ! vec2(2) = vec(1)
+         ! vec2(3) = vec(2)
+
+         rrT = matmul(1.5_wp * reshape(vec, [3,1]), reshape(vec, [1,3]))
 
          ! Loose trace 
-         rrT(1,1) = rrT(1,1) - d2/3.0_wp
-         rrT(2,2) = rrT(2,2) - d2/3.0_wp
-         rrT(3,3) = rrT(3,3) - d2/3.0_wp
+         ! rrT(1,1) = rrT(1,1) - d2/2.0_wp
+         ! rrT(2,2) = rrT(2,2) - d2/2.0_wp
+         ! rrT(3,3) = rrT(3,3) - d2/2.0_wp
 
          ! aqpmat(:, ic, j) = rtrans(:) / (d**5)
          ! pack Cartesian, trace-free rr^T into your order
-         rrTcomp(1) = rrT(1,1)   ! xx
-         rrTcomp(2) = rrT(2,1)   ! xy
-         rrTcomp(3) = rrT(2,2)   ! yy
-         rrTcomp(4) = rrT(3,1)   ! xz
-         rrTcomp(5) = rrT(3,2)   ! yz
-         rrTcomp(6) = rrT(3,3)   ! zz
-               
+         ! rrTcomp(1) = rrT(1,1)   ! xx
+         ! rrTcomp(2) = rrT(2,1)   ! xy
+         ! rrTcomp(3) = rrT(2,2)   ! yy
+         ! rrTcomp(4) = rrT(3,1)   ! xz
+         ! rrTcomp(5) = rrT(3,2)   ! yz
+         ! rrTcomp(6) = rrT(3,3)   ! zz
+
+         rrTcomp(2) = 2*vec(1)*vec(2)
+         rrTcomp(4) = 2*vec(1)*vec(3)
+         rrTcomp(5) = 2*vec(2)*vec(3)
+         rrTcomp(1) = vec(1)*vec(1)
+         rrTcomp(3) = vec(2)*vec(2)
+          rrTcomp(6) = vec(3)*vec(3)         
          ! --- Voigt scale the off-diagonals before transforming ---
          !  rrTcomp(2) = 2.0_wp * rrTcomp(2)   ! xy
          !  rrTcomp(4) = 2.0_wp * rrTcomp(4)   ! xz

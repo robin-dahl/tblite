@@ -803,223 +803,6 @@ end subroutine test_qp_traceless
 ! end subroutine test_qp
 
 
-subroutine test_qp(error, model, mol, qat, dpat, qpat, kappa)
-   use mctc_env,                 only : wp, error_type
-   use mctc_io,                  only : structure_type
-   use tblite_solvation_ddx,     only : ddx_solvation, ddx_input
-   use tblite_wavefunction_type, only : wavefunction_type
-   use tblite_scf_potential,     only : potential_type
-   use tblite_container_cache,   only : container_cache
-   implicit none
-
-   ! I/O
-   type(error_type), allocatable, intent(out) :: error
-   integer,               intent(in) :: model                 ! COSMO=11, CPCM=12, PCM=2, LPB=3
-   type(structure_type),  intent(in) :: mol
-   real(wp),              intent(in) :: qat(:)                ! (nat)
-   real(wp),              intent(in) :: dpat(:, :)            ! (3, nat)
-   ! qpat must be (6, nat) in order (xx, xy, yy, xz, yz, zz).
-   ! Stored diagonals are traceless as a triplet (xx+yy+zz ≈ 0) in many implementations.
-   real(wp),              intent(in) :: qpat(:, :)
-   real(wp),    optional, intent(in) :: kappa                 ! LPB only
-
-   ! Types
-   type(ddx_solvation)                :: solv
-   type(wavefunction_type)            :: wfn
-   type(potential_type)               :: pot
-   type(container_cache), allocatable :: cache
-
-   ! Params
-   integer,  parameter :: nqp = 6, nang = 302
-   integer,  parameter :: ixx=1, ixy=2, iyy=3, ixz=4, iyz=5, izz=6
-   real(wp), parameter :: feps = 80.0_wp, rscale = 1.0_wp
-   real(wp), parameter :: step = 1.0e-4_wp
-   real(wp), parameter :: thr_abs = 1.0e+3_wp*sqrt(epsilon(1.0_wp))
-   real(wp), parameter :: thr_rel = 1.0e-7_wp
-
-   ! Locals
-   integer :: nat, ii, l
-   real(wp) :: er(mol%nat), el(mol%nat)
-   real(wp), allocatable :: vnum(:,:), vana(:,:)
-   logical :: offdiag_times_two
-
-   ! --- sanity ---
-   nat = mol%nat
-   if (size(qpat,1) /= nqp .or. size(qpat,2) /= nat) then
-      call test_failed(error, "qpat must be size (6, nat) in order (xx,xy,yy,xz,yz,zz).")
-      return
-   end if
-   if (size(dpat,1) /= 3 .or. size(dpat,2) /= nat) then
-      call test_failed(error, "dpat must be (3, nat).")
-      return
-   end if
-   if (size(qat,1) /= nat) then
-      call test_failed(error, "qat must be length nat.")
-      return
-   end if
-
-   ! --- baseline wavefunction ---
-   wfn%qat  = reshape(qat,  [nat, 1])
-   wfn%dpat = reshape(dpat, [3,   nat, 1])
-   wfn%qpat = reshape(qpat, [6,   nat, 1])
-
-   allocate(pot%vat(nat, 1), source=0.0_wp)
-   allocate(pot%vqp(6, nat, 1), source=0.0_wp)
-
-   if (present(kappa)) then
-      solv = ddx_solvation(mol, ddx_input(feps, model, nang=nang, rscale=rscale, kappa=kappa))
-   else
-      solv = ddx_solvation(mol, ddx_input(feps, model, nang=nang, rscale=rscale))
-   end if
-
-   allocate(cache)
-   call solv%update(mol, cache)
-
-   ! --- numerical derivatives along the STORED 6 directions
-   ! For diagonals, apply trace-preserving bumps so directions match solver's traceless diagonal basis.
-   allocate(vnum(6, nat), source=0.0_wp)
-
-   do ii = 1, nat
-      do l = 1, 6
-         ! +step
-         wfn%qat  = reshape(qat,  [nat, 1])
-         wfn%dpat = reshape(dpat, [3,   nat, 1])
-         wfn%qpat = reshape(qpat, [6,   nat, 1])
-         call bump_traceless_stored(wfn%qpat(:,ii,1), l, +step)
-         call solv%get_energy(mol, cache, wfn, er)
-
-         ! -step
-         wfn%qat  = reshape(qat,  [nat, 1])
-         wfn%dpat = reshape(dpat, [3,   nat, 1])
-         wfn%qpat = reshape(qpat, [6,   nat, 1])
-         call bump_traceless_stored(wfn%qpat(:,ii,1), l, -step)
-         call solv%get_energy(mol, cache, wfn, el)
-
-         vnum(l, ii) = 0.5_wp*(sum(er) - sum(el))/step
-      end do
-   end do
-
-   ! --- analytic gradient from solver, same storage (6, nat)
-   pot%vat(:, :)    = 0.0_wp
-   pot%vqp(:, :, :) = 0.0_wp
-   call solv%get_potential(mol, cache, wfn, pot)
-
-   allocate(vana(6, nat))
-   vana(:,:) = pot%vqp(:,:,1)
-
-   ! --- auto-detect off-diagonal ×2 packing and correct if needed
-   offdiag_times_two = detect_offdiag_times_two(vnum, vana, nat)
-   if (offdiag_times_two) then
-      vana(ixy,:) = 0.5_wp*vana(ixy,:)
-      vana(ixz,:) = 0.5_wp*vana(ixz,:)
-      vana(iyz,:) = 0.5_wp*vana(iyz,:)
-      write(*,'(a)') "note: detected off-diagonal ×2 packing; halving analytic off-diagonals for comparison."
-   end if
-
-   ! --- compare directly (component-wise, same (6,nat) storage)
-   call check_match_or_fail(error, vnum, vana, nat, thr_abs, thr_rel)
-
-contains
-
-   ! Apply a bump to the l-th stored component while keeping the tensor traceless
-   ! for the diagonal triplet. Off-diagonals are already traceless and bumped directly.
-   pure subroutine bump_traceless_stored(q6, lidx, h)
-      real(wp), intent(inout) :: q6(6)     ! (xx,xy,yy,xz,yz,zz)
-      integer,  intent(in)    :: lidx
-      real(wp), intent(in)    :: h
-      integer, parameter :: ixx=1, ixy=2, iyy=3, ixz=4, iyz=5, izz=6
-      select case (lidx)
-      case (ixx)
-         q6(ixx) = q6(ixx) + h
-         q6(iyy) = q6(iyy) - 0.5_wp*h
-         q6(izz) = q6(izz) - 0.5_wp*h
-      case (iyy)
-         q6(iyy) = q6(iyy) + h
-         q6(ixx) = q6(ixx) - 0.5_wp*h
-         q6(izz) = q6(izz) - 0.5_wp*h
-      case (izz)
-         q6(izz) = q6(izz) + h
-         q6(ixx) = q6(ixx) - 0.5_wp*h
-         q6(iyy) = q6(iyy) - 0.5_wp*h
-      case default
-         q6(lidx) = q6(lidx) + h   ! xy/xz/yz: symmetric off-diagonals; trace already zero
-      end select
-   end subroutine bump_traceless_stored
-
-   ! Heuristic: if off-diagonal analytic components look ~2× the FD,
-   ! assume packing uses 2*G_ij and request halving for comparison.
-   logical function detect_offdiag_times_two(vn, va, n)
-      real(wp), intent(in) :: vn(6,n), va(6,n)
-      integer,  intent(in) :: n
-      real(wp) :: ratios(3*n), tmp
-      integer :: k, i, j
-      k = 0
-      do i = 1, n
-         if (abs(va(ixy,i)) > 0.0_wp .and. abs(vn(ixy,i)) > 0.0_wp) then
-            k = k + 1; ratios(k) = abs(vn(ixy,i)/va(ixy,i))
-         end if
-         if (abs(va(ixz,i)) > 0.0_wp .and. abs(vn(ixz,i)) > 0.0_wp) then
-            k = k + 1; ratios(k) = abs(vn(ixz,i)/va(ixz,i))
-         end if
-         if (abs(va(iyz,i)) > 0.0_wp .and. abs(vn(iyz,i)) > 0.0_wp) then
-            k = k + 1; ratios(k) = abs(vn(iyz,i)/va(iyz,i))
-         end if
-      end do
-      if (k < 3) then
-         detect_offdiag_times_two = .false.
-         return
-      end if
-      ! crude median-of-k
-      do i = 1, k-1
-         do j = i+1, k
-            if (ratios(j) < ratios(i)) then
-               tmp = ratios(i); ratios(i) = ratios(j); ratios(j) = tmp
-            end if
-         end do
-      end do
-      tmp = ratios((k+1)/2)
-      detect_offdiag_times_two = (tmp > 0.45_wp .and. tmp < 0.55_wp)  ! near 0.5
-   end function detect_offdiag_times_two
-
-   subroutine check_match_or_fail(error, vnum6n, vana6n, n, rabs, rrel)
-      use mctc_env, only : wp, error_type
-      type(error_type), allocatable, intent(out) :: error
-      integer, intent(in) :: n
-      real(wp), intent(in) :: vnum6n(6,n), vana6n(6,n)
-      real(wp), intent(in) :: rabs, rrel
-      integer :: ii, l
-      real(wp) :: diff, denom
-      logical :: failed
-      failed = .false.
-
-      do ii = 1, n
-         do l = 1, 6
-            diff  = abs(vnum6n(l,ii) - vana6n(l,ii))
-            denom = max(1.0_wp, abs(vana6n(l,ii)))
-            if (diff > max(rabs, rrel*denom)) then
-               failed = .true.
-               exit
-            end if
-         end do
-         if (failed) exit
-      end do
-
-      if (failed) then
-         call test_failed(error, "Quadrupole potential mismatch (direct packed, traceless diagonal directions).")
-         do ii = 1, n
-            write(*,'(a,i4)') 'atom', ii
-            write(*,'(a,6es20.13)') '  vnum: ', vnum6n(:,ii)
-            write(*,'(a,6es20.13)') '  vana: ', vana6n(:,ii)
-            write(*,'(a,6es20.13)') '  diff: ', vnum6n(:,ii) - vana6n(:,ii)
-         end do
-      end if
-   end subroutine check_match_or_fail
-
-end subroutine test_qp
-
-
-
-
 ! subroutine test_qp(error, model, mol, qat, dpat, qpat, kappa)
 !    use mctc_env,                 only : wp, error_type
 !    use mctc_io,                  only : structure_type
@@ -1029,125 +812,122 @@ end subroutine test_qp
 !    use tblite_container_cache,   only : container_cache
 !    implicit none
 
-!    !> Error handling
+!    ! I/O
 !    type(error_type), allocatable, intent(out) :: error
-!    !> Solvation model (COSMO=11, CPCM=12, PCM=2, LPB=3)
-!    integer, intent(in) :: model
-!    !> Molecular structure data
-!    type(structure_type), intent(in) :: mol
-!    !> Atomic partial charges (kept constant)
-!    real(wp), intent(in) :: qat(:)
-!    !> Atomic dipoles (kept constant)
-!    real(wp), intent(in) :: dpat(:, :)
-!    !> Atomic quadrupoles in lower-tri order (xx,xy,yy,xz,yz,zz), traceless
-!    real(wp), intent(in) :: qpat(:, :)
-!    !> Debye–Hückel screening parameter (only used in LPB)
-!    real(wp), optional, intent(in) :: kappa
+!    integer,               intent(in) :: model                 ! COSMO=11, CPCM=12, PCM=2, LPB=3
+!    type(structure_type),  intent(in) :: mol
+!    real(wp),              intent(in) :: qat(:)                ! (nat)
+!    real(wp),              intent(in) :: dpat(:, :)            ! (3, nat)
+!    ! qpat must be (6, nat) in order (xx, xy, yy, xz, yz, zz).
+!    ! Stored diagonals are traceless as a triplet (xx+yy+zz ≈ 0) in many implementations.
+!    real(wp),              intent(in) :: qpat(:, :)
+!    real(wp),    optional, intent(in) :: kappa                 ! LPB only
 
+!    ! Types
 !    type(ddx_solvation)                :: solv
 !    type(wavefunction_type)            :: wfn
 !    type(potential_type)               :: pot
 !    type(container_cache), allocatable :: cache
 
+!    ! Params
 !    integer,  parameter :: nqp = 6, nang = 302
 !    integer,  parameter :: ixx=1, ixy=2, iyy=3, ixz=4, iyz=5, izz=6
-!    real(wp), parameter :: feps = 80.0_wp
+!    real(wp), parameter :: feps = 80.0_wp, rscale = 1.0_wp
 !    real(wp), parameter :: step = 1.0e-4_wp
 !    real(wp), parameter :: thr_abs = 1.0e+3_wp*sqrt(epsilon(1.0_wp))
 !    real(wp), parameter :: thr_rel = 1.0e-7_wp
 
-!    integer :: ii, l, nat
+!    ! Locals
+!    integer :: nat, ii, l
 !    real(wp) :: er(mol%nat), el(mol%nat)
-!    real(wp), allocatable :: vnum(:,:), vdir(:,:)    ! numerical FD and analytic directional
+!    real(wp), allocatable :: vnum(:,:), vana(:,:)
+!    logical :: offdiag_times_two
 
-!    ! --- sizes & sanity ---
+!    ! --- sanity ---
 !    nat = mol%nat
-!    if (size(qpat,1) /= nqp) then
-!       call test_failed(error, "test_qp expects qpat with 6 components (xx,xy,yy,xz,yz,zz).")
+!    if (size(qpat,1) /= nqp .or. size(qpat,2) /= nat) then
+!       call test_failed(error, "qpat must be size (6, nat) in order (xx,xy,yy,xz,yz,zz).")
 !       return
 !    end if
-!    if (size(qpat,2) /= nat) then
-!       call test_failed(error, "test_qp size mismatch: size(qpat,2) must equal mol%nat.")
+!    if (size(dpat,1) /= 3 .or. size(dpat,2) /= nat) then
+!       call test_failed(error, "dpat must be (3, nat).")
+!       return
+!    end if
+!    if (size(qat,1) /= nat) then
+!       call test_failed(error, "qat must be length nat.")
 !       return
 !    end if
 
-!    ! --- baseline wfn ---
-!    wfn%qat  = reshape(qat,  [size(qat),         1])
-!    wfn%dpat = reshape(dpat, [3, size(dpat, 2),  1])
-!    wfn%qpat = reshape(qpat, [nqp, size(qpat,2), 1])
+!    ! --- baseline wavefunction ---
+!    wfn%qat  = reshape(qat,  [nat, 1])
+!    wfn%dpat = reshape(dpat, [3,   nat, 1])
+!    wfn%qpat = reshape(qpat, [6,   nat, 1])
 
-!    allocate(pot%vat(size(qat,1), 1), source=0.0_wp)
-!    allocate(pot%vqp(nqp, size(qpat,2), 1), source=0.0_wp)
+!    allocate(pot%vat(nat, 1), source=0.0_wp)
+!    allocate(pot%vqp(6, nat, 1), source=0.0_wp)
 
 !    if (present(kappa)) then
-!       solv = ddx_solvation(mol, ddx_input(feps, model, nang=nang, kappa=kappa))
+!       solv = ddx_solvation(mol, ddx_input(feps, model, nang=nang, rscale=rscale, kappa=kappa))
 !    else
-!       solv = ddx_solvation(mol, ddx_input(feps, model, nang=nang))
+!       solv = ddx_solvation(mol, ddx_input(feps, model, nang=nang, rscale=rscale))
 !    end if
 
 !    allocate(cache)
 !    call solv%update(mol, cache)
 
-!    ! --- numerical FD constrained to traceless manifold (option 1) ---
-!    allocate(vnum(nqp, nat), source=0.0_wp)
+!    ! --- numerical derivatives along the STORED 6 directions
+!    ! For diagonals, apply trace-preserving bumps so directions match solver's traceless diagonal basis.
+!    allocate(vnum(6, nat), source=0.0_wp)
 
 !    do ii = 1, nat
-!       do l = 1, nqp
-!          er = 0.0_wp; el = 0.0_wp
-
+!       do l = 1, 6
 !          ! +step
-!          wfn%qat  = reshape(qat,  [size(qat), 1])
-!          wfn%dpat = reshape(dpat, [3, size(dpat,2), 1])
-!          wfn%qpat = reshape(qpat, [nqp, size(qpat,2), 1])
-!          call apply_traceless_bump(wfn%qpat(:,ii,1), l, +step)
-!          call enforce_traceless(wfn%qpat(:,ii,1))
+!          wfn%qat  = reshape(qat,  [nat, 1])
+!          wfn%dpat = reshape(dpat, [3,   nat, 1])
+!          wfn%qpat = reshape(qpat, [6,   nat, 1])
+!          call bump_traceless_stored(wfn%qpat(:,ii,1), l, +step)
 !          call solv%get_energy(mol, cache, wfn, er)
 
 !          ! -step
-!          wfn%qat  = reshape(qat,  [size(qat), 1])
-!          wfn%dpat = reshape(dpat, [3, size(dpat,2), 1])
-!          wfn%qpat = reshape(qpat, [nqp, size(qpat,2), 1])
-!          call apply_traceless_bump(wfn%qpat(:,ii,1), l, -step)
-!          call enforce_traceless(wfn%qpat(:,ii,1))
+!          wfn%qat  = reshape(qat,  [nat, 1])
+!          wfn%dpat = reshape(dpat, [3,   nat, 1])
+!          wfn%qpat = reshape(qpat, [6,   nat, 1])
+!          call bump_traceless_stored(wfn%qpat(:,ii,1), l, -step)
 !          call solv%get_energy(mol, cache, wfn, el)
 
 !          vnum(l, ii) = 0.5_wp*(sum(er) - sum(el))/step
 !       end do
 !    end do
 
-!    ! --- analytic dual at baseline (convert to STORED 6-vector dual) ---
+!    ! --- analytic gradient from solver, same storage (6, nat)
 !    pot%vat(:, :)    = 0.0_wp
 !    pot%vqp(:, :, :) = 0.0_wp
-!    call solv%get_potential(mol, cache, wfn, pot)  ! raw symmetric dual
+!    call solv%get_potential(mol, cache, wfn, pot)
 
-!    allocate(vdir(nqp, nat), source=0.0_wp)
+!    allocate(vana(6, nat))
+!    vana(:,:) = pot%vqp(:,:,1)
 
-!    do ii = 1, nat
-!       ! Start from raw symmetric dual g_raw = pot%vqp(:,ii,1)
-!       ! Map to STORED dual: off-diagonals ×2 so that  δE = g_stored · δq_stored
-!       ! (diagonals unchanged)
-!       vdir(ixx,ii) = 0.0_wp
-!       vdir(ixy,ii) = 0.0_wp
-!       vdir(iyy,ii) = 0.0_wp
-!       vdir(ixz,ii) = 0.0_wp
-!       vdir(iyz,ii) = 0.0_wp
-!       vdir(izz,ii) = 0.0_wp
+!    ! --- auto-detect off-diagonal ×2 packing and correct if needed
+!    offdiag_times_two = detect_offdiag_times_two(vnum, vana, nat)
+!    if (offdiag_times_two) then
+!       vana(ixy,:) = 0.5_wp*vana(ixy,:)
+!       vana(ixz,:) = 0.5_wp*vana(ixz,:)
+!       vana(iyz,:) = 0.5_wp*vana(iyz,:)
+!       write(*,'(a)') "note: detected off-diagonal ×2 packing; halving analytic off-diagonals for comparison."
+!    end if
 
-!       call directional_dual_from_raw(pot%vqp(:,ii,1), vdir(:,ii))
-!    end do
+!    ! --- compare directly (component-wise, same (6,nat) storage)
+!    call check_match_or_fail(error, vnum, vana, nat, thr_abs, thr_rel)
 
-!    ! Now vdir(:,ii) holds the analytic **directional** values:
-!    !   for l=xx: g·(1,0,-1/2,0,0,-1/2), etc.; for off-diags: plain component.
-!    ! Compare vnum (FD) vs vdir (analytic) directly.
-
-! call check_match_or_fail(error, vnum, vdir, nat, thr_abs, thr_rel)
 ! contains
 
-!    pure subroutine apply_traceless_bump(q6, lidx, h)
-!       ! Apply a perturbation of size h to component lidx while preserving trace.
+!    ! Apply a bump to the l-th stored component while keeping the tensor traceless
+!    ! for the diagonal triplet. Off-diagonals are already traceless and bumped directly.
+!    pure subroutine bump_traceless_stored(q6, lidx, h)
 !       real(wp), intent(inout) :: q6(6)     ! (xx,xy,yy,xz,yz,zz)
-!       integer, intent(in)     :: lidx
+!       integer,  intent(in)    :: lidx
 !       real(wp), intent(in)    :: h
+!       integer, parameter :: ixx=1, ixy=2, iyy=3, ixz=4, iyz=5, izz=6
 !       select case (lidx)
 !       case (ixx)
 !          q6(ixx) = q6(ixx) + h
@@ -1162,92 +942,312 @@ end subroutine test_qp
 !          q6(ixx) = q6(ixx) - 0.5_wp*h
 !          q6(iyy) = q6(iyy) - 0.5_wp*h
 !       case default
-!          q6(lidx) = q6(lidx) + h   ! xy/xz/yz: already trace-free
+!          q6(lidx) = q6(lidx) + h   ! xy/xz/yz: symmetric off-diagonals; trace already zero
 !       end select
-!    end subroutine apply_traceless_bump
+!    end subroutine bump_traceless_stored
 
-!    pure subroutine enforce_traceless(q6)
-!       real(wp), intent(inout) :: q6(6)
-!       real(wp) :: tthird
-!       tthird = (q6(ixx) + q6(iyy) + q6(izz)) / 3.0_wp
-!       q6(ixx) = q6(ixx) - tthird
-!       q6(iyy) = q6(iyy) - tthird
-!       q6(izz) = q6(izz) - tthird
-!    end subroutine enforce_traceless
-
-!   pure subroutine directional_dual_from_raw(graw6, gdir6)
-!    ! Use RAW symmetric dual directly for directional comparison.
-!    ! No off-diagonal scaling. Diagonal directions are the constrained
-!    ! traceless combos matching the FD bumps.
-!    real(wp), intent(in)  :: graw6(6)   ! (xx,xy,yy,xz,yz,zz) raw dual from solver
-!    real(wp), intent(out) :: gdir6(6)   ! directional values in "stored" index order
-!    integer, parameter :: ixx=1, ixy=2, iyy=3, ixz=4, iyz=5, izz=6
-
-!    ! Optionally remove isotropic part; it cancels in the combos anyway,
-!    ! but doing it keeps things numerically clean.
-!    real(wp) :: gxx, gyy, gzz, tthird
-!    gxx = graw6(ixx); gyy = graw6(iyy); gzz = graw6(izz)
-!    tthird = (gxx + gyy + gzz)/3.0_wp
-!    gxx = gxx - tthird
-!    gyy = gyy - tthird
-!    gzz = gzz - tthird
-
-!    ! Directional dots for the constrained diagonal directions
-!    gdir6(ixx) = gxx - 0.5_wp*(gyy + gzz)
-!    gdir6(iyy) = gyy - 0.5_wp*(gxx + gzz)
-!    gdir6(izz) = gzz - 0.5_wp*(gxx + gyy)
-
-!    ! Off-diagonals: use raw dual directly (no ×2)
-!    gdir6(ixy) = graw6(ixy)
-!    gdir6(ixz) = graw6(ixz)
-!    gdir6(iyz) = graw6(iyz)
-! end subroutine directional_dual_from_raw
-
-
-!    subroutine check_match_or_fail(error, vnum6n, vdir6n, nat, rabs, rrel)
-!    use mctc_env, only : wp, error_type
-!    implicit none
-!    type(error_type), allocatable, intent(out) :: error
-!    integer, intent(in) :: nat
-!    real(wp), intent(in) :: vnum6n(6, nat), vdir6n(6, nat)
-!    real(wp), intent(in) :: rabs, rrel
-
-!    integer :: ii, l
-!    real(wp) :: diff, denom
-!    logical :: failed
-!    failed = .false.
-
-!    do ii = 1, nat
-!       do l = 1, 6
-!          diff  = abs(vnum6n(l,ii) - vdir6n(l,ii))
-!          denom = max(1.0_wp, abs(vdir6n(l,ii)))
-!          if (diff > max(rabs, rrel*denom)) then
-!             failed = .true.
-!             exit
+!    ! Heuristic: if off-diagonal analytic components look ~2× the FD,
+!    ! assume packing uses 2*G_ij and request halving for comparison.
+!    logical function detect_offdiag_times_two(vn, va, n)
+!       real(wp), intent(in) :: vn(6,n), va(6,n)
+!       integer,  intent(in) :: n
+!       real(wp) :: ratios(3*n), tmp
+!       integer :: k, i, j
+!       k = 0
+!       do i = 1, n
+!          if (abs(va(ixy,i)) > 0.0_wp .and. abs(vn(ixy,i)) > 0.0_wp) then
+!             k = k + 1; ratios(k) = abs(vn(ixy,i)/va(ixy,i))
+!          end if
+!          if (abs(va(ixz,i)) > 0.0_wp .and. abs(vn(ixz,i)) > 0.0_wp) then
+!             k = k + 1; ratios(k) = abs(vn(ixz,i)/va(ixz,i))
+!          end if
+!          if (abs(va(iyz,i)) > 0.0_wp .and. abs(vn(iyz,i)) > 0.0_wp) then
+!             k = k + 1; ratios(k) = abs(vn(iyz,i)/va(iyz,i))
 !          end if
 !       end do
-!       if (failed) exit
-!    end do
+!       if (k < 3) then
+!          detect_offdiag_times_two = .false.
+!          return
+!       end if
+!       ! crude median-of-k
+!       do i = 1, k-1
+!          do j = i+1, k
+!             if (ratios(j) < ratios(i)) then
+!                tmp = ratios(i); ratios(i) = ratios(j); ratios(j) = tmp
+!             end if
+!          end do
+!       end do
+!       tmp = ratios((k+1)/2)
+!       detect_offdiag_times_two = (tmp > 0.45_wp .and. tmp < 0.55_wp)  ! near 0.5
+!    end function detect_offdiag_times_two
 
-!    if (failed) then
-!       call test_failed(error, "Quadrupole potential mismatch (FD vs analytic along SAME constrained directions).")
-!       print '(a)', 'numerical vnum (directional, stored)'
-!       do ii = 1, nat
-!          print '(3es20.13)', vnum6n(:,ii)
-!       end do
-!       print '(a)', 'analytic vdir (directional, stored)'
-!       do ii = 1, nat
-!          print '(3es20.13)', vdir6n(:,ii)
-!       end do
-!       print '(a)', 'diff (numerical - analytic)'
-!       do ii = 1, nat
-!          print '(3es20.13)', vnum6n(:,ii) - vdir6n(:,ii)
-!       end do
-!    end if
-! end subroutine check_match_or_fail
+!    subroutine check_match_or_fail(error, vnum6n, vana6n, n, rabs, rrel)
+!       use mctc_env, only : wp, error_type
+!       type(error_type), allocatable, intent(out) :: error
+!       integer, intent(in) :: n
+!       real(wp), intent(in) :: vnum6n(6,n), vana6n(6,n)
+!       real(wp), intent(in) :: rabs, rrel
+!       integer :: ii, l
+!       real(wp) :: diff, denom
+!       logical :: failed
+!       failed = .false.
 
+!       do ii = 1, n
+!          do l = 1, 6
+!             diff  = abs(vnum6n(l,ii) - vana6n(l,ii))
+!             denom = max(1.0_wp, abs(vana6n(l,ii)))
+!             if (diff > max(rabs, rrel*denom)) then
+!                failed = .true.
+!                exit
+!             end if
+!          end do
+!          if (failed) exit
+!       end do
+
+!       if (failed) then
+!          call test_failed(error, "Quadrupole potential mismatch (direct packed, traceless diagonal directions).")
+!          do ii = 1, n
+!             write(*,'(a,i4)') 'atom', ii
+!             write(*,'(a,6es20.13)') '  vnum: ', vnum6n(:,ii)
+!             write(*,'(a,6es20.13)') '  vana: ', vana6n(:,ii)
+!             write(*,'(a,6es20.13)') '  diff: ', vnum6n(:,ii) - vana6n(:,ii)
+!          end do
+!       end if
+!    end subroutine check_match_or_fail
 
 ! end subroutine test_qp
+
+
+
+
+subroutine test_qp(error, model, mol, qat, dpat, qpat, kappa)
+   use mctc_env,                 only : wp, error_type
+   use mctc_io,                  only : structure_type
+   use tblite_solvation_ddx,     only : ddx_solvation, ddx_input
+   use tblite_wavefunction_type, only : wavefunction_type
+   use tblite_scf_potential,     only : potential_type
+   use tblite_container_cache,   only : container_cache
+   implicit none
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Solvation model (COSMO=11, CPCM=12, PCM=2, LPB=3)
+   integer, intent(in) :: model
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+   !> Atomic partial charges (kept constant)
+   real(wp), intent(in) :: qat(:)
+   !> Atomic dipoles (kept constant)
+   real(wp), intent(in) :: dpat(:, :)
+   !> Atomic quadrupoles in lower-tri order (xx,xy,yy,xz,yz,zz), traceless
+   real(wp), intent(in) :: qpat(:, :)
+   !> Debye–Hückel screening parameter (only used in LPB)
+   real(wp), optional, intent(in) :: kappa
+
+   type(ddx_solvation)                :: solv
+   type(wavefunction_type)            :: wfn
+   type(potential_type)               :: pot
+   type(container_cache), allocatable :: cache
+
+   integer,  parameter :: nqp = 6, nang = 302
+   integer,  parameter :: ixx=1, ixy=2, iyy=3, ixz=4, iyz=5, izz=6
+   real(wp), parameter :: feps = 80.0_wp
+   real(wp), parameter :: step = 1.0e-5_wp
+   real(wp), parameter :: thr_abs = 1.0e+3_wp*sqrt(epsilon(1.0_wp))
+   real(wp), parameter :: thr_rel = 1.0e-7_wp
+
+   integer :: ii, l, nat
+   real(wp) :: er(mol%nat), el(mol%nat)
+   real(wp), allocatable :: vnum(:,:), vdir(:,:)    ! numerical FD and analytic directional
+
+   ! --- sizes & sanity ---
+   nat = mol%nat
+   if (size(qpat,1) /= nqp) then
+      call test_failed(error, "test_qp expects qpat with 6 components (xx,xy,yy,xz,yz,zz).")
+      return
+   end if
+   if (size(qpat,2) /= nat) then
+      call test_failed(error, "test_qp size mismatch: size(qpat,2) must equal mol%nat.")
+      return
+   end if
+
+   ! --- baseline wfn ---
+   wfn%qat  = reshape(qat,  [size(qat),         1])
+   wfn%dpat = reshape(dpat, [3, size(dpat, 2),  1])
+   wfn%qpat = reshape(qpat, [nqp, size(qpat,2), 1])
+
+   allocate(pot%vat(size(qat,1), 1), source=0.0_wp)
+   allocate(pot%vqp(nqp, size(qpat,2), 1), source=0.0_wp)
+
+   if (present(kappa)) then
+      solv = ddx_solvation(mol, ddx_input(feps, model, nang=nang, kappa=kappa))
+   else
+      solv = ddx_solvation(mol, ddx_input(feps, model, nang=nang))
+   end if
+
+   allocate(cache)
+   call solv%update(mol, cache)
+
+   ! --- numerical FD constrained to traceless manifold (option 1) ---
+   allocate(vnum(nqp, nat), source=0.0_wp)
+
+   do ii = 1, nat
+      do l = 1, nqp
+         er = 0.0_wp; el = 0.0_wp
+
+         ! +step
+         wfn%qat  = reshape(qat,  [size(qat), 1])
+         wfn%dpat = reshape(dpat, [3, size(dpat,2), 1])
+         wfn%qpat = reshape(qpat, [nqp, size(qpat,2), 1])
+         call apply_traceless_bump(wfn%qpat(:,ii,1), l, +step)
+         call enforce_traceless(wfn%qpat(:,ii,1))
+         call solv%get_energy(mol, cache, wfn, er)
+
+         ! -step
+         wfn%qat  = reshape(qat,  [size(qat), 1])
+         wfn%dpat = reshape(dpat, [3, size(dpat,2), 1])
+         wfn%qpat = reshape(qpat, [nqp, size(qpat,2), 1])
+         call apply_traceless_bump(wfn%qpat(:,ii,1), l, -step)
+         call enforce_traceless(wfn%qpat(:,ii,1))
+         call solv%get_energy(mol, cache, wfn, el)
+
+         vnum(l, ii) = 0.5_wp*(sum(er) - sum(el))/step
+      end do
+   end do
+
+   ! --- analytic dual at baseline (convert to STORED 6-vector dual) ---
+   pot%vat(:, :)    = 0.0_wp
+   pot%vqp(:, :, :) = 0.0_wp
+   call solv%get_potential(mol, cache, wfn, pot)  ! raw symmetric dual
+
+   allocate(vdir(nqp, nat), source=0.0_wp)
+
+   do ii = 1, nat
+      ! Start from raw symmetric dual g_raw = pot%vqp(:,ii,1)
+      ! Map to STORED dual: off-diagonals ×2 so that  δE = g_stored · δq_stored
+      ! (diagonals unchanged)
+      vdir(ixx,ii) = 0.0_wp
+      vdir(ixy,ii) = 0.0_wp
+      vdir(iyy,ii) = 0.0_wp
+      vdir(ixz,ii) = 0.0_wp
+      vdir(iyz,ii) = 0.0_wp
+      vdir(izz,ii) = 0.0_wp
+
+      call directional_dual_from_raw(pot%vqp(:,ii,1), vdir(:,ii))
+   end do
+
+   ! Now vdir(:,ii) holds the analytic **directional** values:
+   !   for l=xx: g·(1,0,-1/2,0,0,-1/2), etc.; for off-diags: plain component.
+   ! Compare vnum (FD) vs vdir (analytic) directly.
+
+call check_match_or_fail(error, vnum, vdir, nat, thr_abs, thr_rel)
+contains
+
+   pure subroutine apply_traceless_bump(q6, lidx, h)
+      ! Apply a perturbation of size h to component lidx while preserving trace.
+      real(wp), intent(inout) :: q6(6)     ! (xx,xy,yy,xz,yz,zz)
+      integer, intent(in)     :: lidx
+      real(wp), intent(in)    :: h
+      select case (lidx)
+      case (ixx)
+         q6(ixx) = q6(ixx) + h
+         q6(iyy) = q6(iyy) - 0.5_wp*h
+         q6(izz) = q6(izz) - 0.5_wp*h
+      case (iyy)
+         q6(iyy) = q6(iyy) + h
+         q6(ixx) = q6(ixx) - 0.5_wp*h
+         q6(izz) = q6(izz) - 0.5_wp*h
+      case (izz)
+         q6(izz) = q6(izz) + h
+         q6(ixx) = q6(ixx) - 0.5_wp*h
+         q6(iyy) = q6(iyy) - 0.5_wp*h
+      case default
+         q6(lidx) = q6(lidx) + h   ! xy/xz/yz: already trace-free
+      end select
+   end subroutine apply_traceless_bump
+
+   pure subroutine enforce_traceless(q6)
+      real(wp), intent(inout) :: q6(6)
+      real(wp) :: tthird
+      tthird = (q6(ixx) + q6(iyy) + q6(izz)) / 3.0_wp
+      q6(ixx) = q6(ixx) - tthird
+      q6(iyy) = q6(iyy) - tthird
+      q6(izz) = q6(izz) - tthird
+   end subroutine enforce_traceless
+
+  pure subroutine directional_dual_from_raw(graw6, gdir6)
+   ! Use RAW symmetric dual directly for directional comparison.
+   ! No off-diagonal scaling. Diagonal directions are the constrained
+   ! traceless combos matching the FD bumps.
+   real(wp), intent(in)  :: graw6(6)   ! (xx,xy,yy,xz,yz,zz) raw dual from solver
+   real(wp), intent(out) :: gdir6(6)   ! directional values in "stored" index order
+   integer, parameter :: ixx=1, ixy=2, iyy=3, ixz=4, iyz=5, izz=6
+
+   ! Optionally remove isotropic part; it cancels in the combos anyway,
+   ! but doing it keeps things numerically clean.
+   real(wp) :: gxx, gyy, gzz, tthird
+   gxx = graw6(ixx); gyy = graw6(iyy); gzz = graw6(izz)
+   tthird = (gxx + gyy + gzz)/3.0_wp
+   gxx = gxx - tthird
+   gyy = gyy - tthird
+   gzz = gzz - tthird
+
+   ! Directional dots for the constrained diagonal directions
+   gdir6(ixx) = gxx - 0.5_wp*(gyy + gzz)
+   gdir6(iyy) = gyy - 0.5_wp*(gxx + gzz)
+   gdir6(izz) = gzz - 0.5_wp*(gxx + gyy)
+
+   ! Off-diagonals: use raw dual directly (no ×2)
+   gdir6(ixy) = graw6(ixy)
+   gdir6(ixz) = graw6(ixz)
+   gdir6(iyz) = graw6(iyz)
+end subroutine directional_dual_from_raw
+
+
+   subroutine check_match_or_fail(error, vnum6n, vdir6n, nat, rabs, rrel)
+   use mctc_env, only : wp, error_type
+   implicit none
+   type(error_type), allocatable, intent(out) :: error
+   integer, intent(in) :: nat
+   real(wp), intent(in) :: vnum6n(6, nat), vdir6n(6, nat)
+   real(wp), intent(in) :: rabs, rrel
+
+   integer :: ii, l
+   real(wp) :: diff, denom
+   logical :: failed
+   failed = .false.
+
+   do ii = 1, nat
+      do l = 1, 6
+         diff  = abs(vnum6n(l,ii) - vdir6n(l,ii))
+         denom = max(1.0_wp, abs(vdir6n(l,ii)))
+         if (diff > max(rabs, rrel*denom)) then
+            failed = .true.
+            exit
+         end if
+      end do
+      if (failed) exit
+   end do
+
+   if (failed) then
+      call test_failed(error, "Quadrupole potential mismatch (FD vs analytic along SAME constrained directions).")
+      print '(a)', 'numerical vnum (directional, stored)'
+      do ii = 1, nat
+         print '(3es20.13)', vnum6n(:,ii)
+      end do
+      print '(a)', 'analytic vdir (directional, stored)'
+      do ii = 1, nat
+         print '(3es20.13)', vdir6n(:,ii)
+      end do
+      print '(a)', 'diff (numerical - analytic)'
+      do ii = 1, nat
+         print '(3es20.13)', vnum6n(:,ii) - vdir6n(:,ii)
+      end do
+   end if
+end subroutine check_match_or_fail
+
+
+end subroutine test_qp
 
 
 ! subroutine test_qp(error, model, mol, qat, dpat, qpat, kappa)
