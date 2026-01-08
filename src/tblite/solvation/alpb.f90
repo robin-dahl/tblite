@@ -35,23 +35,15 @@ module tblite_solvation_alpb
    use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
    use tblite_solvation_cm5, only : get_cm5_charges
+   use tblite_solvation_kernel, only : kernel_type, new_kernel, kernel_enum, kernel_enum_type
    implicit none
    private
 
    public :: new_alpb
    public :: born_kernel
 
-
-   !> Possible Born interaction kernels
-   type :: enum_born_kernel
-      !> Classical Still kernel
-      integer :: still = 1
-      !> P16 kernel by Lange (JCTC 2012, 8, 1999-2011)
-      integer :: p16 = 2
-   end type enum_born_kernel
-
-   !> Actual enumerator for the generalized Born kernels
-   type(enum_born_kernel), parameter :: born_kernel = enum_born_kernel()
+   ! Alias for backward compatibility
+   type(kernel_enum_type), parameter :: born_kernel = kernel_enum
 
 
    !> Input for ALPB solvation
@@ -87,8 +79,8 @@ module tblite_solvation_alpb
       real(wp) :: alpbet
       !> Integrator for Born radii
       type(born_integrator) :: gbobc
-      !> Interaction kernel
-      integer :: kernel
+      !> Kernel instance
+      class(kernel_type), allocatable :: kernel
       !> Use CM5 charges (GFN1-xTB compatibility)
       logical :: useCM5 = .false.
    contains
@@ -136,8 +128,6 @@ module tblite_solvation_alpb
    !> Identifier for container
    character(len=*), parameter :: label = "alpb/gbsa reaction field model"
 
-   real(wp), parameter :: zetaP16 = 1.028_wp
-   real(wp), parameter :: zetaP16o16 = zetaP16 / 16.0_wp
    real(wp), parameter :: alpha_alpb = 0.571412_wp
 
 
@@ -190,7 +180,7 @@ subroutine new_alpb(self, mol, input, method)
    self%label = label
    self%alpbet = merge(alpha_alpb / input%dielectric_const, 0.0_wp, input%alpb)
    self%keps = (1.0_wp/input%dielectric_const - 1.0_wp) / (1.0_wp + self%alpbet)
-   self%kernel = input%kernel
+   self%kernel = new_kernel(input%kernel, self%keps)
    if (allocated(input%solvent) .and. present(method)) then
       self%useCM5 = trim(method) == 'gfn1'
    endif
@@ -268,12 +258,7 @@ subroutine update(self, mol, cache)
 
    call self%gbobc%get_rad(mol, ptr%rad, ptr%draddr)
    ptr%jmat(:, :) = 0.0_wp
-   select case(self%kernel)
-   case(born_kernel%p16)
-      call add_born_mat_p16(mol%nat, mol%xyz, self%keps, ptr%rad, ptr%jmat)
-   case(born_kernel%still)
-      call add_born_mat_still(mol%nat, mol%xyz, self%keps, ptr%rad, ptr%jmat)
-   end select
+   call self%kernel%add_kernel_mat(mol%nat, mol%xyz, ptr%rad, ptr%jmat)
 
    if (self%alpbet > 0.0_wp) then
       call get_adet(mol%nat, mol%xyz, self%gbobc%vdwr, adet)
@@ -316,7 +301,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    call gemv(ptr%amat_sd, wfn%qat(:, 1), vd)
 
    call symv(ptr%jmat, ptr%qscratch(:), ptr%vat, alpha=0.5_wp)
-   energies(:) = energies + ptr%vat * ptr%qscratch(:) + sum(wfn%dpat(:, :, 1) * vd, 1) 
+   energies(:) = energies + ptr%vat * ptr%qscratch(:) !+ sum(wfn%dpat(:, :, 1) * vd, 1) 
 end subroutine get_energy
 
 
@@ -345,8 +330,8 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    call symv(ptr%jmat, ptr%qscratch(:), pot%vat(:, 1), beta=1.0_wp)
 
-   call gemv(ptr%amat_sd, wfn%qat(:, 1), pot%vdp(:, :, 1), beta=1.0_wp)
-   call gemv(ptr%amat_sd, wfn%dpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
+   ! call gemv(ptr%amat_sd, wfn%qat(:, 1), pot%vdp(:, :, 1), beta=1.0_wp)
+   ! call gemv(ptr%amat_sd, wfn%dpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
 end subroutine get_potential
 
 
@@ -377,14 +362,8 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
       ptr%qscratch(:) = wfn%qat(:, 1)
    endif
 
-   select case(self%kernel)
-   case(born_kernel%p16)
-      call add_born_deriv_p16(mol%nat, mol%xyz, &
-         & ptr%qscratch(:), self%keps, ptr%rad, ptr%draddr, energy, gradient)
-   case(born_kernel%still)
-      call add_born_deriv_still(mol%nat, mol%xyz, &
-         & ptr%qscratch(:), self%keps, ptr%rad, ptr%draddr, energy, gradient)
-   end select
+   call self%kernel%add_kernel_deriv(mol%nat, mol%xyz, ptr%qscratch(:), &
+      & ptr%rad, ptr%draddr, energy, gradient)
 
    if (self%alpbet > 0.0_wp) then
       call get_adet_deriv(mol%nat, mol%xyz, self%gbobc%vdwr, self%kEps*self%alpbet, &
@@ -440,341 +419,6 @@ subroutine view(cache, ptr)
       ptr => target
    end select
 end subroutine view
-
-
-subroutine add_born_mat_p16(nat, xyz, keps, brad, Amat)
-   !> Number of atoms
-   integer, intent(in) :: nat
-   !> Cartesian coordinates
-   real(wp), intent(in) :: xyz(:, :)
-   !> Dielectric screening
-   real(wp), intent(in) :: keps
-   !> Born radii
-   real(wp), intent(in) :: brad(:)
-   !> Interaction matrix
-   real(wp), intent(inout) :: Amat(:, :)
-
-   integer :: iat, jat
-   real(wp) :: r1, ab, arg, fgb, dfgb, bp, vec(3)
-
-   ! omp parallel do default(none) shared(Amat, ntpair, ppind, ddpair, brad, keps) &
-   ! omp private(kk, iat, jat, r1, ab, arg, fgb, dfgb)
-   do iat = 1, nat
-      do jat = 1, iat - 1
-         vec(:) = xyz(:, iat) - xyz(:, jat)
-         r1 = norm2(vec)
-
-         ab = sqrt(brad(iat) * brad(jat))
-         arg = ab / (ab + zetaP16o16*r1) ! ab / (1 + ζR/(16·ab))
-         arg = arg * arg ! ab / (1 + ζR/(16·ab))²
-         arg = arg * arg ! ab / (1 + ζR/(16·ab))⁴
-         arg = arg * arg ! ab / (1 + ζR/(16·ab))⁸
-         arg = arg * arg ! ab / (1 + ζR/(16·ab))¹⁶
-         fgb = r1 + ab*arg
-         dfgb = 1.0_wp / fgb
-
-         Amat(iat, jat) = keps*dfgb + Amat(iat, jat)
-         Amat(jat, iat) = keps*dfgb + Amat(jat, iat)
-      enddo
-      ! self-energy part
-      bp = 1.0_wp/brad(iat)
-      Amat(iat, iat) = Amat(iat, iat) + keps*bp
-   enddo
-
-end subroutine add_born_mat_p16
-
-
-subroutine add_born_deriv_p16(nat, xyz, qat, keps, &
-      & brad, brdr, energy, gradient)
-   !> Number of atoms
-   integer, intent(in) :: nat
-   !> Cartesian coordinates
-   real(wp), intent(in) :: xyz(:, :)
-   !> Atomic partial charges
-   real(wp), intent(in) :: qat(:)
-   !> Dielectric screening
-   real(wp), intent(in) :: keps
-   !> Born radii
-   real(wp), intent(in) :: brad(:)
-   !> Derivative of Born radii w.r.t. cartesian coordinates
-   real(wp), contiguous, intent(in) :: brdr(:, :, :)
-   !> Total Born solvation energy
-   real(wp), intent(out) :: energy
-   !> Deriatives of Born solvation energy
-   real(wp), contiguous, intent(inout) :: gradient(:, :)
-
-   integer :: iat, jat
-   real(wp) :: vec(3), r2, r1, ab, arg1, arg16, qq, fgb, dfgb, dfgb2, egb
-   real(wp) :: dEdbri, dEdbrj, dG(3), ap, bp, dS(3, 3)
-   real(wp), allocatable :: dEdbr(:)
-
-   allocate(dEdbr(nat), source = 0.0_wp )
-
-   egb = 0._wp
-   dEdbr(:) = 0._wp
-
-   ! GB energy and gradient
-   ! omp parallel do default(none) reduction(+:egb, gradient, dEdbr) &
-   ! omp private(iat, jat, vec, r1, r2, ab, arg1, arg16, fgb, dfgb, dfgb2, ap, &
-   ! omp& bp, qq, dEdbri, dEdbrj, dG, dS) &
-   ! omp shared(keps, qat, ntpair, ddpair, ppind, brad)
-   do iat = 1, nat
-      do jat = 1, iat - 1
-         vec(:) = xyz(:, iat) - xyz(:, jat)
-         r1 = norm2(vec)
-         r2 = r1*r1
-
-         qq = qat(iat)*qat(jat)
-
-         ab = sqrt(brad(iat) * brad(jat))
-         arg1 = ab / (ab + zetaP16o16*r1) ! 1 / (1 + ζR/(16·ab))
-         arg16 = arg1 * arg1 ! 1 / (1 + ζR/(16·ab))²
-         arg16 = arg16 * arg16 ! 1 / (1 + ζR/(16·ab))⁴
-         arg16 = arg16 * arg16 ! 1 / (1 + ζR/(16·ab))⁸
-         arg16 = arg16 * arg16 ! 1 / (1 + ζR/(16·ab))¹⁶
-
-         fgb = r1 + ab*arg16
-         dfgb = 1.0_wp / fgb
-         dfgb2 = dfgb * dfgb
-
-         egb = egb + qq*keps*dfgb
-
-         ! (1 - ζ/(1 + Rζ/(16 ab))^17)/(R + ab/(1 + Rζ/(16 ab))¹⁶)²
-         ap = (1.0_wp - zetaP16 * arg1 * arg16) * dfgb2
-         dG(:) = ap * vec * keps / r1 * qq
-         gradient(:, iat) = gradient(:, iat) - dG
-         gradient(:, jat) = gradient(:, jat) + dG
-
-         ! -(Rζ/(2·ab²·(1 + Rζ/(16·ab))¹⁷) + 1/(2·ab·(1 + Rζ/(16·ab))¹⁶))/(R + ab/(1 + Rζ/(16·ab))¹⁶)²
-         bp = -0.5_wp*(r1 * zetaP16 / ab * arg1 + 1.0_wp) / ab * arg16 * dfgb2
-         dEdbri = brad(jat) * bp * keps * qq
-         dEdbrj = brad(iat) * bp * keps * qq
-         dEdbr(iat) = dEdbr(iat) + dEdbri
-         dEdbr(jat) = dEdbr(jat) + dEdbrj
-
-      end do
-
-      ! self-energy part
-      bp = 1._wp/brad(iat)
-      qq = qat(iat)*bp
-      egb = egb + 0.5_wp*qat(iat)*qq*keps
-      dEdbri = -0.5_wp*keps*qq*bp
-      dEdbr(iat) = dEdbr(iat) + dEdbri*qat(iat)
-      !gradient = gradient + brdr(:, :, i) * dEdbri*qat(i)
-   enddo
-
-   ! contract with the Born radii derivatives
-   call gemv(brdr, dEdbr, gradient, beta=1.0_wp)
-
-   energy = egb
-
-end subroutine add_born_deriv_p16
-
-
-pure subroutine add_born_mat_still(nat, xyz, keps, brad, Amat)
-   !> Number of atoms
-   integer, intent(in) :: nat
-   !> Cartesian coordinates
-   real(wp), intent(in) :: xyz(:, :)
-   !> Dielectric screening
-   real(wp), intent(in) :: keps
-   !> Born radii
-   real(wp), intent(in) :: brad(:)
-   !> Interaction matrix
-   real(wp), intent(inout) :: Amat(:, :)
-
-   integer  :: i, j
-   real(wp), parameter :: a13=1.0_wp/3.0_wp
-   real(wp), parameter :: a4=0.25_wp
-   real(wp), parameter :: sqrt2pi = sqrt(2.0_wp/pi)
-   real(wp) :: aa, vec(3), r1, r2, bp
-   real(wp) :: dd, expd, fgb2, dfgb
-
-   do i = 1, nat
-      do j = 1, i - 1
-         vec(:) = xyz(:, i) - xyz(:, j)
-         r1 = norm2(vec)
-         r2 = r1*r1
-
-         aa = brad(i)*brad(j)
-         dd = a4*r2/aa
-         expd = exp(-dd)
-         fgb2 = r2+aa*expd
-         dfgb = 1.0_wp/sqrt(fgb2)
-         Amat(i, j) = keps*dfgb + Amat(i, j)
-         Amat(j, i) = keps*dfgb + Amat(j, i)
-      enddo
-
-      ! self-energy part
-      bp = 1._wp/brad(i)
-      Amat(i, i) = Amat(i, i) + keps*bp
-   enddo
-
-end subroutine add_born_mat_still
-
-
-subroutine add_born_deriv_still(nat, xyz, qat, keps, &
-      & brad, brdr, energy, gradient)
-   !> Number of atoms
-   integer, intent(in) :: nat
-   !> Cartesian coordinates
-   real(wp), intent(in) :: xyz(:, :)
-   !> Atomic partial charges
-   real(wp), intent(in) :: qat(:)
-   !> Dielectric screening
-   real(wp), intent(in) :: keps
-   !> Born radii
-   real(wp), intent(in) :: brad(:)
-   !> Derivative of Born radii w.r.t. cartesian coordinates
-   real(wp), contiguous, intent(in) :: brdr(:, :, :)
-   !> Total Born solvation energy
-   real(wp), intent(out) :: energy
-   !> Deriatives of Born solvation energy
-   real(wp), contiguous, intent(inout) :: gradient(:, :)
-
-   integer :: i, j
-   real(wp), parameter :: a13=1._wp/3._wp
-   real(wp), parameter :: a4=0.25_wp
-   real(wp) :: aa, r2, fgb2
-   real(wp) :: qq, dd, expd, dfgb, dfgb2, dfgb3, egb, ap, bp
-   real(wp) :: grddbi, grddbj
-   real(wp) :: dr(3), r1, vec(3)
-   real(wp), allocatable :: grddb(:)
-
-   allocate(grddb(nat), source = 0.0_wp )
-
-   egb = 0._wp
-   grddb(:) = 0._wp
-
-   ! GB energy and gradient
-
-   ! compute energy and fgb direct and radii derivatives
-   do i = 1, nat
-      do j = 1, i - 1
-         vec(:) = xyz(:, i) - xyz(:, j)
-         r1 = norm2(vec)
-         r2 = r1*r1
-
-         ! dielectric scaling of the charges
-         qq = qat(i)*qat(j)
-         aa = brad(i)*brad(j)
-         dd = a4*r2/aa
-         expd = exp(-dd)
-         fgb2 = r2+aa*expd
-         dfgb2 = 1._wp/fgb2
-         dfgb = sqrt(dfgb2)
-         dfgb3 = dfgb2*dfgb*keps
-
-         egb = egb + qq*keps*dfgb
-
-         ap = (1._wp-a4*expd)*dfgb3
-         dr = ap*vec
-         gradient(:, i) = gradient(:, i) - dr*qq
-         gradient(:, j) = gradient(:, j) + dr*qq
-
-         bp = -0.5_wp*expd*(1._wp+dd)*dfgb3
-         grddbi = brad(j)*bp
-         grddbj = brad(i)*bp
-         grddb(i) = grddb(i) + grddbi*qq
-         grddb(j) = grddb(j) + grddbj*qq
-
-      enddo
-
-      ! self-energy part
-      bp = 1._wp/brad(i)
-      qq = qat(i)*bp
-      egb = egb + 0.5_wp*qat(i)*qq*keps
-      grddbi = -0.5_wp*keps*qq*bp
-      grddb(i) = grddb(i) + grddbi*qat(i)
-   enddo
-
-   ! contract with the Born radii derivatives
-   call gemv(brdr, grddb, gradient, beta=1.0_wp)
-
-   energy = egb
-
-end subroutine add_born_deriv_still
-
-
-!> Compute kernel derivatives only (without charge multiplication)
-subroutine compute_kernel_deriv_still(nat, xyz, keps, brad, brdr, &
-      & kernel_grad_spatial, kernel_grad_born)
-   !> Number of atoms
-   integer, intent(in) :: nat
-   !> Cartesian coordinates
-   real(wp), intent(in) :: xyz(:, :)
-   !> Dielectric screening
-   real(wp), intent(in) :: keps
-   !> Born radii
-   real(wp), intent(in) :: brad(:)
-   !> Derivative of Born radii w.r.t. cartesian coordinates
-   real(wp), contiguous, intent(in) :: brdr(:, :, :)
-   !> Spatial kernel gradient (3, nat, nat)
-   real(wp), contiguous, intent(out) :: kernel_grad_spatial(:, :, :)
-   !> Born radii kernel gradient (nat, nat)
-   real(wp), contiguous, intent(out) :: kernel_grad_born(:, :)
-
-   integer :: i, j
-   real(wp), parameter :: a4=0.25_wp
-   real(wp) :: aa, r2, fgb2
-   real(wp) :: dd, expd, dfgb, dfgb2, dfgb3, ap, bp
-   real(wp) :: r1, vec(3)
-   real(wp), allocatable :: dKdbr(:)
-
-   allocate(dKdbr(nat), source = 0.0_wp)
-   
-   kernel_grad_spatial(:, :, :) = 0.0_wp
-   kernel_grad_born(:, :) = 0.0_wp
-
-   ! Compute kernel derivatives (without charges)
-   do i = 1, nat
-      do j = 1, i - 1
-         vec(:) = xyz(:, i) - xyz(:, j)
-         r1 = norm2(vec)
-         r2 = r1*r1
-
-         aa = brad(i)*brad(j)
-         dd = a4*r2/aa
-         expd = exp(-dd)
-         fgb2 = r2+aa*expd
-         dfgb2 = 1._wp/fgb2
-         dfgb = sqrt(dfgb2)
-         dfgb3 = dfgb2*dfgb*keps
-
-         ! Spatial derivative of kernel: ∂(κ/f_GB)/∂r_ij
-         ap = (1._wp-a4*expd)*dfgb3
-         
-         ! Store directional derivative: ap * vec
-         kernel_grad_spatial(:, i, j) = ap * vec
-         kernel_grad_spatial(:, j, i) = -ap * vec
-
-         ! Born radii derivative: ∂(κ/f_GB)/∂a_ij
-         bp = -0.5_wp*expd*(1._wp+dd)*dfgb3
-         
-         ! Store kernel derivatives w.r.t. Born radii
-         kernel_grad_born(i, j) = bp * brad(j)  ! ∂/∂r_{B,i}
-         kernel_grad_born(j, i) = bp * brad(i)  ! ∂/∂r_{B,j}
-         
-         ! Accumulate for Born radii chain rule
-         dKdbr(i) = dKdbr(i) + bp * brad(j)
-         dKdbr(j) = dKdbr(j) + bp * brad(i)
-      enddo
-
-      ! Self-energy kernel derivative
-      bp = keps / brad(i)
-      dKdbr(i) = dKdbr(i) - bp / brad(i)
-   enddo
-
-   ! Add contribution from Born radii position dependence
-   do i = 1, nat
-      do j = 1, nat
-         kernel_grad_spatial(:, j, i) = kernel_grad_spatial(:, j, i) &
-            & + brdr(:, j, i) * dKdbr(i)
-      enddo
-   enddo
-
-end subroutine compute_kernel_deriv_still
-
 
 
 subroutine get_adet(nat, xyz, rad, aDet)

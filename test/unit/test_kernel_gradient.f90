@@ -6,7 +6,7 @@ module test_kernel_gradient
    use mctc_env, only : wp
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, check
    use mctc_io, only : structure_type
-   use tblite_solvation_alpb, only : alpb_solvation
+   use tblite_solvation_kernel, only : kernel_type, still_kernel, p16_kernel
    use tblite_test_utils, only : make_mol
    implicit none
    private
@@ -21,7 +21,10 @@ subroutine collect_kernel_gradient(testsuite)
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
    testsuite = [ &
-      new_unittest("kernel-still", test_kernel_still_spatial) &
+      new_unittest("kernel-still-spatial", test_kernel_still_spatial), &
+      new_unittest("kernel-p16-spatial", test_kernel_p16_spatial), &
+      new_unittest("kernel-still-born", test_kernel_still_born), &
+      new_unittest("kernel-p16-born", test_kernel_p16_born) &
       ]
 end subroutine collect_kernel_gradient
 
