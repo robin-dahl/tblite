@@ -69,7 +69,7 @@ module tblite_solvation_alpb
       !> Interaction kernel
       integer :: kernel = born_kernel%p16
       !> Use analytical linearized Poisson-Boltzmann model
-      logical :: alpb = .true.
+      logical :: alpb = .false.
       !> Solvent for parameter selection
       character(len=:), allocatable :: solvent
    end type alpb_input
@@ -128,6 +128,8 @@ module tblite_solvation_alpb
       real(wp), allocatable :: cm5(:)
       !> CM5 charge derivatives
       real(wp), allocatable :: dcm5dr(:,:,:)
+      !> Multipole interaction matrix for charges and dipoles
+      real(wp), allocatable :: amat_sd(:, :, :)
    end type alpb_cache
 
 
@@ -260,6 +262,9 @@ subroutine update(self, mol, cache)
    if (self%useCM5.and..not.allocated(ptr%scratch))then
       allocate(ptr%scratch(mol%nat))
    endif
+   if (.not.allocated(ptr%amat_sd)) then
+      allocate(ptr%amat_sd(3, mol%nat, mol%nat))
+   end if
 
    call self%gbobc%get_rad(mol, ptr%rad, ptr%draddr)
    ptr%jmat(:, :) = 0.0_wp
@@ -276,6 +281,9 @@ subroutine update(self, mol, cache)
       ptr%jmat(:mol%nat, :mol%nat) = ptr%jmat(:mol%nat, :mol%nat) &
          & + self%keps * self%alpbet / adet
    end if
+
+   ! Compute multipole interaction matrix
+   call get_multipole_matrix(mol%nat, mol%xyz, self%keps, ptr%rad, ptr%draddr, ptr%amat_sd)
 end subroutine update
 
 
@@ -292,6 +300,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    !> Solvation free energy
    real(wp), intent(inout) :: energies(:)
 
+   real(wp), allocatable :: vs(:), vd(:, :), vq(:, :)
    type(alpb_cache), pointer :: ptr
 
    call view(cache, ptr)
@@ -302,8 +311,12 @@ subroutine get_energy(self, mol, cache, wfn, energies)
       ptr%qscratch(:) = wfn%qat(:, 1)
    endif
 
+   allocate(vs(mol%nat), vd(3, mol%nat), vq(6, mol%nat))
+
+   call gemv(ptr%amat_sd, wfn%qat(:, 1), vd)
+
    call symv(ptr%jmat, ptr%qscratch(:), ptr%vat, alpha=0.5_wp)
-   energies(:) = energies + ptr%vat * ptr%qscratch(:)
+   energies(:) = energies + ptr%vat * ptr%qscratch(:) + sum(wfn%dpat(:, :, 1) * vd, 1) 
 end subroutine get_energy
 
 
@@ -331,6 +344,9 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    endif
 
    call symv(ptr%jmat, ptr%qscratch(:), pot%vat(:, 1), beta=1.0_wp)
+
+   call gemv(ptr%amat_sd, wfn%qat(:, 1), pot%vdp(:, :, 1), beta=1.0_wp)
+   call gemv(ptr%amat_sd, wfn%dpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
 end subroutine get_potential
 
 
@@ -680,6 +696,87 @@ subroutine add_born_deriv_still(nat, xyz, qat, keps, &
 end subroutine add_born_deriv_still
 
 
+!> Compute kernel derivatives only (without charge multiplication)
+subroutine compute_kernel_deriv_still(nat, xyz, keps, brad, brdr, &
+      & kernel_grad_spatial, kernel_grad_born)
+   !> Number of atoms
+   integer, intent(in) :: nat
+   !> Cartesian coordinates
+   real(wp), intent(in) :: xyz(:, :)
+   !> Dielectric screening
+   real(wp), intent(in) :: keps
+   !> Born radii
+   real(wp), intent(in) :: brad(:)
+   !> Derivative of Born radii w.r.t. cartesian coordinates
+   real(wp), contiguous, intent(in) :: brdr(:, :, :)
+   !> Spatial kernel gradient (3, nat, nat)
+   real(wp), contiguous, intent(out) :: kernel_grad_spatial(:, :, :)
+   !> Born radii kernel gradient (nat, nat)
+   real(wp), contiguous, intent(out) :: kernel_grad_born(:, :)
+
+   integer :: i, j
+   real(wp), parameter :: a4=0.25_wp
+   real(wp) :: aa, r2, fgb2
+   real(wp) :: dd, expd, dfgb, dfgb2, dfgb3, ap, bp
+   real(wp) :: r1, vec(3)
+   real(wp), allocatable :: dKdbr(:)
+
+   allocate(dKdbr(nat), source = 0.0_wp)
+   
+   kernel_grad_spatial(:, :, :) = 0.0_wp
+   kernel_grad_born(:, :) = 0.0_wp
+
+   ! Compute kernel derivatives (without charges)
+   do i = 1, nat
+      do j = 1, i - 1
+         vec(:) = xyz(:, i) - xyz(:, j)
+         r1 = norm2(vec)
+         r2 = r1*r1
+
+         aa = brad(i)*brad(j)
+         dd = a4*r2/aa
+         expd = exp(-dd)
+         fgb2 = r2+aa*expd
+         dfgb2 = 1._wp/fgb2
+         dfgb = sqrt(dfgb2)
+         dfgb3 = dfgb2*dfgb*keps
+
+         ! Spatial derivative of kernel: ∂(κ/f_GB)/∂r_ij
+         ap = (1._wp-a4*expd)*dfgb3
+         
+         ! Store directional derivative: ap * vec
+         kernel_grad_spatial(:, i, j) = ap * vec
+         kernel_grad_spatial(:, j, i) = -ap * vec
+
+         ! Born radii derivative: ∂(κ/f_GB)/∂a_ij
+         bp = -0.5_wp*expd*(1._wp+dd)*dfgb3
+         
+         ! Store kernel derivatives w.r.t. Born radii
+         kernel_grad_born(i, j) = bp * brad(j)  ! ∂/∂r_{B,i}
+         kernel_grad_born(j, i) = bp * brad(i)  ! ∂/∂r_{B,j}
+         
+         ! Accumulate for Born radii chain rule
+         dKdbr(i) = dKdbr(i) + bp * brad(j)
+         dKdbr(j) = dKdbr(j) + bp * brad(i)
+      enddo
+
+      ! Self-energy kernel derivative
+      bp = keps / brad(i)
+      dKdbr(i) = dKdbr(i) - bp / brad(i)
+   enddo
+
+   ! Add contribution from Born radii position dependence
+   do i = 1, nat
+      do j = 1, nat
+         kernel_grad_spatial(:, j, i) = kernel_grad_spatial(:, j, i) &
+            & + brdr(:, j, i) * dKdbr(i)
+      enddo
+   enddo
+
+end subroutine compute_kernel_deriv_still
+
+
+
 subroutine get_adet(nat, xyz, rad, aDet)
    !> Number of atoms
    integer, intent(in) :: nat
@@ -784,6 +881,79 @@ subroutine get_adet_deriv(nAtom, xyz, rad, kEps, qvec, gradient)
    end do
 
 end subroutine get_adet_deriv
+
+
+!> Compute multipole interaction matrix from Still kernel gradient
+subroutine get_multipole_matrix(nat, xyz, keps, brad, brdr, amat_sd)
+   !> Number of atoms
+   integer, intent(in) :: nat
+   !> Cartesian coordinates
+   real(wp), intent(in) :: xyz(:, :)
+   !> Dielectric screening
+   real(wp), intent(in) :: keps
+   !> Born radii
+   real(wp), intent(in) :: brad(:)
+   !> Derivative of Born radii w.r.t. cartesian coordinates
+   real(wp), contiguous, intent(in) :: brdr(:, :, :)
+   !> Multipole interaction matrix for charges and dipoles
+   real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)
+
+   integer :: i, j
+   real(wp), parameter :: a4=0.25_wp
+   real(wp) :: aa, r1, r2, fgb2
+   real(wp) :: dd, expd, dfgb, dfgb2, dfgb3, ap
+   real(wp) :: vec(3), grad_kernel
+   real(wp), allocatable :: dKdbr(:)
+
+   allocate(dKdbr(nat), source = 0.0_wp)
+   
+   amat_sd(:, :, :) = 0.0_wp
+
+   ! Compute amat_sd = (∂κ/∂r_ij) * vec / r
+   do i = 1, nat
+      do j = 1, i - 1
+         vec(:) = xyz(:, i) - xyz(:, j)
+         r1 = norm2(vec)
+         r2 = r1*r1
+
+         aa = brad(i)*brad(j)
+         dd = a4*r2/aa
+         expd = exp(-dd)
+         fgb2 = r2+aa*expd
+         dfgb2 = 1._wp/fgb2
+         dfgb = sqrt(dfgb2)
+         dfgb3 = dfgb2*dfgb*keps
+
+         ! Spatial gradient of kernel: ∂(κ/f_GB)/∂r_ij
+         ! This is: κ * (1 - 0.25*exp(-dd)) / f_GB³
+         ap = (1._wp-a4*expd)*dfgb3
+         
+         ! grad_kernel = |∂K/∂r|, and we want (∂K/∂r) · vec / r
+         ! The gradient is along vec direction, so:
+         ! amat_sd = (∂K/∂r_ij) * vec / |vec|
+         grad_kernel = ap / r1
+         
+         amat_sd(:, i, j) = grad_kernel * vec
+         amat_sd(:, j, i) = -grad_kernel * vec
+
+         ! Born radii contribution to spatial gradient
+         ! ∂(κ/f_GB)/∂a_i contribution
+         dfgb3 = dfgb2*dfgb*keps
+         ap = -0.5_wp*expd*(1._wp+dd)*dfgb3
+         
+         dKdbr(i) = dKdbr(i) + ap * brad(j)
+         dKdbr(j) = dKdbr(j) + ap * brad(i)
+      enddo
+   enddo
+
+   ! Add contribution from Born radii position dependence: ∂a_i/∂r_j
+   do i = 1, nat
+      do j = 1, nat
+         amat_sd(:, j, i) = amat_sd(:, j, i) + brdr(:, j, i) * dKdbr(i)
+      enddo
+   enddo
+
+end subroutine get_multipole_matrix
 
 
 end module tblite_solvation_alpb
