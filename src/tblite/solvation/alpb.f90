@@ -268,7 +268,7 @@ subroutine update(self, mol, cache)
    end if
 
    ! Compute multipole interaction matrix
-   call get_multipole_matrix(mol%nat, mol%xyz, self%keps, ptr%rad, ptr%draddr, ptr%amat_sd)
+   call get_multipole_matrix(self, mol%nat, mol%xyz, self%keps, ptr%rad, ptr%draddr, ptr%amat_sd)
 end subroutine update
 
 
@@ -301,7 +301,13 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    call gemv(ptr%amat_sd, wfn%qat(:, 1), vd)
 
    call symv(ptr%jmat, ptr%qscratch(:), ptr%vat, alpha=0.5_wp)
-   energies(:) = energies + ptr%vat * ptr%qscratch(:) + sum(wfn%dpat(:, :, 1) * vd, 1) 
+
+   ! Monopole-monopole
+   energies(:) = energies + ptr%vat * ptr%qscratch(:)
+
+   ! Monopole-dipole
+   energies(:) = energies + sum(wfn%dpat(:, :, 1) * vd, 1)
+
 end subroutine get_energy
 
 
@@ -527,77 +533,53 @@ subroutine get_adet_deriv(nAtom, xyz, rad, kEps, qvec, gradient)
 end subroutine get_adet_deriv
 
 
-!> Compute multipole interaction matrix from Still kernel gradient
-subroutine get_multipole_matrix(nat, xyz, keps, brad, brdr, amat_sd)
+!> Compute multipole interaction matrix from kernel gradient
+subroutine get_multipole_matrix(self, nat, xyz, keps, brad, brdr, amat_sd)
+   !> Instance of the solvation model
+   class(alpb_solvation), intent(in) :: self
    !> Number of atoms
    integer, intent(in) :: nat
    !> Cartesian coordinates
    real(wp), intent(in) :: xyz(:, :)
-   !> Dielectric screening
+   !> Dielectric screening (kept for API symmetry; kernel already carries keps internally)
    real(wp), intent(in) :: keps
    !> Born radii
    real(wp), intent(in) :: brad(:)
    !> Derivative of Born radii w.r.t. cartesian coordinates
    real(wp), contiguous, intent(in) :: brdr(:, :, :)
-   !> Multipole interaction matrix for charges and dipoles
+   !> Multipole interaction matrix for charges and dipoles: (3,nat,nat)
+   !> Convention matches get_multipole_matrix_0d: amat_sd(:,j,i) = -∇_i K_ij
    real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)
 
    integer :: i, j
-   real(wp), parameter :: a4=0.25_wp
-   real(wp) :: aa, r1, r2, fgb2
-   real(wp) :: dd, expd, dfgb, dfgb2, dfgb3, ap
-   real(wp) :: vec(3), grad_kernel
-   real(wp), allocatable :: dKdbr(:)
+   real(wp), allocatable :: dKdr(:,:,:,:), R(:)
+   real(wp) :: rij
 
-   allocate(dKdbr(nat), source = 0.0_wp)
-   
-   amat_sd(:, :, :) = 0.0_wp
 
-   ! Compute amat_sd = (∂κ/∂r_ij) * vec / r
-   do i = 1, nat
-      do j = 1, i - 1
-         vec(:) = xyz(:, i) - xyz(:, j)
-         r1 = norm2(vec)
-         r2 = r1*r1
+   allocate(R(nat), source=0.0_wp)
 
-         aa = brad(i)*brad(j)
-         dd = a4*r2/aa
-         expd = exp(-dd)
-         fgb2 = r2+aa*expd
-         dfgb2 = 1._wp/fgb2
-         dfgb = sqrt(dfgb2)
-         dfgb3 = dfgb2*dfgb*keps
+   ! Full kernel derivative tensor: dKdr(:,k,i,j) = ∂K_ij/∂r_k(:)
+   allocate(dKdr(3, nat, nat, nat), source=0.0_wp)
+   call self%kernel%compute_kernel_dkdr(nat, xyz, brad, brdr, dKdr)
 
-         ! Spatial gradient of kernel: ∂(κ/f_GB)/∂r_ij
-         ! This is: κ * (1 - 0.25*exp(-dd)) / f_GB³
-         ap = (1._wp-a4*expd)*dfgb3
-         
-         ! grad_kernel = |∂K/∂r|, and we want (∂K/∂r) · vec / r
-         ! The gradient is along vec direction, so:
-         ! amat_sd = (∂K/∂r_ij) * vec / |vec|
-         grad_kernel = ap / r1
-         
-         amat_sd(:, i, j) = grad_kernel * vec
-         amat_sd(:, j, i) = -grad_kernel * vec
-
-         ! Born radii contribution to spatial gradient
-         ! ∂(κ/f_GB)/∂a_i contribution
-         dfgb3 = dfgb2*dfgb*keps
-         ap = -0.5_wp*expd*(1._wp+dd)*dfgb3
-         
-         dKdbr(i) = dKdbr(i) + ap * brad(j)
-         dKdbr(j) = dKdbr(j) + ap * brad(i)
-      enddo
-   enddo
-
-   ! Add contribution from Born radii position dependence: ∂a_i/∂r_j
+   ! Build charge–dipole interaction kernel:
+   ! amat_sd(:,j,i) += +vec/r^3 for Coulomb  <=>  amat_sd(:,j,i) = -∇_i K_ij in general
    do i = 1, nat
       do j = 1, nat
-         amat_sd(:, j, i) = amat_sd(:, j, i) + brdr(:, j, i) * dKdbr(i)
-      enddo
-   enddo
+         if (i == j) cycle
+
+         R = xyz(:,i) - xyz(:,j)
+         rij = sqrt(dot_product(R,R))
+
+
+         amat_sd(:, i, j) = - dot_product(R, dKdr(:,i,i,j)) / rij
+      end do
+   end do
+
+   deallocate(dKdr)
 
 end subroutine get_multipole_matrix
+
 
 
 end module tblite_solvation_alpb
