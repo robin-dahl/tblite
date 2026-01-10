@@ -108,7 +108,7 @@ subroutine test_numg(error, gbobc, mol)
    end do
 
    if (any(abs(numg - draddr) > thr2)) then
-      call test_failed(error, "Born radii derivative does not much finite difference solution")
+      call test_failed(error, "Born radii derivative does not match finite difference solution")
    end if
 end subroutine test_numg
 
@@ -244,7 +244,9 @@ subroutine test_e(error, mol, input, qat, ref, method)
 
    energy = 0.0_wp
    wfn%qat = reshape(qat, [size(qat), 1])
+   allocate(wfn%dpat(3, size(qat, 1), 1), source=0.0_wp)
    allocate(pot%vat(size(qat, 1), 1))
+   allocate(pot%vdp(3, size(qat, 1), 1))
 
    scratch_input = input
 
@@ -297,7 +299,9 @@ subroutine test_g(error, mol, input, qat, method)
    integer :: ii, ic
 
    wfn%qat = reshape(qat, [size(qat), 1])
+   allocate(wfn%dpat(3, size(qat, 1), 1), source=0.0_wp)
    allocate(pot%vat(size(qat, 1), 1))
+   allocate(pot%vdp(3, size(qat, 1), 1))
 
    scratch_input = input
 
@@ -378,7 +382,9 @@ subroutine test_p(error, mol, input, qat, method)
    integer :: ii
 
    wfn%qat = reshape(qat, [size(qat), 1])
+   allocate(wfn%dpat(3, size(qat, 1), 1), source=0.0_wp)
    allocate(pot%vat(size(qat, 1), 1))
+   allocate(pot%vdp(3, size(qat, 1), 1))
 
    scratch_input = input
 

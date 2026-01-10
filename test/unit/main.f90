@@ -42,6 +42,7 @@ program tester
    use test_slater_expansion, only : collect_slater_expansion
    use test_spin, only : collect_spin
    use test_solvation_born, only : collect_solvation_born
+   use test_solvation_kernel, only : collect_solvation_kernel
    use test_solvation_cpcm, only : collect_solvation_cpcm
    use test_solvation_surface, only : collect_solvation_surface
    use test_solvation_cds, only: collect_solvation_cds
@@ -66,6 +67,7 @@ program tester
       new_testsuite("npy", collect_npy), &
       new_testsuite("npz", collect_npz), &
       new_testsuite("solvation-born", collect_solvation_born), &
+      new_testsuite("solvation-kernel", collect_solvation_kernel), &
       new_testsuite("solvation-cpcm", collect_solvation_cpcm), &
       new_testsuite("solvation-surface", collect_solvation_surface), &
       new_testsuite("solvation-cds", collect_solvation_cds), &

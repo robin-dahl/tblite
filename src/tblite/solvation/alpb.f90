@@ -301,7 +301,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    call gemv(ptr%amat_sd, wfn%qat(:, 1), vd)
 
    call symv(ptr%jmat, ptr%qscratch(:), ptr%vat, alpha=0.5_wp)
-   energies(:) = energies + ptr%vat * ptr%qscratch(:) !+ sum(wfn%dpat(:, :, 1) * vd, 1) 
+   energies(:) = energies + ptr%vat * ptr%qscratch(:) + sum(wfn%dpat(:, :, 1) * vd, 1) 
 end subroutine get_energy
 
 
@@ -330,8 +330,8 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    call symv(ptr%jmat, ptr%qscratch(:), pot%vat(:, 1), beta=1.0_wp)
 
-   ! call gemv(ptr%amat_sd, wfn%qat(:, 1), pot%vdp(:, :, 1), beta=1.0_wp)
-   ! call gemv(ptr%amat_sd, wfn%dpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
+   call gemv(ptr%amat_sd, wfn%qat(:, 1), pot%vdp(:, :, 1), beta=1.0_wp)
+   call gemv(ptr%amat_sd, wfn%dpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
 end subroutine get_potential
 
 
