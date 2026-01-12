@@ -192,7 +192,7 @@ subroutine test_mb01(error)
       return
    end if
 
-   ! call test_numg(error, gbobc, mol)
+   call test_numg(error, gbobc, mol)
    call test_hess(error, gbobc, mol)
 
 end subroutine test_mb01
@@ -228,6 +228,7 @@ subroutine test_mb02(error)
    end if
 
    call test_numg(error, gbobc, mol)
+   call test_hess(error, gbobc, mol)
 
 end subroutine test_mb02
 
@@ -262,6 +263,7 @@ subroutine test_mb03(error)
    end if
 
    call test_numg(error, gbobc, mol)
+   call test_hess(error, gbobc, mol)
 
 end subroutine test_mb03
 

@@ -552,13 +552,14 @@ subroutine get_multipole_matrix(self, nat, xyz, keps, brad, brdr, amat_sd)
    real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)
 
    integer :: i, j
-   real(wp), allocatable :: dKdr(:,:,:,:), R(:)
+   real(wp), allocatable :: dKdr(:,:,:,:), R(:), brdr2(:,:,:,:,:)
    real(wp) :: rij
 
 
    allocate(R(nat), source=0.0_wp)
 
-   ! Full kernel derivative tensor: dKdr(:,k,i,j) = ∂K_ij/∂r_k(:)
+   ! %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   ! Monopole-dipole interaction 
    allocate(dKdr(3, nat, nat, nat), source=0.0_wp)
    call self%kernel%compute_kernel_dkdr(nat, xyz, brad, brdr, dKdr)
 
@@ -577,6 +578,11 @@ subroutine get_multipole_matrix(self, nat, xyz, keps, brad, brdr, amat_sd)
    end do
 
    deallocate(dKdr)
+
+   ! %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   ! Dipole-dipole interaction
+   ! allocate(brdr2(3, nat, 3, nat, nat), source=0.0_wp)
+   ! call self%kernel%compute_kernel_d2kdr2(nat, xyz, brad, brdr, brdr2, dKdr)
 
 end subroutine get_multipole_matrix
 
