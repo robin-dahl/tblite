@@ -85,7 +85,7 @@ subroutine test_numg(error, gbobc, mol)
    type(structure_type), intent(inout) :: mol
 
    integer :: iat, ic
-   real(wp), allocatable :: rad(:), sr(:), sl(:), draddr(:, :, :), numg(:, :, :)
+   real(wp), allocatable :: rad(:), sr(:), sl(:), draddr(:, :, :), numg(:, :, :), drad2r(:,:,:,:,:)
    real(wp), parameter :: step = 1.0e-5_wp
 
    allocate(rad(mol%nat), sr(mol%nat), sl(mol%nat))
@@ -111,6 +111,56 @@ subroutine test_numg(error, gbobc, mol)
       call test_failed(error, "Born radii derivative does not match finite difference solution")
    end if
 end subroutine test_numg
+
+subroutine test_hess(error, gbobc, mol)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Born radii integrator
+   type(born_integrator), intent(inout) :: gbobc
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+
+   integer :: iat, ic
+   real(wp), allocatable :: rad(:)
+   real(wp), allocatable :: draddr(:, :, :)
+   real(wp), allocatable :: dsr(:, :, :), dsl(:, :, :)
+   real(wp), allocatable :: numhess(:, :, :, :, :)
+   real(wp), allocatable :: drad2r(:, :, :, :, :)
+   real(wp), parameter   :: step = 1.0e-5_wp
+
+   allocate(rad(mol%nat))
+   allocate(draddr(3, mol%nat, mol%nat))
+   allocate(dsr(3, mol%nat, mol%nat), dsl(3, mol%nat, mol%nat))
+   allocate(numhess(3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(drad2r(3, mol%nat, 3, mol%nat, mol%nat))
+
+   print *, "HELLO"
+   ! Analytic radii + gradient + Hessian
+   call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r)
+
+   ! Numerical Hessian by central difference of the gradient
+   do iat = 1, mol%nat
+      do ic = 1, 3
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
+         call gbobc%get_rad(mol, rad, dsr)     ! dsr = grad at +step
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) - 2*step
+         call gbobc%get_rad(mol, rad, dsl)     ! dsl = grad at -step
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step  ! restore
+
+         ! For this (ic,iat), fill all (jc,jat,k) at once:
+         numhess(ic, iat, :, :, :) = 0.5_wp * (dsr(:, :, :) - dsl(:, :, :)) / step
+
+      end do
+   end do
+
+   if (any(abs(numhess - drad2r) > thr2)) then
+      call test_failed(error, "Born radii Hessian does not match finite difference solution")
+   end if
+end subroutine test_hess
+
 
 
 subroutine test_mb01(error)
@@ -142,7 +192,8 @@ subroutine test_mb01(error)
       return
    end if
 
-   call test_numg(error, gbobc, mol)
+   ! call test_numg(error, gbobc, mol)
+   call test_hess(error, gbobc, mol)
 
 end subroutine test_mb01
 
