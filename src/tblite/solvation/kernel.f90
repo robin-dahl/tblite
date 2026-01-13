@@ -26,7 +26,7 @@ module tblite_solvation_kernel
    public :: kernel_type, new_kernel
    public :: still_kernel, p16_kernel
    public :: kernel_enum, kernel_enum_type
-   public :: compute_kernel_dkdr, compute_kernel_d2kdr2 ! convenience dispatcher by enum
+   public :: compute_kernel_dkdr, compute_kernel_d2kdr2, compute_kernel_d3kdr3 ! convenience dispatcher by enum
 
    type :: kernel_enum_type
       integer :: still = 1
@@ -43,6 +43,7 @@ module tblite_solvation_kernel
       procedure(add_kernel_deriv_interface), deferred :: add_kernel_deriv
       procedure(compute_kernel_dkdr_interface), deferred :: compute_kernel_dkdr
       procedure(compute_kernel_d2kdr2_interface), deferred :: compute_kernel_d2kdr2
+      procedure(compute_kernel_d3kdr3_interface), deferred :: compute_kernel_d3kdr3
    end type kernel_type
 
    abstract interface
@@ -92,6 +93,19 @@ module tblite_solvation_kernel
          real(wp), contiguous, intent(in) :: brdr2(:, :, :, :, :)
          real(wp), contiguous, intent(out) :: d2Kdr2(:, :, :, :, :, :)
       end subroutine compute_kernel_d2kdr2_interface
+
+      !> Full element-wise 3rd derivative tensor of the actual kernel matrix:
+      subroutine compute_kernel_d3kdr3_interface(self, nat, xyz, brad, brdr, brdr2, brdr3, d3Kdr3)
+         import :: kernel_type, wp
+         class(kernel_type), intent(in) :: self
+         integer, intent(in) :: nat
+         real(wp), intent(in) :: xyz(:, :)
+         real(wp), intent(in) :: brad(:)
+         real(wp), contiguous, intent(in) :: brdr(:, :, :)
+         real(wp), contiguous, intent(in) :: brdr2(:, :, :, :, :)
+         real(wp), contiguous, intent(in) :: brdr3(:, :, :, :, :, :, :)
+         real(wp), contiguous, intent(out) :: d3Kdr3(:, :, :, :, :, :, :, :)
+      end subroutine compute_kernel_d3kdr3_interface
    end interface
 
    type, extends(kernel_type) :: still_kernel
@@ -100,6 +114,7 @@ module tblite_solvation_kernel
       procedure :: add_kernel_deriv => add_still_deriv
       procedure :: compute_kernel_dkdr => compute_still_dkdr_full
       procedure :: compute_kernel_d2kdr2 => compute_still_d2kdr2_full
+      procedure :: compute_kernel_d3kdr3 => compute_still_d3kdr3_full
    end type still_kernel
 
    type, extends(kernel_type) :: p16_kernel
@@ -108,6 +123,7 @@ module tblite_solvation_kernel
       procedure :: add_kernel_deriv => add_p16_deriv
       procedure :: compute_kernel_dkdr => compute_p16_dkdr_full
       procedure :: compute_kernel_d2kdr2 => compute_p16_d2kdr2_full
+      procedure :: compute_kernel_d3kdr3 => compute_p16_d3kdr3_full
    end type p16_kernel
 
    real(wp), parameter :: zetaP16    = 1.028_wp
@@ -132,7 +148,7 @@ function new_kernel(kernel_id, keps) result(kernel)
    kernel%keps = keps
 end function new_kernel
 
-!> Convenience dispatcher (switches by kernel enum, returns full 4D derivative tensor)
+!> Convenience dispatcher (switches by kernel enum, returns full derivative tensor)
 subroutine compute_kernel_dkdr(kernel_id, keps, nat, xyz, brad, brdr, dKdr)
    integer, intent(in) :: kernel_id
    real(wp), intent(in) :: keps
@@ -148,7 +164,7 @@ subroutine compute_kernel_dkdr(kernel_id, keps, nat, xyz, brad, brdr, dKdr)
    call kernel%compute_kernel_dkdr(nat, xyz, brad, brdr, dKdr)
 end subroutine compute_kernel_dkdr
 
-!> Convenience dispatcher (switches by kernel enum, returns full 4D derivative tensor)
+!> Convenience dispatcher (switches by kernel enum, returns full derivative tensor)
 subroutine compute_kernel_d2kdr2(kernel_id, keps, nat, xyz, brad, brdr, brdr2, d2Kdr2)
    integer, intent(in) :: kernel_id
    real(wp), intent(in) :: keps
@@ -164,6 +180,24 @@ subroutine compute_kernel_d2kdr2(kernel_id, keps, nat, xyz, brad, brdr, brdr2, d
    kernel = new_kernel(kernel_id, keps)
    call kernel%compute_kernel_d2kdr2(nat, xyz, brad, brdr, brdr2, d2Kdr2)
 end subroutine compute_kernel_d2kdr2
+
+!> Convenience dispatcher (switches by kernel enum, returns full derivative tensor)
+subroutine compute_kernel_d3kdr3(kernel_id, keps, nat, xyz, brad, brdr, brdr2, brdr3, d3Kdr3)
+   integer, intent(in) :: kernel_id
+   real(wp), intent(in) :: keps
+   integer, intent(in) :: nat
+   real(wp), intent(in) :: xyz(:, :)
+   real(wp), intent(in) :: brad(:)
+   real(wp), contiguous, intent(in) :: brdr(:, :, :)
+   real(wp), contiguous, intent(in) :: brdr2(:, :, :, :, :)
+   real(wp), contiguous, intent(in) :: brdr3(:, :, :, :, :, :, :)
+   real(wp), contiguous, intent(out) :: d3Kdr3(:, :, :, :, :, :, :, :)
+
+   class(kernel_type), allocatable :: kernel
+
+   kernel = new_kernel(kernel_id, keps)
+   call kernel%compute_kernel_d3kdr3(nat, xyz, brad, brdr, brdr2, brdr3, d3Kdr3)
+end subroutine compute_kernel_d3kdr3
 
 !==============================================================================
 ! P16 kernel
@@ -547,6 +581,24 @@ subroutine compute_p16_d2kdr2_full(self, nat, xyz, brad, brdr, brdr2, d2Kdr2)
 end subroutine compute_p16_d2kdr2_full
 
 
+!> Full d3Kdr3 for the actual P16 kernel matrix (including diagonal self term)
+subroutine compute_p16_d3kdr3_full(self, nat, xyz, brad, brdr, brdr2, brdr3, d3Kdr3)
+   class(p16_kernel), intent(in) :: self
+   integer, intent(in) :: nat
+   real(wp), intent(in) :: xyz(:, :)                         ! (3,nat)
+   real(wp), intent(in) :: brad(:)                           ! (nat)
+   real(wp), contiguous, intent(in) :: brdr(:, :, :)         ! (3,nat,nat)
+   real(wp), contiguous, intent(in) :: brdr2(:, :, :, :, :)  ! (3,nat,3,nat,nat)
+   real(wp), contiguous, intent(in) :: brdr3(:, :, :, :, :, :, :)  ! (3, nat, 3,nat,3,nat,nat)
+   real(wp), contiguous, intent(out) :: d3Kdr3(:, :, :, :, :, :, :, :) ! (3, nat, 3,nat,3,nat,nat,nat)
+
+
+   print *, "compute_p16_d3kdr3_full: Not yet implemented!"
+
+
+end subroutine compute_p16_d3kdr3_full
+
+
 !==============================================================================
 ! Still kernel
 !==============================================================================
@@ -872,6 +924,354 @@ subroutine compute_still_d2kdr2_full(self, nat, xyz, brad, brdr, brdr2, d2Kdr2)
    end do
 
 end subroutine compute_still_d2kdr2_full
+
+
+ !> Full d3Kdr3 for the actual Still kernel matrix (including diagonal self term)
+subroutine compute_still_d3kdr3_full(self, nat, xyz, brad, brdr, brdr2, brdr3, d3Kdr3)
+   class(still_kernel), intent(in) :: self
+   integer, intent(in) :: nat
+   real(wp), intent(in) :: xyz(:, :)                      ! (3,nat)
+   real(wp), intent(in) :: brad(:)                        ! (nat)
+   real(wp), contiguous, intent(in) :: brdr(:, :, :)      ! (3,nat,nat)
+   real(wp), contiguous, intent(in) :: brdr2(:, :, :, :, :) ! (3,nat,3,nat,nat)
+   real(wp), contiguous, intent(in) :: brdr3(:, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,nat)
+   real(wp), contiguous, intent(out) :: d3Kdr3(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,nat,nat)
+
+   integer :: i, j, k, l, m
+   integer :: alpha, beta, gamma
+   integer :: delk, dell, delm
+   real(wp), parameter :: a4 = 0.25_wp
+
+   real(wp) :: v(3), r2
+   real(wp) :: ai, aj, A, d, E, P, S
+   real(wp) :: invf, invf3, invf5, invf7
+
+   ! --- S-derivatives wrt (r2, ai, aj) ---
+   real(wp) :: Sr, Saa, Sbb, Sa, Sb
+   real(wp) :: Srr, Sra, Srb, Saa2, Sbb2, Sab
+   real(wp) :: Srrr, Srra, Srrb, Sraa, Srab, Srbb
+   real(wp) :: Saa3, Sbb3, Saa2b, Sa2bb
+
+   ! --- F(S)=keps*S^{-1/2} derivatives ---
+   real(wp) :: F1, F2, F3
+
+   ! --- K scalar partials needed ---
+   real(wp) :: Kr, Krr, Krrr
+   real(wp) :: Kai, Kaj
+   real(wp) :: Kaiai, Kajaj, Kaiaj
+   real(wp) :: Kr_ai, Kr_aj
+   real(wp) :: Krr_ai, Krr_aj
+   real(wp) :: Kr_aiai, Kr_ajaj, Kr_aiaj
+   real(wp) :: Kaiaiai, Kajajaj, Kaiaiaj, Kaiajaj
+
+   ! --- tensor building blocks ---
+   real(wp) :: Kvvv(3,3,3)
+   real(wp) :: Kvv_ai(3,3), Kvv_aj(3,3)
+   real(wp) :: Kv_ai(3), Kv_aj(3)
+   real(wp) :: Kv_aiai(3), Kv_ajaj(3), Kv_aiaj(3)
+   real(wp) :: Kv(3)
+   real(wp) :: I3(3,3)
+
+   ! coordinate-to-radius derivatives (scalars)
+   real(wp) :: dai_k, dai_l, dai_m
+   real(wp) :: daj_k, daj_l, daj_m
+
+   real(wp) :: d2ai_kl, d2ai_km, d2ai_lm
+   real(wp) :: d2aj_kl, d2aj_km, d2aj_lm
+
+   real(wp) :: d3ai_klm
+   real(wp) :: d3aj_klm
+
+   ! helpers
+   real(wp) :: term
+   real(wp) :: f11, f22, f3_self
+
+   I3 = 0.0_wp
+   I3(1,1)=1.0_wp; I3(2,2)=1.0_wp; I3(3,3)=1.0_wp
+
+   d3Kdr3(:, :, :, :, :, :, :, :) = 0.0_wp
+
+   ! =========================
+   ! Off-diagonal i>j, mirror
+   ! =========================
+   do i = 1, nat
+      ai = brad(i)
+      do j = 1, i-1
+         aj = brad(j)
+
+         v(:) = xyz(:, i) - xyz(:, j)
+         r2   = dot_product(v, v)
+
+         A = ai * aj
+         d = a4 * r2 / A
+         E = exp(-d)
+
+         S = r2 + A * E
+         invf  = 1.0_wp / sqrt(S)
+         invf3 = invf*invf*invf
+         invf5 = invf3*invf*invf
+         invf7 = invf5*invf*invf
+
+         ! ---- F(S) derivatives ----
+         F1 = -0.5_wp * self%keps * invf3
+         F2 =  0.75_wp * self%keps * invf5
+         F3 = -1.875_wp * self%keps * invf7   ! -15/8
+
+         ! ---- S derivatives wrt r2 (call it "r") and radii a=ai, b=aj ----
+         ! Using: Sr = 1 - a4 E = P
+         P  = 1.0_wp - a4*E
+         Sr = P
+         Srr  = (a4*a4 / A) * E
+         Srrr = -(a4*a4*a4 / (A*A)) * E
+
+         ! Sa, Sb (your Qi, Qj)
+         Sa = aj * E * (1.0_wp + d)
+         Sb = ai * E * (1.0_wp + d)
+
+         ! second wrt radii
+         Saa2 = aj * E * (d*d) / ai
+         Sbb2 = ai * E * (d*d) / aj
+         Sab  = E * (1.0_wp + d + d*d)
+
+         ! mixed r–a, r–b
+         Sra = -(a4/ai) * E * d
+         Srb = -(a4/aj) * E * d
+
+         ! mixed rr–a, rr–b
+         Srra = -(a4*a4/(ai*A)) * E * (1.0_wp - d)
+         Srrb = -(a4*a4/(aj*A)) * E * (1.0_wp - d)
+
+         ! mixed r–aa, r–bb, r–ab
+         Sraa = -a4 * E * d * (d - 2.0_wp) / (ai*ai)
+         Srbb = -a4 * E * d * (d - 2.0_wp) / (aj*aj)
+         Srab = -(a4/A) * E * d * (d - 1.0_wp)
+
+         ! third wrt radii
+         Saa3   = aj * E * d*d * (d - 3.0_wp) / (ai*ai)
+         Sbb3   = ai * E * d*d * (d - 3.0_wp) / (aj*aj)
+         Saa2b  = E * d*d * (d - 1.0_wp) / ai
+         Sa2bb  = E * d*d * (d - 1.0_wp) / aj
+
+         ! ---- K scalar partials via chain rule (K = F(S)) ----
+         ! first
+         Kr  = F1 * Sr
+         Kai = F1 * Sa
+         Kaj = F1 * Sb
+
+         ! second
+         Krr    = F2 * Sr*Sr + F1 * Srr
+         Kaiai = F2 * Sa*Sa + F1 * Saa2
+         Kajaj  = F2 * Sb*Sb + F1 * Sbb2
+         Kaiaj  = F2 * Sa*Sb + F1 * Sab
+
+         Kr_ai  = F2 * Sr*Sa + F1 * Sra
+         Kr_aj  = F2 * Sr*Sb + F1 * Srb
+
+         ! third: (r,r,r)
+         Krrr = F3 * Sr*Sr*Sr + 3.0_wp*F2*Srr*Sr + F1*Srrr
+
+         ! third: (r,r,a) and (r,r,b)
+         Krr_ai = F3 * Sr*Sr*Sa + F2*(Srr*Sa + 2.0_wp*Sr*Sra) + F1*Srra
+         Krr_aj = F3 * Sr*Sr*Sb + F2*(Srr*Sb + 2.0_wp*Sr*Srb) + F1*Srrb
+
+         ! third: (r,a,a), (r,b,b), (r,a,b)
+         Kr_aiai = F3 * Sr*Sa*Sa + F2*(Saa2*Sr + 2.0_wp*Sra*Sa) + F1*Sraa
+         Kr_ajaj = F3 * Sr*Sb*Sb + F2*(Sbb2*Sr + 2.0_wp*Srb*Sb) + F1*Srbb
+         Kr_aiaj = F3 * Sr*Sa*Sb + F2*(Sab*Sr + Sra*Sb + Srb*Sa) + F1*Srab
+
+         ! third: radii-only
+         Kaiaiai = F3 * Sa*Sa*Sa + 3.0_wp*F2*Saa2*Sa + F1*Saa3
+         Kajajaj = F3 * Sb*Sb*Sb + 3.0_wp*F2*Sbb2*Sb + F1*Sbb3
+         Kaiaiaj = F3 * Sa*Sa*Sb + F2*(Saa2*Sb + 2.0_wp*Sab*Sa) + F1*Saa2b
+         Kaiajaj = F3 * Sa*Sb*Sb + F2*(Sbb2*Sa + 2.0_wp*Sab*Sb) + F1*Sa2bb
+
+         ! ---- build v-tensors from r2-derivatives ----
+         ! Kv = ∂K/∂v = 2*Kr * v
+         Kv(:) = 2.0_wp * Kr * v(:)
+
+         ! K_v_ai = 2*K_{r,ai} * v etc
+         Kv_ai(:)   = 2.0_wp * Kr_ai  * v(:)
+         Kv_aj(:)   = 2.0_wp * Kr_aj  * v(:)
+         Kv_aiai(:) = 2.0_wp * Kr_aiai * v(:)
+         Kv_ajaj(:) = 2.0_wp * Kr_ajaj * v(:)
+         Kv_aiaj(:) = 2.0_wp * Kr_aiaj * v(:)
+
+         ! K_vv_ai = 2*K_{r,ai}*I + 4*K_{rr,ai}*(v⊗v)
+         Kvv_ai(:,:) = 2.0_wp*Kr_ai * I3(:,:) + 4.0_wp*Krr_ai * (spread(v,2,3)*spread(v,1,3))
+         Kvv_aj(:,:) = 2.0_wp*Kr_aj * I3(:,:) + 4.0_wp*Krr_aj * (spread(v,2,3)*spread(v,1,3))
+
+         ! K_vvv tensor:
+         !   8*Krrr * v⊗v⊗v  + 4*Krr * sym( I⊗v )
+         Kvvv(:,:,:) = 0.0_wp
+         do alpha = 1,3
+            do beta = 1,3
+               do gamma = 1,3
+                  Kvvv(alpha,beta,gamma) = 8.0_wp*Krrr * v(alpha)*v(beta)*v(gamma) &
+                     + 4.0_wp*Krr * ( I3(alpha,beta)*v(gamma) + I3(alpha,gamma)*v(beta) + I3(beta,gamma)*v(alpha) )
+               end do
+            end do
+         end do
+
+         ! ==========================================================
+         ! Assemble full coordinate third derivative for all k,l,m
+         ! ==========================================================
+         do k = 1, nat
+            delk = 0; if (k==i) delk=delk+1; if (k==j) delk=delk-1
+            do l = 1, nat
+               dell = 0; if (l==i) dell=dell+1; if (l==j) dell=dell-1
+               do m = 1, nat
+                  delm = 0; if (m==i) delm=delm+1; if (m==j) delm=delm-1
+
+                  do alpha = 1,3
+                     dai_k = brdr(alpha,k,i)
+                     daj_k = brdr(alpha,k,j)
+                     do beta = 1,3
+                        dai_l = brdr(beta,l,i)
+                        daj_l = brdr(beta,l,j)
+                        do gamma = 1,3
+                           dai_m = brdr(gamma,m,i)
+                           daj_m = brdr(gamma,m,j)
+
+                           d2ai_kl = brdr2(alpha,k,beta,l,i)
+                           d2ai_km = brdr2(alpha,k,gamma,m,i)
+                           d2ai_lm = brdr2(beta,l,gamma,m,i)
+
+                           d2aj_kl = brdr2(alpha,k,beta,l,j)
+                           d2aj_km = brdr2(alpha,k,gamma,m,j)
+                           d2aj_lm = brdr2(beta,l,gamma,m,j)
+
+                           d3ai_klm = brdr3(alpha,k,beta,l,gamma,m,i)
+                           d3aj_klm = brdr3(alpha,k,beta,l,gamma,m,j)
+
+                           term = 0.0_wp
+
+                           ! ---------- Term 1: K_pqr y_p,x y_q,y y_r,z ----------
+                           ! vvv
+                           if (delk/=0 .and. dell/=0 .and. delm/=0) then
+                              term = term + real(delk*dell*delm,wp) * Kvvv(alpha,beta,gamma)
+                           end if
+
+                           ! vv-ai / vv-aj (three placements)
+                           if (delk/=0 .and. dell/=0) then
+                              term = term + real(delk*dell,wp) * Kvv_ai(alpha,beta) * dai_m
+                              term = term + real(delk*dell,wp) * Kvv_aj(alpha,beta) * daj_m
+                           end if
+                           if (delk/=0 .and. delm/=0) then
+                              term = term + real(delk*delm,wp) * Kvv_ai(alpha,gamma) * dai_l
+                              term = term + real(delk*delm,wp) * Kvv_aj(alpha,gamma) * daj_l
+                           end if
+                           if (dell/=0 .and. delm/=0) then
+                              term = term + real(dell*delm,wp) * Kvv_ai(beta,gamma) * dai_k
+                              term = term + real(dell*delm,wp) * Kvv_aj(beta,gamma) * daj_k
+                           end if
+
+                           ! v-aa, v-bb, v-ab (three placements of which coord gives v)
+                           if (delk/=0) then
+                              term = term + real(delk,wp) * Kv_aiai(alpha) * (dai_l*dai_m)
+                              term = term + real(delk,wp) * Kv_ajaj(alpha) * (daj_l*daj_m)
+                              term = term + real(delk,wp) * Kv_aiaj(alpha) * (dai_l*daj_m + daj_l*dai_m)
+                           end if
+                           if (dell/=0) then
+                              term = term + real(dell,wp) * Kv_aiai(beta) * (dai_k*dai_m)
+                              term = term + real(dell,wp) * Kv_ajaj(beta) * (daj_k*daj_m)
+                              term = term + real(dell,wp) * Kv_aiaj(beta) * (dai_k*daj_m + daj_k*dai_m)
+                           end if
+                           if (delm/=0) then
+                              term = term + real(delm,wp) * Kv_aiai(gamma) * (dai_k*dai_l)
+                              term = term + real(delm,wp) * Kv_ajaj(gamma) * (daj_k*daj_l)
+                              term = term + real(delm,wp) * Kv_aiaj(gamma) * (dai_k*daj_l + daj_k*dai_l)
+                           end if
+
+                           ! aaa / bbb / mixed radii-only
+                           term = term + Kaiaiai * (dai_k*dai_l*dai_m)
+                           term = term + Kajajaj * (daj_k*daj_l*daj_m)
+
+                           term = term + Kaiaiaj * (dai_k*dai_l*daj_m + dai_k*daj_l*dai_m + daj_k*dai_l*dai_m)
+                           term = term + Kaiajaj * (daj_k*daj_l*dai_m + daj_k*dai_l*daj_m + dai_k*daj_l*daj_m)
+
+                           ! ---------- Term 2: K_pq ( y_p,xy y_q,z + perms ) ----------
+                           ! (xy)=(k,l), z=(m)
+                           ! p = ai/aj second-derivative; q = v/ai/aj first-derivative
+                           if (delm/=0) then
+                              term = term + real(delm,wp) * d2ai_kl * Kv_ai(gamma)
+                              term = term + real(delm,wp) * d2aj_kl * Kv_aj(gamma)
+                           end if
+                           term = term + d2ai_kl * ( Kaiai * dai_m + Kaiaj * daj_m )
+                           term = term + d2aj_kl * ( Kaiaj * dai_m + Kajaj * daj_m )
+
+                           ! (xy)=(k,m), z=(l)
+                           if (dell/=0) then
+                              term = term + real(dell,wp) * d2ai_km * Kv_ai(beta)
+                              term = term + real(dell,wp) * d2aj_km * Kv_aj(beta)
+                           end if
+                           term = term + d2ai_km * ( Kaiai * dai_l + Kaiaj * daj_l )
+                           term = term + d2aj_km * ( Kaiaj * dai_l + Kajaj * daj_l )
+
+                           ! (xy)=(l,m), z=(k)
+                           if (delk/=0) then
+                              term = term + real(delk,wp) * d2ai_lm * Kv_ai(alpha)
+                              term = term + real(delk,wp) * d2aj_lm * Kv_aj(alpha)
+                           end if
+                           term = term + d2ai_lm * ( Kaiai * dai_k + Kaiaj * daj_k )
+                           term = term + d2aj_lm * ( Kaiaj * dai_k + Kajaj * daj_k )
+
+                           ! ---------- Term 3: K_p y_p,xyz ----------
+                           term = term + Kai * d3ai_klm + Kaj * d3aj_klm
+
+                           ! write to tensor
+                           d3Kdr3(alpha,k,beta,l,gamma,m,i,j) = d3Kdr3(alpha,k,beta,l,gamma,m,i,j) + term
+                           d3Kdr3(alpha,k,beta,l,gamma,m,j,i) = d3Kdr3(alpha,k,beta,l,gamma,m,j,i) + term
+                        end do
+                     end do
+                  end do
+
+               end do
+            end do
+         end do
+
+      end do
+   end do
+
+   ! =========================
+   ! Diagonal self term: K_ii = keps / a_i
+   ! =========================
+   do i = 1, nat
+      ai = brad(i)
+
+      f11 = -self%keps / (ai*ai)                ! f'(a)
+      f22 =  2.0_wp * self%keps / (ai*ai*ai)    ! f''(a)
+      f3_self = -6.0_wp * self%keps / (ai**4)  ! f'''(a)
+
+      do k = 1, nat
+         do l = 1, nat
+            do m = 1, nat
+               do alpha = 1,3
+                  dai_k = brdr(alpha,k,i)
+                  do beta = 1,3
+                     dai_l   = brdr(beta,l,i)
+                     d2ai_kl = brdr2(alpha,k,beta,l,i)
+                     do gamma = 1,3
+                        dai_m   = brdr(gamma,m,i)
+                        d2ai_km = brdr2(alpha,k,gamma,m,i)
+                        d2ai_lm = brdr2(beta,l,gamma,m,i)
+                        d3ai_klm = brdr3(alpha,k,beta,l,gamma,m,i)
+
+                        term = 0.0_wp
+                        term = term + f3_self * (dai_k*dai_l*dai_m)
+                        term = term + f22 * ( d2ai_kl*dai_m + d2ai_km*dai_l + d2ai_lm*dai_k )
+                        term = term + f11 * d3ai_klm
+
+                        d3Kdr3(alpha,k,beta,l,gamma,m,i,i) = d3Kdr3(alpha,k,beta,l,gamma,m,i,i) + term
+                     end do
+                  end do
+               end do
+            end do
+         end do
+      end do
+   end do
+
+end subroutine compute_still_d3kdr3_full
+
 
 
 end module tblite_solvation_kernel

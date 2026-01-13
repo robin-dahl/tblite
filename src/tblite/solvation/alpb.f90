@@ -261,7 +261,7 @@ subroutine update(self, mol, cache)
    if (.not.allocated(ptr%amat_dd)) then
       allocate(ptr%amat_dd(3, mol%nat, 3, mol%nat))
    end if
-
+   
    call self%gbobc%get_rad(mol, ptr%rad, ptr%draddr)
    ptr%jmat(:, :) = 0.0_wp
    call self%kernel%add_kernel_mat(mol%nat, mol%xyz, ptr%rad, ptr%jmat)
@@ -274,7 +274,8 @@ subroutine update(self, mol, cache)
    end if
 
    ! Compute multipole interaction matrix
-   call get_multipole_matrix(self, mol%nat, mol%xyz, self%keps, ptr%rad, ptr%draddr, ptr%amat_sd, ptr%amat_dd)
+   call get_multipole_matrix(self, mol%nat, mol%xyz, self%keps, ptr%rad, ptr%draddr, &
+      & ptr%amat_sd, ptr%amat_dd)
 end subroutine update
 
 
@@ -304,10 +305,10 @@ subroutine get_energy(self, mol, cache, wfn, energies)
 
    allocate(vs(mol%nat), vd(3, mol%nat), vq(6, mol%nat))
 
+   call symv(ptr%jmat, ptr%qscratch(:), ptr%vat, alpha=0.5_wp)
+
    call gemv(ptr%amat_sd, wfn%qat(:, 1), vd)
    call gemv(ptr%amat_dd, wfn%dpat(:, :, 1), vd, beta=1.0_wp, alpha=0.5_wp)
-
-   call symv(ptr%jmat, ptr%qscratch(:), ptr%vat, alpha=0.5_wp)
 
    ! Monopole-monopole
    energies(:) = energies + ptr%vat * ptr%qscratch(:)
@@ -621,6 +622,8 @@ subroutine get_multipole_matrix(self, nat, xyz, keps, brad, brdr, amat_sd, amat_
          amat_dd(:, i, :, j) = amat_dd(:, i, :, j) - spread(u,2,3) * spread(u,1,3) * s
       end do
    end do
+
+
 
 end subroutine get_multipole_matrix
 
