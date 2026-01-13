@@ -589,14 +589,381 @@ subroutine compute_p16_d3kdr3_full(self, nat, xyz, brad, brdr, brdr2, brdr3, d3K
    real(wp), intent(in) :: brad(:)                           ! (nat)
    real(wp), contiguous, intent(in) :: brdr(:, :, :)         ! (3,nat,nat)
    real(wp), contiguous, intent(in) :: brdr2(:, :, :, :, :)  ! (3,nat,3,nat,nat)
-   real(wp), contiguous, intent(in) :: brdr3(:, :, :, :, :, :, :)  ! (3, nat, 3,nat,3,nat,nat)
-   real(wp), contiguous, intent(out) :: d3Kdr3(:, :, :, :, :, :, :, :) ! (3, nat, 3,nat,3,nat,nat,nat)
+   real(wp), contiguous, intent(in) :: brdr3(:, :, :, :, :, :, :)  ! (3,nat,3,nat,3,nat,nat)
+   real(wp), contiguous, intent(out) :: d3Kdr3(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,nat,nat)
 
+   integer :: i, j, k, l, m
+   integer :: alpha, beta, gamma
+   integer :: delk, dell, delm
 
-   print *, "compute_p16_d3kdr3_full: Not yet implemented!"
+   real(wp), parameter :: tiny_r = 1.0e-14_wp
+   real(wp) :: c
 
+   real(wp) :: v(3), r2, r, invr, invr2
+   real(wp) :: ai, aj, u, t
+   real(wp) :: a1, a16, a17
+   real(wp) :: g, invg, invg2, invg3, invg4
+
+   ! g-derivatives wrt r (radii fixed)
+   real(wp) :: gr, grr, grrr
+
+   ! g-derivatives wrt u (r fixed)
+   real(wp) :: gu, guu, guuu
+
+   ! mixed g_r,u etc (only need gr_u, gr_uu, grr_u)
+   real(wp) :: gr_u, gr_uu, grr_u
+
+   ! u-derivatives wrt ai,aj
+   real(wp) :: u_ai, u_aj
+   real(wp) :: u_aiai, u_ajaj, u_aiaj
+   real(wp) :: u_aiaiai, u_ajajaj
+   real(wp) :: u_aiaiaj, u_aiajaj
+
+   ! convert g-derivatives to ai/aj derivatives
+   real(wp) :: g_ai, g_aj
+   real(wp) :: g_aiai, g_ajaj, g_aiaj
+   real(wp) :: g_aiaiai, g_ajajaj, g_aiaiaj, g_aiajaj
+
+   real(wp) :: gr_ai, gr_aj
+   real(wp) :: gr_aiai, gr_ajaj, gr_aiaj
+   real(wp) :: grr_ai, grr_aj
+
+   ! f(g)=keps/g derivatives
+   real(wp) :: f1, f2, f3
+
+   ! scalar K partials (r, ai, aj)
+   real(wp) :: Kr, Krr, Krrr
+   real(wp) :: Kai, Kaj
+   real(wp) :: Kaiai, Kajaj, Kaiaj
+   real(wp) :: Kr_ai, Kr_aj
+   real(wp) :: Krr_ai, Krr_aj
+   real(wp) :: Kr_aiai, Kr_ajaj, Kr_aiaj
+   real(wp) :: Kaiaiai, Kajajaj, Kaiaiaj, Kaiajaj
+
+   ! radial tensors (v-derivatives holding radii fixed)
+   real(wp) :: e(3)
+   real(wp) :: I3(3,3)
+   real(wp) :: A, B, Bp, Ap
+   real(wp) :: Kvv_ai(3,3), Kvv_aj(3,3)
+   real(wp) :: Kvvv(3,3,3)
+   real(wp) :: Kv_ai(3), Kv_aj(3)
+   real(wp) :: Kv_aiai(3), Kv_ajaj(3), Kv_aiaj(3)
+
+   ! coordinate-to-radius scalars
+   real(wp) :: dai_k, dai_l, dai_m
+   real(wp) :: daj_k, daj_l, daj_m
+   real(wp) :: d2ai_kl, d2ai_km, d2ai_lm
+   real(wp) :: d2aj_kl, d2aj_km, d2aj_lm
+   real(wp) :: d3ai_klm, d3aj_klm
+
+   real(wp) :: term
+   real(wp) :: self_f1, self_f2, self_f3
+
+   I3 = 0.0_wp
+   I3(1,1)=1.0_wp; I3(2,2)=1.0_wp; I3(3,3)=1.0_wp
+
+   d3Kdr3(:, :, :, :, :, :, :, :) = 0.0_wp
+
+   c = zetaP16o16   ! = zeta/16
+
+   ! =========================
+   ! Off-diagonal: i>j, mirror
+   ! =========================
+   do i = 1, nat
+      ai = brad(i)
+      do j = 1, i-1
+         aj = brad(j)
+
+         v(:) = xyz(:, i) - xyz(:, j)
+         r2   = dot_product(v, v)
+         r    = sqrt(r2)
+         if (r <= tiny_r) cycle
+
+         invr  = 1.0_wp / r
+         invr2 = invr * invr
+         e(:)  = v(:) * invr
+
+         u = sqrt(ai*aj)
+         t = u + c*r
+
+         a1  = u / t
+         a16 = a1*a1
+         a16 = a16*a16
+         a16 = a16*a16
+         a16 = a16*a16
+         a17 = a1 * a16
+
+         g    = r + u * a16         ! = r + u^17 / t^16
+         invg = 1.0_wp / g
+         invg2 = invg*invg
+         invg3 = invg2*invg
+         invg4 = invg2*invg2
+
+         ! --- g derivatives wrt r (radii fixed) ---
+         gr   = 1.0_wp - zetaP16 * a17
+         grr  = 17.0_wp * zetaP16 * c * a17 / t
+         grrr = -4896.0_wp * c*c*c * a17 / (t*t)   ! -4896 c^3 a17 / t^2
+
+         ! --- g derivatives wrt u (r fixed) ---
+         ! gu  = a16*(u + 17 c r)/t
+         gu   = a16 * (u + 17.0_wp*c*r) / t
+         ! guu = 272 c^2 r^2 u^15 / t^18 = 272 c^2 r^2 * a16 / (u t^2)
+         guu  = 272.0_wp * c*c * r2 * a16 / (u * t*t)
+         ! guuu = 816 c^2 r^2 u^14 (5 c r - u)/t^19
+         guuu = 816.0_wp * c*c * r2 * (u**14) * (5.0_wp*c*r - u) / (t**19)
+
+         ! --- mixed derivatives needed for Kr_ai etc (r fixed in ai-derivs) ---
+         ! gr_u  = -17 zeta c r * a16 / t^2
+         gr_u  = -17.0_wp * zetaP16 * c * r * a16 / (t*t)
+         ! gr_uu = -zeta * q_uu,  q_uu = 34 c r u^15 (8 c r - u)/t^19
+         gr_uu = -zetaP16 * (34.0_wp * c * r * (u**15) * (8.0_wp*c*r - u) / (t**19))
+         ! grr_u = 17 zeta c u^16 (17 c r - u)/t^19
+         grr_u = 17.0_wp * zetaP16 * c * (u**16) * (17.0_wp*c*r - u) / (t**19)
+
+         ! --- u derivatives wrt ai,aj ---
+         u_ai   = u / (2.0_wp*ai)
+         u_aj   = u / (2.0_wp*aj)
+         u_aiai = -u / (4.0_wp*ai*ai)
+         u_ajaj = -u / (4.0_wp*aj*aj)
+         u_aiaj =  u / (4.0_wp*ai*aj)
+
+         u_aiaiai =  3.0_wp*u / (8.0_wp*ai**3)
+         u_ajajaj =  3.0_wp*u / (8.0_wp*aj**3)
+         u_aiaiaj = -u / (8.0_wp*ai*ai*aj)
+         u_aiajaj = -u / (8.0_wp*ai*aj*aj)
+
+         ! --- g radii derivatives (r fixed) ---
+         g_ai   = gu * u_ai
+         g_aj   = gu * u_aj
+         g_aiai = guu*u_ai*u_ai + gu*u_aiai
+         g_ajaj = guu*u_aj*u_aj + gu*u_ajaj
+         g_aiaj = guu*u_ai*u_aj + gu*u_aiaj
+
+         g_aiaiai = guuu*u_ai**3 + 3.0_wp*guu*u_ai*u_aiai + gu*u_aiaiai
+         g_ajajaj = guuu*u_aj**3 + 3.0_wp*guu*u_aj*u_ajaj + gu*u_ajajaj
+         g_aiaiaj = guuu*u_ai*u_ai*u_aj + guu*u_aiai*u_aj + 2.0_wp*guu*u_ai*u_aiaj + gu*u_aiaiaj
+         g_aiajaj = guuu*u_aj*u_aj*u_ai + guu*u_ajaj*u_ai + 2.0_wp*guu*u_aj*u_aiaj + gu*u_aiajaj
+
+         ! --- gr radii derivatives (r fixed) ---
+         gr_ai   = gr_u * u_ai
+         gr_aj   = gr_u * u_aj
+         gr_aiai = gr_uu*u_ai*u_ai + gr_u*u_aiai
+         gr_ajaj = gr_uu*u_aj*u_aj + gr_u*u_ajaj
+         gr_aiaj = gr_uu*u_ai*u_aj + gr_u*u_aiaj
+
+         grr_ai = grr_u * u_ai
+         grr_aj = grr_u * u_aj
+
+         ! --- f(g)=keps/g derivatives ---
+         f1 = -self%keps * invg2
+         f2 =  2.0_wp * self%keps * invg3
+         f3 = -6.0_wp * self%keps * invg4
+
+         ! --- scalar K derivatives ---
+         Kr   = f1 * gr
+         Krr  = f2 * gr*gr + f1 * grr
+         Krrr = f3 * gr*gr*gr + 3.0_wp*f2*gr*grr + f1*grrr
+
+         Kai = f1 * g_ai
+         Kaj = f1 * g_aj
+
+         Kaiai = f2*g_ai*g_ai + f1*g_aiai
+         Kajaj = f2*g_aj*g_aj + f1*g_ajaj
+         Kaiaj = f2*g_ai*g_aj + f1*g_aiaj
+
+         ! mixed with r
+         Kr_ai = f2*g_ai*gr + f1*gr_ai
+         Kr_aj = f2*g_aj*gr + f1*gr_aj
+
+         Krr_ai = f3*g_ai*gr*gr + 2.0_wp*f2*gr*gr_ai + f2*g_ai*grr + f1*grr_ai
+         Krr_aj = f3*g_aj*gr*gr + 2.0_wp*f2*gr*gr_aj + f2*g_aj*grr + f1*grr_aj
+
+         Kr_aiai = f3*gr*(g_ai*g_ai) + f2*gr*g_aiai + 2.0_wp*f2*g_ai*gr_ai + f1*gr_aiai
+         Kr_ajaj = f3*gr*(g_aj*g_aj) + f2*gr*g_ajaj + 2.0_wp*f2*g_aj*gr_aj + f1*gr_ajaj
+         Kr_aiaj = f3*gr*(g_ai*g_aj) + f2*gr*g_aiaj + f2*(g_ai*gr_aj + g_aj*gr_ai) + f1*gr_aiaj
+
+         ! radii-only third derivatives
+         Kaiaiai = f3*g_ai**3 + 3.0_wp*f2*g_ai*g_aiai + f1*g_aiaiai
+         Kajajaj = f3*g_aj**3 + 3.0_wp*f2*g_aj*g_ajaj + f1*g_ajajaj
+         Kaiaiaj = f3*(g_ai*g_ai*g_aj) + f2*(g_aiai*g_aj + 2.0_wp*g_ai*g_aiaj) + f1*g_aiaiaj
+         Kaiajaj = f3*(g_aj*g_aj*g_ai) + f2*(g_ajaj*g_ai + 2.0_wp*g_aj*g_aiaj) + f1*g_aiajaj
+
+         ! --- build radial tensors in v-space (radii fixed) ---
+         ! Hessian form uses A,B:
+         A  = Krr - Kr*invr
+         B  = Kr*invr
+         Bp = (Krr*r - Kr) * invr2            ! d/dr (Kr/r)
+         Ap = Krrr - Bp                        ! dA/dr = Krrr - d(Kr/r)/dr
+
+         ! Kvv_ai / Kvv_aj (two v-derivatives + one radius)
+         Kvv_ai(:,:) = 0.0_wp
+         Kvv_aj(:,:) = 0.0_wp
+         do alpha = 1,3
+            do beta = 1,3
+               Kvv_ai(alpha,beta) = (Krr_ai - Kr_ai*invr) * e(alpha)*e(beta) + (Kr_ai*invr) * I3(alpha,beta)
+               Kvv_aj(alpha,beta) = (Krr_aj - Kr_aj*invr) * e(alpha)*e(beta) + (Kr_aj*invr) * I3(alpha,beta)
+            end do
+         end do
+
+         ! Kv_ai etc (one v-derivative + radii derivatives)
+         Kv_ai(:)   = Kr_ai   * e(:)
+         Kv_aj(:)   = Kr_aj   * e(:)
+         Kv_aiai(:) = Kr_aiai * e(:)
+         Kv_ajaj(:) = Kr_ajaj * e(:)
+         Kv_aiaj(:) = Kr_aiaj * e(:)
+
+         ! third v-derivative tensor Kvvv
+         Kvvv(:,:,:) = 0.0_wp
+         do alpha = 1,3
+            do beta = 1,3
+               do gamma = 1,3
+                  Kvvv(alpha,beta,gamma) = Ap * e(alpha)*e(beta)*e(gamma) &
+                     + (A*invr) * ( I3(alpha,gamma)*e(beta) + I3(beta,gamma)*e(alpha) - 2.0_wp*e(alpha)*e(beta)*e(gamma) ) &
+                     + Bp * I3(alpha,beta) * e(gamma)
+               end do
+            end do
+         end do
+
+         ! ==========================================================
+         ! Assemble full coordinate third derivative for all k,l,m
+         ! ==========================================================
+         do k = 1, nat
+            delk = 0; if (k==i) delk=delk+1; if (k==j) delk=delk-1
+            do l = 1, nat
+               dell = 0; if (l==i) dell=dell+1; if (l==j) dell=dell-1
+               do m = 1, nat
+                  delm = 0; if (m==i) delm=delm+1; if (m==j) delm=delm-1
+
+                  do alpha = 1,3
+                     dai_k = brdr(alpha,k,i); daj_k = brdr(alpha,k,j)
+                     do beta = 1,3
+                        dai_l = brdr(beta,l,i); daj_l = brdr(beta,l,j)
+                        do gamma = 1,3
+                           dai_m = brdr(gamma,m,i); daj_m = brdr(gamma,m,j)
+
+                           d2ai_kl = brdr2(alpha,k,beta,l,i)
+                           d2ai_km = brdr2(alpha,k,gamma,m,i)
+                           d2ai_lm = brdr2(beta,l,gamma,m,i)
+
+                           d2aj_kl = brdr2(alpha,k,beta,l,j)
+                           d2aj_km = brdr2(alpha,k,gamma,m,j)
+                           d2aj_lm = brdr2(beta,l,gamma,m,j)
+
+                           d3ai_klm = brdr3(alpha,k,beta,l,gamma,m,i)
+                           d3aj_klm = brdr3(alpha,k,beta,l,gamma,m,j)
+
+                           term = 0.0_wp
+
+                           ! (1) vvv term
+                           if (delk/=0 .and. dell/=0 .and. delm/=0) then
+                              term = term + real(delk*dell*delm,wp) * Kvvv(alpha,beta,gamma)
+                           end if
+
+                           ! (2) vv–a terms (three placements)
+                           if (delk/=0 .and. dell/=0) then
+                              term = term + real(delk*dell,wp) * ( Kvv_ai(alpha,beta)*dai_m + Kvv_aj(alpha,beta)*daj_m )
+                           end if
+                           if (delk/=0 .and. delm/=0) then
+                              term = term + real(delk*delm,wp) * ( Kvv_ai(alpha,gamma)*dai_l + Kvv_aj(alpha,gamma)*daj_l )
+                           end if
+                           if (dell/=0 .and. delm/=0) then
+                              term = term + real(dell*delm,wp) * ( Kvv_ai(beta,gamma)*dai_k + Kvv_aj(beta,gamma)*daj_k )
+                           end if
+
+                           ! (3) v–aa / v–bb / v–ab terms (three placements)
+                           if (delk/=0) then
+                              term = term + real(delk,wp) * ( Kv_aiai(alpha)*(dai_l*dai_m) + Kv_ajaj(alpha)*(daj_l*daj_m) &
+                                 + Kv_aiaj(alpha)*(dai_l*daj_m + daj_l*dai_m) )
+                           end if
+                           if (dell/=0) then
+                              term = term + real(dell,wp) * ( Kv_aiai(beta)*(dai_k*dai_m) + Kv_ajaj(beta)*(daj_k*daj_m) &
+                                 + Kv_aiaj(beta)*(dai_k*daj_m + daj_k*dai_m) )
+                           end if
+                           if (delm/=0) then
+                              term = term + real(delm,wp) * ( Kv_aiai(gamma)*(dai_k*dai_l) + Kv_ajaj(gamma)*(daj_k*daj_l) &
+                                 + Kv_aiaj(gamma)*(dai_k*daj_l + daj_k*dai_l) )
+                           end if
+
+                           ! (4) radii-only cubic terms
+                           term = term + Kaiaiai*(dai_k*dai_l*dai_m) + Kajajaj*(daj_k*daj_l*daj_m)
+                           term = term + Kaiaiaj*(dai_k*dai_l*daj_m + dai_k*daj_l*dai_m + daj_k*dai_l*dai_m)
+                           term = term + Kaiajaj*(daj_k*daj_l*dai_m + daj_k*dai_l*daj_m + dai_k*daj_l*daj_m)
+
+                           ! (5) K_pq terms with brdr2 (three pairings)
+                           ! (k,l) paired, m as remaining
+                           if (delm/=0) then
+                              term = term + real(delm,wp) * ( d2ai_kl * Kv_ai(gamma) + d2aj_kl * Kv_aj(gamma) )
+                           end if
+                           term = term + d2ai_kl * (Kaiai*dai_m + Kaiaj*daj_m) + d2aj_kl * (Kaiaj*dai_m + Kajaj*daj_m)
+
+                           ! (k,m) paired, l remaining
+                           if (dell/=0) then
+                              term = term + real(dell,wp) * ( d2ai_km * Kv_ai(beta) + d2aj_km * Kv_aj(beta) )
+                           end if
+                           term = term + d2ai_km * (Kaiai*dai_l + Kaiaj*daj_l) + d2aj_km * (Kaiaj*dai_l + Kajaj*daj_l)
+
+                           ! (l,m) paired, k remaining
+                           if (delk/=0) then
+                              term = term + real(delk,wp) * ( d2ai_lm * Kv_ai(alpha) + d2aj_lm * Kv_aj(alpha) )
+                           end if
+                           term = term + d2ai_lm * (Kaiai*dai_k + Kaiaj*daj_k) + d2aj_lm * (Kaiaj*dai_k + Kajaj*daj_k)
+
+                           ! (6) K_p * brdr3 term
+                           term = term + Kai*d3ai_klm + Kaj*d3aj_klm
+
+                           d3Kdr3(alpha,k,beta,l,gamma,m,i,j) = d3Kdr3(alpha,k,beta,l,gamma,m,i,j) + term
+                           d3Kdr3(alpha,k,beta,l,gamma,m,j,i) = d3Kdr3(alpha,k,beta,l,gamma,m,j,i) + term
+                        end do
+                     end do
+                  end do
+
+               end do
+            end do
+         end do
+
+      end do
+   end do
+
+   ! =========================
+   ! Diagonal self term: K_ii = keps / a_i
+   ! =========================
+   do i = 1, nat
+      ai = brad(i)
+
+      self_f1 = -self%keps / (ai*ai)
+      self_f2 =  2.0_wp * self%keps / (ai*ai*ai)
+      self_f3 = -6.0_wp * self%keps / (ai**4)
+
+      do k = 1, nat
+         do l = 1, nat
+            do m = 1, nat
+               do alpha = 1,3
+                  dai_k = brdr(alpha,k,i)
+                  do beta = 1,3
+                     dai_l   = brdr(beta,l,i)
+                     d2ai_kl = brdr2(alpha,k,beta,l,i)
+                     do gamma = 1,3
+                        dai_m   = brdr(gamma,m,i)
+                        d2ai_km = brdr2(alpha,k,gamma,m,i)
+                        d2ai_lm = brdr2(beta,l,gamma,m,i)
+                        d3ai_klm = brdr3(alpha,k,beta,l,gamma,m,i)
+
+                        term = 0.0_wp
+                        term = term + self_f3 * (dai_k*dai_l*dai_m)
+                        term = term + self_f2 * ( d2ai_kl*dai_m + d2ai_km*dai_l + d2ai_lm*dai_k )
+                        term = term + self_f1 * d3ai_klm
+
+                        d3Kdr3(alpha,k,beta,l,gamma,m,i,i) = d3Kdr3(alpha,k,beta,l,gamma,m,i,i) + term
+                     end do
+                  end do
+               end do
+            end do
+         end do
+      end do
+   end do
 
 end subroutine compute_p16_d3kdr3_full
+
 
 
 !==============================================================================

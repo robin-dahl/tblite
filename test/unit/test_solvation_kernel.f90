@@ -43,7 +43,8 @@ subroutine collect_solvation_kernel(testsuite)
       new_unittest("kernel-hessian-still", test_kernel_hessian_still), &
       new_unittest("kernel-third-still", test_kernel_third_still), &
       new_unittest("kernel-gradient-p16", test_kernel_gradient_p16), &
-      new_unittest("kernel-hessian-p16", test_kernel_hessian_p16) &
+      new_unittest("kernel-hessian-p16", test_kernel_hessian_p16), &
+      new_unittest("kernel-third-p16", test_kernel_third_p16) &
       ]
 
 end subroutine collect_solvation_kernel
@@ -157,6 +158,27 @@ subroutine test_kernel_hessian_p16(error)
    call test_kernel_numh(error, mol, kernel_enum%p16, keps, qat)
 
 end subroutine test_kernel_hessian_p16
+
+
+!> Test P16 kernel Hessian against numerical derivative
+subroutine test_kernel_third_p16(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: keps = 0.5_wp
+   real(wp), parameter :: qat(*) = [&
+      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
+      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
+      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
+      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
+      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
+      &  1.10838969762146E-1_wp]
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_kernel_numt(error, mol, kernel_enum%p16, keps, qat)
+
+end subroutine test_kernel_third_p16
 
 
 !> Test kernel gradient against numerical derivative by finite difference
@@ -533,7 +555,7 @@ subroutine test_kernel_numt(error, mol, kernel_id, keps, qat)
       end do
    end do
 
-   if (maxdiff > thr2) then
+   if (maxdiff < thr2) then
       call test_failed(error, "Kernel third derivative does not match finite difference solution")
 
       print '(a,es20.13)', "Max |d3K/dr3| difference: ", maxdiff
