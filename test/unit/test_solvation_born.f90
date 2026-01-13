@@ -48,8 +48,17 @@ subroutine collect_solvation_born(testsuite)
 
    testsuite = [ &
       new_unittest("born-1", test_mb01), &
+      new_unittest("born-1-hess", test_mb01_hess), &
+      new_unittest("born-1-third", test_mb01_third), &
+      new_unittest("born-1-fourth", test_mb01_fourth), &
       new_unittest("born-2", test_mb02), &
+      new_unittest("born-2-hess", test_mb02_hess), &
+      new_unittest("born-2-third", test_mb02_third), &
+      new_unittest("born-2-fourth", test_mb02_fourth), &
       new_unittest("born-3", test_mb03), &
+      new_unittest("born-3-hess", test_mb03_hess), &
+      new_unittest("born-3-third", test_mb03_third), &
+      new_unittest("born-3-fourth", test_mb03_fourth), &
       new_unittest("energy-p16", test_e_p16), &
       new_unittest("energy-alpb-gfn1", test_e_alpb_gfn1_all_solvents), &
       new_unittest("energy-alpb-gfn2", test_e_alpb_gfn2_all_solvents), &
@@ -233,6 +242,86 @@ subroutine test_third(error, gbobc, mol)
 end subroutine test_third
 
 
+subroutine test_fourth(error, gbobc, mol)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Born radii integrator
+   type(born_integrator), intent(inout) :: gbobc
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+
+   integer :: iat, ic
+   real(wp), allocatable :: rad(:)
+   real(wp), allocatable :: draddr(:, :, :)
+   real(wp), allocatable :: drad2r(:, :, :, :, :)
+   real(wp), allocatable :: drad3r(:, :, :, :, :, :, :)
+   real(wp), allocatable :: drad4r(:, :, :, :, :, :, :, :, :)
+
+   ! 3rd-derivative snapshots at displaced geometries
+   real(wp), allocatable :: tsr(:, :, :, :, :, :, :)    ! at +h
+   real(wp), allocatable :: tsrr(:, :, :, :, :, :, :)   ! at +2h
+   real(wp), allocatable :: tsl(:, :, :, :, :, :, :)    ! at -h
+   real(wp), allocatable :: tsll(:, :, :, :, :, :, :)   ! at -2h
+
+   real(wp), allocatable :: num4(:, :, :, :, :, :, :, :, :)
+   real(wp), parameter   :: step = 1.0e-4_wp
+
+   allocate(rad(mol%nat))
+   allocate(draddr(3, mol%nat, mol%nat))
+   allocate(drad2r(3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(drad3r(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(drad4r(3, mol%nat, 3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
+
+   allocate(tsr(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(tsrr(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(tsl(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(tsll(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
+
+   allocate(num4(3, mol%nat, 3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
+
+   ! Analytic radii + grad + Hess + third + fourth
+   call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=drad3r, dradd4r=drad4r)
+
+   ! Numerical 4th derivative by 4-point central difference of the 3rd derivative
+   !
+   ! We differentiate the 3rd derivative wrt each coordinate (ic,iat):
+   !   d4(ic,iat, jc,jat, kc,kat, lc,lat, owner)
+   !     = d/dx_{ic,iat} [ d3(owner)/(d x_{jc,jat} d x_{kc,kat} d x_{lc,lat}) ]
+   !
+   do iat = 1, mol%nat
+      do ic = 1, 3
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
+         call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=tsr)    ! d3 at +h
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
+         call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=tsrr)   ! d3 at +2h
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) - 3.0_wp*step
+         call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=tsl)    ! d3 at -h
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) - step
+         call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=tsll)   ! d3 at -2h
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) + 2.0_wp*step                   ! restore
+
+         ! Fill entire slab for this (ic,iat):
+         num4(ic, iat, :, :, :, :, :, :, :) = ( -tsrr(:, :, :, :, :, :, :) + 8.0_wp*tsr(:, :, :, :, :, :, :) &
+            &                                   - 8.0_wp*tsl(:, :, :, :, :, :, :) + tsll(:, :, :, :, :, :, :) ) &
+            &                                   / (12.0_wp * step)
+      end do
+   end do
+
+   ! Compare numeric vs analytic. Use your existing threshold style (thr4) or define one.
+   ! Example: thr4 = 1.0e-6_wp (you pick what is sensible for your system/step size)
+   if (any(abs(num4 - drad4r) > thr2)) then
+      print *, "Max diff (4th derivative): ", maxval(abs(num4 - drad4r))
+      call test_failed(error, "Born radii 4th derivative does not match finite difference solution")
+   end if
+end subroutine test_fourth
+
+
+
 
 
 subroutine test_mb01(error)
@@ -264,11 +353,108 @@ subroutine test_mb01(error)
       return
    end if
 
-   ! call test_numg(error, gbobc, mol)
-   ! call test_hess(error, gbobc, mol)
-   call test_third(error, gbobc, mol)
+   call test_numg(error, gbobc, mol)
 
 end subroutine test_mb01
+
+subroutine test_mb01_hess(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+   real(wp), parameter :: ref(16) = [&
+      & 4.07331798531438E+0_wp, 2.56451650429167E+0_wp, 2.97676954448882E+0_wp, &
+      & 2.88833112759592E+0_wp, 2.59127476011008E+0_wp, 2.63750279425510E+0_wp, &
+      & 3.56149571036025E+0_wp, 2.89090958281373E+0_wp, 4.53815592283277E+0_wp, &
+      & 2.46342847720303E+0_wp, 2.72707461251522E+0_wp, 3.52933932564532E+0_wp, &
+      & 3.66934919146868E+0_wp, 3.66697827876019E+0_wp, 3.37809284756764E+0_wp, &
+      & 4.57932013403544E+0_wp]
+
+   call get_structure(mol, "MB16-43", "01")
+
+   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, rad, draddr)
+
+   if (any(abs(rad - ref) > thr2)) then
+      call test_failed(error, "Born radii area values do not match")
+      print '(es20.14e1)', rad
+      return
+   end if
+
+   call test_hess(error, gbobc, mol)
+
+end subroutine test_mb01_hess
+
+subroutine test_mb01_third(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+   real(wp), parameter :: ref(16) = [&
+      & 4.07331798531438E+0_wp, 2.56451650429167E+0_wp, 2.97676954448882E+0_wp, &
+      & 2.88833112759592E+0_wp, 2.59127476011008E+0_wp, 2.63750279425510E+0_wp, &
+      & 3.56149571036025E+0_wp, 2.89090958281373E+0_wp, 4.53815592283277E+0_wp, &
+      & 2.46342847720303E+0_wp, 2.72707461251522E+0_wp, 3.52933932564532E+0_wp, &
+      & 3.66934919146868E+0_wp, 3.66697827876019E+0_wp, 3.37809284756764E+0_wp, &
+      & 4.57932013403544E+0_wp]
+
+   call get_structure(mol, "MB16-43", "01")
+
+   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, rad, draddr)
+
+   if (any(abs(rad - ref) > thr2)) then
+      call test_failed(error, "Born radii area values do not match")
+      print '(es20.14e1)', rad
+      return
+   end if
+
+   call test_third(error, gbobc, mol)
+
+end subroutine test_mb01_third
+
+subroutine test_mb01_fourth(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+   real(wp), parameter :: ref(16) = [&
+      & 4.07331798531438E+0_wp, 2.56451650429167E+0_wp, 2.97676954448882E+0_wp, &
+      & 2.88833112759592E+0_wp, 2.59127476011008E+0_wp, 2.63750279425510E+0_wp, &
+      & 3.56149571036025E+0_wp, 2.89090958281373E+0_wp, 4.53815592283277E+0_wp, &
+      & 2.46342847720303E+0_wp, 2.72707461251522E+0_wp, 3.52933932564532E+0_wp, &
+      & 3.66934919146868E+0_wp, 3.66697827876019E+0_wp, 3.37809284756764E+0_wp, &
+      & 4.57932013403544E+0_wp]
+
+   call get_structure(mol, "MB16-43", "01")
+
+   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, rad, draddr)
+
+   if (any(abs(rad - ref) > thr2)) then
+      call test_failed(error, "Born radii area values do not match")
+      print '(es20.14e1)', rad
+      return
+   end if
+
+   call test_fourth(error, gbobc, mol)
+
+end subroutine test_mb01_fourth
 
 
 subroutine test_mb02(error)
@@ -301,9 +487,107 @@ subroutine test_mb02(error)
    end if
 
    call test_numg(error, gbobc, mol)
-   call test_hess(error, gbobc, mol)
 
 end subroutine test_mb02
+
+subroutine test_mb02_hess(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+   real(wp), parameter :: ref(16) = [&
+      & 3.43501192886252E+0_wp, 5.02404916999371E+0_wp, 4.72253865039692E+0_wp, &
+      & 3.52096661104217E+0_wp, 4.76023330956437E+0_wp, 3.46119195863261E+0_wp, &
+      & 3.17361370475619E+0_wp, 2.90775065608382E+0_wp, 4.94595287355805E+0_wp, &
+      & 3.32592657749444E+0_wp, 4.54348353409109E+0_wp, 4.30924297002105E+0_wp, &
+      & 3.47420343563851E+0_wp, 2.82302349370343E+0_wp, 6.67552064739394E+0_wp, &
+      & 4.23898159491675E+0_wp]
+
+   call get_structure(mol, "MB16-43", "02")
+
+   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+   rvdw = get_vdw_rad_bondi(mol%num)
+
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, rad, draddr)
+
+   if (any(abs(rad - ref) > thr2)) then
+      call test_failed(error, "Born radii area values do not match")
+      print '(es20.14e1)', rad
+      return
+   end if
+
+   call test_hess(error, gbobc, mol)
+
+end subroutine test_mb02_hess
+
+subroutine test_mb02_third(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+   real(wp), parameter :: ref(16) = [&
+      & 3.43501192886252E+0_wp, 5.02404916999371E+0_wp, 4.72253865039692E+0_wp, &
+      & 3.52096661104217E+0_wp, 4.76023330956437E+0_wp, 3.46119195863261E+0_wp, &
+      & 3.17361370475619E+0_wp, 2.90775065608382E+0_wp, 4.94595287355805E+0_wp, &
+      & 3.32592657749444E+0_wp, 4.54348353409109E+0_wp, 4.30924297002105E+0_wp, &
+      & 3.47420343563851E+0_wp, 2.82302349370343E+0_wp, 6.67552064739394E+0_wp, &
+      & 4.23898159491675E+0_wp]
+
+   call get_structure(mol, "MB16-43", "02")
+
+   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+   rvdw = get_vdw_rad_bondi(mol%num)
+
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, rad, draddr)
+
+   if (any(abs(rad - ref) > thr2)) then
+      call test_failed(error, "Born radii area values do not match")
+      print '(es20.14e1)', rad
+      return
+   end if
+
+   call test_third(error, gbobc, mol)
+
+end subroutine test_mb02_third
+
+subroutine test_mb02_fourth(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+   real(wp), parameter :: ref(16) = [&
+      & 3.43501192886252E+0_wp, 5.02404916999371E+0_wp, 4.72253865039692E+0_wp, &
+      & 3.52096661104217E+0_wp, 4.76023330956437E+0_wp, 3.46119195863261E+0_wp, &
+      & 3.17361370475619E+0_wp, 2.90775065608382E+0_wp, 4.94595287355805E+0_wp, &
+      & 3.32592657749444E+0_wp, 4.54348353409109E+0_wp, 4.30924297002105E+0_wp, &
+      & 3.47420343563851E+0_wp, 2.82302349370343E+0_wp, 6.67552064739394E+0_wp, &
+      & 4.23898159491675E+0_wp]
+
+   call get_structure(mol, "MB16-43", "02")
+
+   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+   rvdw = get_vdw_rad_bondi(mol%num)
+
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, rad, draddr)
+
+   if (any(abs(rad - ref) > thr2)) then
+      call test_failed(error, "Born radii area values do not match")
+      print '(es20.14e1)', rad
+      return
+   end if
+
+   call test_fourth(error, gbobc, mol)
+
+end subroutine test_mb02_fourth
 
 
 subroutine test_mb03(error)
@@ -336,9 +620,107 @@ subroutine test_mb03(error)
    end if
 
    call test_numg(error, gbobc, mol)
-   call test_hess(error, gbobc, mol)
 
 end subroutine test_mb03
+
+subroutine test_mb03_hess(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+   real(wp), parameter :: ref(16) = [&
+      & 4.94764986698701E+0_wp, 3.95122747438791E+0_wp, 4.57075556245289E+0_wp, &
+      & 5.46368225070994E+0_wp, 8.24269261139398E+0_wp, 5.68405471762112E+0_wp, &
+      & 5.51002325309604E+0_wp, 4.75597020148093E+0_wp, 4.21190195089894E+0_wp, &
+      & 4.32836770082885E+0_wp, 4.12684869499911E+0_wp, 5.15171226623248E+0_wp, &
+      & 4.83223856996055E+0_wp, 3.02638025720185E+0_wp, 4.05683426506167E+0_wp, &
+      & 4.63569783992096E+0_wp]
+
+   call get_structure(mol, "MB16-43", "03")
+
+   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+   rvdw = get_vdw_rad_cosmo(mol%num)
+
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, rad, draddr)
+
+   if (any(abs(rad - ref) > thr2)) then
+      call test_failed(error, "Born radii area values do not match")
+      print '(es20.14e1)', rad
+      return
+   end if
+
+   call test_hess(error, gbobc, mol)
+
+end subroutine test_mb03_hess
+
+subroutine test_mb03_third(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+   real(wp), parameter :: ref(16) = [&
+      & 4.94764986698701E+0_wp, 3.95122747438791E+0_wp, 4.57075556245289E+0_wp, &
+      & 5.46368225070994E+0_wp, 8.24269261139398E+0_wp, 5.68405471762112E+0_wp, &
+      & 5.51002325309604E+0_wp, 4.75597020148093E+0_wp, 4.21190195089894E+0_wp, &
+      & 4.32836770082885E+0_wp, 4.12684869499911E+0_wp, 5.15171226623248E+0_wp, &
+      & 4.83223856996055E+0_wp, 3.02638025720185E+0_wp, 4.05683426506167E+0_wp, &
+      & 4.63569783992096E+0_wp]
+
+   call get_structure(mol, "MB16-43", "03")
+
+   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+   rvdw = get_vdw_rad_cosmo(mol%num)
+
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, rad, draddr)
+
+   if (any(abs(rad - ref) > thr2)) then
+      call test_failed(error, "Born radii area values do not match")
+      print '(es20.14e1)', rad
+      return
+   end if
+
+   call test_third(error, gbobc, mol)
+
+end subroutine test_mb03_third
+
+subroutine test_mb03_fourth(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+   real(wp), parameter :: ref(16) = [&
+      & 4.94764986698701E+0_wp, 3.95122747438791E+0_wp, 4.57075556245289E+0_wp, &
+      & 5.46368225070994E+0_wp, 8.24269261139398E+0_wp, 5.68405471762112E+0_wp, &
+      & 5.51002325309604E+0_wp, 4.75597020148093E+0_wp, 4.21190195089894E+0_wp, &
+      & 4.32836770082885E+0_wp, 4.12684869499911E+0_wp, 5.15171226623248E+0_wp, &
+      & 4.83223856996055E+0_wp, 3.02638025720185E+0_wp, 4.05683426506167E+0_wp, &
+      & 4.63569783992096E+0_wp]
+
+   call get_structure(mol, "MB16-43", "03")
+
+   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+   rvdw = get_vdw_rad_cosmo(mol%num)
+
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, rad, draddr)
+
+   if (any(abs(rad - ref) > thr2)) then
+      call test_failed(error, "Born radii area values do not match")
+      print '(es20.14e1)', rad
+      return
+   end if
+
+   call test_fourth(error, gbobc, mol)
+
+end subroutine test_mb03_fourth
 
 
 subroutine test_e(error, mol, input, qat, ref, method)
