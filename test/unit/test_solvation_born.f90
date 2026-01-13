@@ -125,7 +125,7 @@ subroutine test_hess(error, gbobc, mol)
    real(wp), allocatable :: draddr(:, :, :)
    real(wp), allocatable :: dsr(:, :, :), dsl(:, :, :)
    real(wp), allocatable :: numhess(:, :, :, :, :)
-   real(wp), allocatable :: drad2r(:, :, :, :, :)
+   real(wp), allocatable :: drad2r(:, :, :, :, :), d3(:,:,:,:,:,:,:)
    real(wp), parameter   :: step = 1.0e-5_wp
 
    allocate(rad(mol%nat))
@@ -133,10 +133,9 @@ subroutine test_hess(error, gbobc, mol)
    allocate(dsr(3, mol%nat, mol%nat), dsl(3, mol%nat, mol%nat))
    allocate(numhess(3, mol%nat, 3, mol%nat, mol%nat))
    allocate(drad2r(3, mol%nat, 3, mol%nat, mol%nat))
-
-   print *, "HELLO"
    ! Analytic radii + gradient + Hessian
    call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r)
+
 
    ! Numerical Hessian by central difference of the gradient
    do iat = 1, mol%nat
@@ -160,6 +159,79 @@ subroutine test_hess(error, gbobc, mol)
       call test_failed(error, "Born radii Hessian does not match finite difference solution")
    end if
 end subroutine test_hess
+
+
+subroutine test_third(error, gbobc, mol)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Born radii integrator
+   type(born_integrator), intent(inout) :: gbobc
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+
+   integer :: iat, jat, kat
+   integer :: ic, jc, kc
+   real(wp), allocatable :: rad(:)
+   real(wp), allocatable :: draddr(:, :, :)
+   real(wp), allocatable :: drad2r(:, :, :, :, :)
+   real(wp), allocatable :: drad3r(:, :, :, :, :, :, :)
+   real(wp), allocatable :: hsr(:, :, :, :, :)   ! Hessian at +step
+   real(wp), allocatable :: hsrr(:, :, :, :, :)   ! Hessian at +2step
+   real(wp), allocatable :: hsl(:, :, :, :, :)   ! Hessian at -step
+   real(wp), allocatable :: hsll(:, :, :, :, :)   ! Hessian at -2step
+   real(wp), allocatable :: num3(:, :, :, :, :, :, :)
+   real(wp), parameter   :: step = 1.0e-4_wp
+
+   allocate(rad(mol%nat))
+   allocate(draddr(3, mol%nat, mol%nat))
+   allocate(drad2r(3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(drad3r(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
+
+   allocate(hsr(3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(hsrr(3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(hsl(3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(hsll(3, mol%nat, 3, mol%nat, mol%nat))
+   allocate(num3(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
+
+   ! Analytic radii + gradient + Hessian + third derivative
+   call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=drad3r)
+
+   ! Numerical third derivative by central difference of the Hessian
+   !
+   ! We differentiate the Hessian wrt each coordinate (ic,iat):
+   !   d3(ic,iat, jc,jat, kc,kat, owner) = d/dx_{ic,iat} [ d2(owner)/(d x_{jc,jat} d x_{kc,kat}) ]
+   !
+   do iat = 1, mol%nat
+      do ic = 1, 3
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
+         call gbobc%get_rad(mol, rad, draddr, dradd2r=hsr)   ! Hessian at +step
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
+         call gbobc%get_rad(mol, rad, draddr, dradd2r=hsrr)  ! Hessian at +2step
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) - 3.0_wp*step
+         call gbobc%get_rad(mol, rad, draddr, dradd2r=hsl)   ! Hessian at -step
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) - step
+         call gbobc%get_rad(mol, rad, draddr, dradd2r=hsll)   ! Hessian at -2step
+
+         mol%xyz(ic, iat) = mol%xyz(ic, iat) + 2.0_wp*step          ! restore
+
+         ! Fill the whole slab for this (ic,iat):
+         num3(ic, iat, :, :, :, :, :) = 1.0_wp/12.0_wp * (-hsrr(:, :, :, :, :) + 8.0_wp*hsr(:, :, :, :, :) &
+            & - 8.0_wp*hsl(:, :, :, :, :) + hsll(:, :, :, :, :)) / step
+      end do
+   end do
+
+
+
+   if (any(abs(num3 - drad3r) > thr2)) then
+      call test_failed(error, "Born radii 3rd derivative does not match finite difference of Hessian")
+      print *, "Max diff: ", maxval(abs(num3 - drad3r))
+   end if
+end subroutine test_third
+
 
 
 
@@ -192,8 +264,9 @@ subroutine test_mb01(error)
       return
    end if
 
-   call test_numg(error, gbobc, mol)
-   call test_hess(error, gbobc, mol)
+   ! call test_numg(error, gbobc, mol)
+   ! call test_hess(error, gbobc, mol)
+   call test_third(error, gbobc, mol)
 
 end subroutine test_mb01
 

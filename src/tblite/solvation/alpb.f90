@@ -122,6 +122,9 @@ module tblite_solvation_alpb
       real(wp), allocatable :: dcm5dr(:,:,:)
       !> Multipole interaction matrix for charges and dipoles
       real(wp), allocatable :: amat_sd(:, :, :)
+      !> Multipole interaction matrix for dipoles and dipoles
+      real(wp), allocatable :: amat_dd(:, :, :, :)
+      
    end type alpb_cache
 
 
@@ -255,6 +258,9 @@ subroutine update(self, mol, cache)
    if (.not.allocated(ptr%amat_sd)) then
       allocate(ptr%amat_sd(3, mol%nat, mol%nat))
    end if
+   if (.not.allocated(ptr%amat_dd)) then
+      allocate(ptr%amat_dd(3, mol%nat, 3, mol%nat))
+   end if
 
    call self%gbobc%get_rad(mol, ptr%rad, ptr%draddr)
    ptr%jmat(:, :) = 0.0_wp
@@ -268,7 +274,7 @@ subroutine update(self, mol, cache)
    end if
 
    ! Compute multipole interaction matrix
-   call get_multipole_matrix(self, mol%nat, mol%xyz, self%keps, ptr%rad, ptr%draddr, ptr%amat_sd)
+   call get_multipole_matrix(self, mol%nat, mol%xyz, self%keps, ptr%rad, ptr%draddr, ptr%amat_sd, ptr%amat_dd)
 end subroutine update
 
 
@@ -299,6 +305,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    allocate(vs(mol%nat), vd(3, mol%nat), vq(6, mol%nat))
 
    call gemv(ptr%amat_sd, wfn%qat(:, 1), vd)
+   call gemv(ptr%amat_dd, wfn%dpat(:, :, 1), vd, beta=1.0_wp, alpha=0.5_wp)
 
    call symv(ptr%jmat, ptr%qscratch(:), ptr%vat, alpha=0.5_wp)
 
@@ -338,6 +345,8 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    call gemv(ptr%amat_sd, wfn%qat(:, 1), pot%vdp(:, :, 1), beta=1.0_wp)
    call gemv(ptr%amat_sd, wfn%dpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
+
+   call gemv(ptr%amat_dd, wfn%dpat(:, :, 1), pot%vdp(:, :, 1), beta=1.0_wp)
 end subroutine get_potential
 
 
@@ -534,7 +543,7 @@ end subroutine get_adet_deriv
 
 
 !> Compute multipole interaction matrix from kernel gradient
-subroutine get_multipole_matrix(self, nat, xyz, keps, brad, brdr, amat_sd)
+subroutine get_multipole_matrix(self, nat, xyz, keps, brad, brdr, amat_sd, amat_dd)
    !> Instance of the solvation model
    class(alpb_solvation), intent(in) :: self
    !> Number of atoms
@@ -550,13 +559,18 @@ subroutine get_multipole_matrix(self, nat, xyz, keps, brad, brdr, amat_sd)
    !> Multipole interaction matrix for charges and dipoles: (3,nat,nat)
    !> Convention matches get_multipole_matrix_0d: amat_sd(:,j,i) = -∇_i K_ij
    real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)
+   !> Interation matrix for dipoles and dipoles
+   real(wp), intent(inout) :: amat_dd(:, :, :, :)
 
    integer :: i, j
-   real(wp), allocatable :: dKdr(:,:,:,:), R(:), brdr2(:,:,:,:,:)
-   real(wp) :: rij
+   real(wp), allocatable :: dKdr(:,:,:,:), R(:)
+   real(wp), allocatable :: d2Kdr2(:, :, :, :, :, :), brdr2(:,:,:,:,:)
+   real(wp) :: rij, u(3), g(3), s
+   real(wp) :: H(3,3)
+   real(wp), parameter :: tiny_r = 1.0e-14_wp
 
 
-   allocate(R(nat), source=0.0_wp)
+   allocate(R(3), source=0.0_wp)
 
    ! %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    ! Monopole-dipole interaction 
@@ -581,8 +595,32 @@ subroutine get_multipole_matrix(self, nat, xyz, keps, brad, brdr, amat_sd)
 
    ! %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    ! Dipole-dipole interaction
-   ! allocate(brdr2(3, nat, 3, nat, nat), source=0.0_wp)
-   ! call self%kernel%compute_kernel_d2kdr2(nat, xyz, brad, brdr, brdr2, dKdr)
+   allocate(d2Kdr2(3, nat, 3, nat, nat, nat), source=0.0_wp)
+   allocate(brdr2(3, nat, 3, nat, nat), source=0.0_wp)
+   call self%kernel%compute_kernel_d2kdr2(nat, xyz, brad, brdr, brdr2, d2Kdr2)
+
+   do i = 1, nat
+      do j = 1, nat
+         if (i == j) cycle
+
+         R(:) = xyz(:, i) - xyz(:, j)
+         rij  = sqrt(dot_product(R, R))
+         if (rij <= tiny_r) cycle
+
+         u(:) = R(:) / rij
+
+         ! Take Hessian block w.r.t. coordinates of atom i twice, for kernel element K_ij:
+         ! H(α,β) = ∂²K_ij / (∂r_{i,α} ∂r_{i,β})
+         H(:,:) = d2Kdr2(:, i, :, i, i, j)
+
+         ! Scalar: R^T H R / r^2 = u^T H u
+         s = dot_product(u, matmul(H, u))
+
+         ! Promote scalar to 3x3 radial-projected interaction block:
+         ! T = (u ⊗ u) * s
+         amat_dd(:, i, :, j) = amat_dd(:, i, :, j) - spread(u,2,3) * spread(u,1,3) * s
+      end do
+   end do
 
 end subroutine get_multipole_matrix
 

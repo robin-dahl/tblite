@@ -36,11 +36,33 @@ type :: ad2
    real(wp) :: d2
 end type ad2
 
+type :: ad3
+   real(wp) :: v
+   real(wp) :: d1
+   real(wp) :: d2
+   real(wp) :: d3
+end type ad3
 
-interface operator(+); module procedure add_ad2; end interface
-interface operator(-); module procedure sub_ad2, neg_ad2; end interface
-interface operator(*); module procedure mul_ad2; end interface
-interface operator(/); module procedure div_ad2; end interface
+
+
+! interface operator(+); module procedure add_ad2; end interface
+! interface operator(-); module procedure sub_ad2, neg_ad2; end interface
+! interface operator(*); module procedure mul_ad2; end interface
+! interface operator(/); module procedure div_ad2; end interface
+
+interface operator(+)
+   module procedure add_ad2, add_ad3
+end interface
+interface operator(-)
+   module procedure sub_ad2, neg_ad2, sub_ad3, neg_ad3
+end interface
+interface operator(*)
+   module procedure mul_ad2, mul_ad3
+end interface
+interface operator(/)
+   module procedure div_ad2, div_ad3
+end interface
+
 
    !> Implementation of GBOBC integrator
    type, public :: born_integrator
@@ -67,9 +89,6 @@ interface operator(/); module procedure div_ad2; end interface
    real(wp), parameter :: descreening_default = 0.8_wp
    real(wp), parameter :: obc_default(3) = [1.0_wp, 0.8_wp, 4.85_wp]
 
-   interface log
-   module procedure log_ad2
-   end interface
 
 contains
 
@@ -124,125 +143,73 @@ subroutine new_born_integrator(self, mol, vdwrad, descreening, born_scale, born_
 end subroutine new_born_integrator
 
 !> Calculate Born radii
-subroutine get_rad(self, mol, rad, draddr, dradd2r)
-   !> Instance of the Born integrator
+subroutine get_rad(self, mol, rad, draddr, dradd2r, dradd3r)
    class(born_integrator), intent(in) :: self
-   !> Molecular structure data
    type(structure_type), intent(in) :: mol
-   !> Born radii
    real(wp), intent(out) :: rad(:)
-   !> Derivative of Born radii w.r.t. cartesian displacements
    real(wp), intent(out), optional :: draddr(:, :, :)
-   !> Second derivative of Born radii w.r.t. cartesian displacements
-   !> Layout: (3, nat, 3, nat, nat_owner)
    real(wp), intent(out), optional :: dradd2r(:, :, :, :, :)
+   real(wp), intent(out), optional :: dradd3r(:, :, :, :, :, :, :)
 
    type(adjacency_list) :: list
    real(wp), parameter :: trans(3, 1) = 0.0_wp
    real(wp), allocatable :: brdr(:, :, :)
    real(wp), allocatable :: brddr(:, :, :, :, :)
-   
+   real(wp), allocatable :: brd3dr(:, :, :, :, :, :, :)
 
    call new_adjacency_list(list, mol, trans, self%lrcut)
 
    allocate(brdr(3, mol%nat, mol%nat))
-   if (present(dradd2r)) allocate(brddr(3, mol%nat, 3, mol%nat, mol%nat))
+   if (present(dradd2r) .or. present(dradd3r)) allocate(brddr(3, mol%nat, 3, mol%nat, mol%nat))
+   if (present(dradd3r)) allocate(brd3dr(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
 
-   if (present(dradd2r)) then
-      call compute_bornr(mol%nat, mol%xyz, list, &
-         & self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, rad, brdr, brddr)
+   if (present(dradd3r)) then
+      call compute_bornr(mol%nat, mol%xyz, list, self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, &
+         & rad, brdr, brddr, brd3dr)
+   else if (present(dradd2r)) then
+      call compute_bornr(mol%nat, mol%xyz, list, self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, &
+         & rad, brdr, brddr)
    else
-      call compute_bornr(mol%nat, mol%xyz, list, &
-         & self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, rad, brdr)
+      call compute_bornr(mol%nat, mol%xyz, list, self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, &
+         & rad, brdr)
    end if
 
-   if (present(draddr)) then
-      draddr(:, :, :) = brdr
-   end if
-   if (present(dradd2r)) then
-      dradd2r(:, :, :, :, :) = brddr
-   end if
+   if (present(draddr))  draddr(:, :, :) = brdr
+   if (present(dradd2r)) dradd2r(:, :, :, :, :) = brddr
+   if (present(dradd3r)) dradd3r(:, :, :, :, :, :, :) = brd3dr
 end subroutine get_rad
 
 
-subroutine compute_bornr(nat, xyz, list, vdwr, rho, svdw, c1, obc, &
-      & brad, brdr, brddr)
-   !> Number of atoms
+
+subroutine compute_bornr(nat, xyz, list, vdwr, rho, svdw, c1, obc, brad, brdr, brddr, brd3dr)
    integer, intent(in) :: nat
-   !> Cartesian coordinates
    real(wp), intent(in) :: xyz(:, :)
-   !> Neighbourlist
    type(adjacency_list), intent(in) :: list
-   !> Van-der-Waals radii
-   real(wp), intent(in) :: vdwr(:)
-   !> Descreened van-der-Waals radii
-   real(wp), intent(in) :: rho(:)
-   !> van-der-Waals radii with offset
-   real(wp), intent(in) :: svdw(:)
-   !> Scaling factor for the Born radii
-   real(wp), intent(in) :: c1
-   !> Volume polynome correction
-   real(wp), intent(in) :: obc(3)
-   !> Born radii
+   real(wp), intent(in) :: vdwr(:), rho(:), svdw(:), c1, obc(3)
    real(wp), intent(out) :: brad(:)
-   !> Derivative of Born radii w.r.t. cartesian coordinates
    real(wp), intent(out) :: brdr(:, :, :)
-   !> Second derivative of Born radii w.r.t. cartesian coordinates
    real(wp), intent(out), optional :: brddr(:, :, :, :, :)
+   real(wp), intent(out), optional :: brd3dr(:, :, :, :, :, :, :)
 
    integer :: iat
-   real(wp) :: br, dpsi, svdwi, vdwri, s1, v1, s2, arg, arg2
-   real(wp) :: th, ch
-   real(wp) :: R, fp, fpp
+   real(wp) :: R, fp, fpp, fppp
 
-   call compute_psi(nat, xyz, list, vdwr, rho, brad, brdr)
-
-   do iat = 1, nat
-
-      br = brad(iat)
-
-      svdwi = svdw(iat)
-      vdwri = vdwr(iat)
-      s1 = 1.0_wp/svdwi
-      v1 = 1.0_wp/vdwri
-      s2 = 0.5_wp*svdwi
-
-      br = br*s2
-
-      arg2 = br*(obc(3)*br-obc(2))
-      arg = br*(obc(1)+arg2)
-      arg2 = 2.0_wp*arg2+obc(1)+obc(3)*br*br
-
-      th = tanh(arg)
-      ch = cosh(arg)
-
-      br = 1.0_wp/(s1-v1*th)
-      ! Include GBMV2-like scaling
-      br = c1*br
-
-      dpsi = ch*(s1-v1*th)
-      dpsi = s2*v1*arg2/(dpsi*dpsi)
-      dpsi = c1*dpsi
-
-      brad(iat) = br
-      brdr(:, :, iat) = brdr(:, :, iat) * dpsi
-
-   end do
-
-   ! Can probably be optimized later
-   if (present(brddr)) then
+   if (present(brd3dr)) then
+      call compute_psi(nat, xyz, list, vdwr, rho, brad, brdr, brddr, brd3dr)
+      call compute_bornr_d3(nat, vdwr, svdw, c1, obc, brad, brdr, brddr, brd3dr)
+   else if (present(brddr)) then
       call compute_psi(nat, xyz, list, vdwr, rho, brad, brdr, brddr)
       call compute_bornr_d2(nat, vdwr, svdw, c1, obc, brad, brdr, brddr)
    else
       call compute_psi(nat, xyz, list, vdwr, rho, brad, brdr)
       do iat = 1, nat
-         call obc_map_d1d2(brad(iat), svdw(iat), vdwr(iat), c1, obc, R, fp, fpp)
+         call obc_map_d1d2d3(brad(iat), svdw(iat), vdwr(iat), c1, obc, R, fp, fpp, fppp)
          brad(iat) = R
-         brdr(:, :, iat) = brdr(:, :, iat) * fp
+         brdr(:, :, iat) = fp * brdr(:, :, iat)
       end do
    end if
-
 end subroutine compute_bornr
+
 
 subroutine compute_bornr_d2(nat, vdwr, svdw, c1, obc, brad, brdr, brddr)
    integer, intent(in) :: nat
@@ -313,33 +280,146 @@ pure subroutine obc_map_d1d2(psi, svdwi, vdwri, c1, obc, R, fp, fpp)
 end subroutine obc_map_d1d2
 
 
-pure subroutine compute_psi(nat, xyz, list, vdwr, rho, psi, dpsidr, d2psidr2)
-   !> Number of atoms
+subroutine compute_bornr_d3(nat, vdwr, svdw, c1, obc, brad, brdr, brddr, brd3dr)
    integer, intent(in) :: nat
-   !> Cartesian coordinates
+   real(wp), intent(in) :: vdwr(:), svdw(:), c1, obc(3)
+   real(wp), intent(inout) :: brad(:)
+   real(wp), intent(inout) :: brdr(:, :, :)
+   real(wp), intent(inout) :: brddr(:, :, :, :, :)
+   real(wp), intent(inout) :: brd3dr(:, :, :, :, :, :, :)
+
+   integer :: iat, k, l, m, a, b, c
+   real(wp) :: R, fp, fpp, fppp
+   real(wp) :: g1, g2, g3
+   real(wp) :: h12, h13, h23
+
+   do iat = 1, nat
+      call obc_map_d1d2d3(brad(iat), svdw(iat), vdwr(iat), c1, obc, R, fp, fpp, fppp)
+
+      ! Third derivative first (needs old brdr/brddr)
+      do k = 1, nat
+         do l = 1, nat
+            do m = 1, nat
+               do a = 1, 3
+                  g1 = brdr(a, k, iat)
+                  do b = 1, 3
+                     g2 = brdr(b, l, iat)
+                     h12 = brddr(a, k, b, l, iat)
+                     do c = 1, 3
+                        g3 = brdr(c, m, iat)
+                        h13 = brddr(a, k, c, m, iat)
+                        h23 = brddr(b, l, c, m, iat)
+
+                        brd3dr(a, k, b, l, c, m, iat) = &
+                           fp   * brd3dr(a, k, b, l, c, m, iat) &
+                         + fpp  * (h12*g3 + h13*g2 + h23*g1) &
+                         + fppp * (g1*g2*g3)
+                     end do
+                  end do
+               end do
+            end do
+         end do
+      end do
+
+      ! Hessian update
+      do k = 1, nat
+         do l = 1, nat
+            do a = 1, 3
+               do b = 1, 3
+                  brddr(a, k, b, l, iat) = fp * brddr(a, k, b, l, iat) + fpp * brdr(a, k, iat) * brdr(b, l, iat)
+               end do
+            end do
+         end do
+      end do
+
+      ! Gradient update
+      brdr(:, :, iat) = fp * brdr(:, :, iat)
+      brad(iat) = R
+   end do
+end subroutine compute_bornr_d3
+
+
+pure subroutine obc_map_d1d2d3(psi, svdwi, vdwri, c1, obc, R, fp, fpp, fppp)
+   real(wp), intent(in) :: psi, svdwi, vdwri, c1, obc(3)
+   real(wp), intent(out) :: R, fp, fpp, fppp
+
+   real(wp) :: s, B, u, up, upp, uppp
+   real(wp) :: t, ch, sech2
+   real(wp) :: s1, v1, A
+   real(wp) :: u1, u2, u3
+   real(wp) :: t1, t2, t3
+   real(wp) :: A1, A2, A3
+   real(wp) :: A2inv, A3inv, A4inv
+
+   s  = 0.5_wp * svdwi
+   B  = s * psi
+
+   ! u(B) = aB - bB^2 + cB^3
+   u    = B * (obc(1) + B * (obc(3) * B - obc(2)))
+   up   = obc(1) - 2.0_wp * obc(2) * B + 3.0_wp * obc(3) * B * B          ! du/dB
+   upp  = -2.0_wp * obc(2) + 6.0_wp * obc(3) * B                           ! d2u/dB2
+   uppp = 6.0_wp * obc(3)                                                  ! d3u/dB3
+
+   t  = tanh(u)
+   ch = cosh(u)
+   sech2 = 1.0_wp / (ch * ch)   ! sech^2(u)
+
+   s1 = 1.0_wp / svdwi
+   v1 = 1.0_wp / vdwri
+
+   u1 = up   * s
+   u2 = upp  * s * s
+   u3 = uppp * s * s * s
+
+   t1 = sech2 * u1
+   t2 = sech2 * u2 - 2.0_wp * sech2 * t * (u1*u1)
+   t3 = sech2 * ( u3 - 6.0_wp * t * u1 * u2 + (4.0_wp*t*t - 2.0_wp*sech2) * (u1*u1*u1) )
+
+   A  = s1 - v1 * t
+   A1 = -v1 * t1
+   A2 = -v1 * t2
+   A3 = -v1 * t3
+
+   R = c1 / A
+
+   A2inv = 1.0_wp / (A*A)
+   A3inv = A2inv / A
+   A4inv = A3inv / A
+
+   fp   = -c1 * A1 * A2inv
+   fpp  =  2.0_wp*c1*(A1*A1)*A3inv - c1*A2*A2inv
+   fppp = -6.0_wp*c1*(A1*A1*A1)*A4inv + 6.0_wp*c1*(A1*A2)*A3inv - c1*A3*A2inv
+end subroutine obc_map_d1d2d3
+
+
+
+pure subroutine compute_psi(nat, xyz, list, vdwr, rho, psi, dpsidr, d2psidr2, d3psidr3)
+   integer, intent(in) :: nat
    real(wp), intent(in) :: xyz(:, :)
-   !> Neighbourlist
    type(adjacency_list), intent(in) :: list
-   !> Van-der-Waals radii
-   real(wp), intent(in) :: vdwr(:)
-   !> Descreened van-der-Waals radii
-   real(wp), intent(in) :: rho(:)
-   !> Integrated value of Psi
+   real(wp), intent(in) :: vdwr(:), rho(:)
    real(wp), intent(out) :: psi(:)
-   !> Derivative of Psi w.r.t. cartesian coordinates
    real(wp), intent(out) :: dpsidr(:, :, :)
-   real(wp), allocatable :: dpsitr(:, :)
-
    real(wp), intent(out), optional :: d2psidr2(:, :, :, :, :)
+   real(wp), intent(out), optional :: d3psidr3(:, :, :, :, :, :, :)
 
-    ! Probably can be optimized later
-   if (present(d2psidr2)) then
+   if (present(d3psidr3)) then
+      ! d3 requires d2 storage (we need it later anyway)
+      if (present(d2psidr2)) then
+         call compute_psi_d3(nat, xyz, list, vdwr, rho, psi, dpsidr, d2psidr2, d3psidr3)
+      else
+         ! fallback (should never happen in your pipeline)
+         call compute_psi_d1(nat, xyz, list, vdwr, rho, psi, dpsidr)
+         d3psidr3(:, :, :, :, :, :, :) = 0.0_wp
+      end if
+   else if (present(d2psidr2)) then
       call compute_psi_d2(nat, xyz, list, vdwr, rho, psi, dpsidr, d2psidr2)
    else
       call compute_psi_d1(nat, xyz, list, vdwr, rho, psi, dpsidr)
    end if
-
 end subroutine compute_psi
+
+
 
 pure subroutine compute_psi_d1(nat, xyz, list, vdwr, rho, psi, dpsidr)
    !> Number of atoms
@@ -706,6 +786,118 @@ end subroutine compute_psi_d2
 
 
 
+pure subroutine compute_psi_d3(nat, xyz, list, vdwr, rho, psi, dpsidr, d2psidr2, d3psidr3)
+   integer, intent(in) :: nat
+   real(wp), intent(in) :: xyz(:, :)
+   type(adjacency_list), intent(in) :: list
+   real(wp), intent(in) :: vdwr(:), rho(:)
+
+   real(wp), intent(out) :: psi(:)
+   real(wp), intent(out) :: dpsidr(:, :, :)
+   real(wp), intent(out) :: d2psidr2(:, :, :, :, :)
+   real(wp), intent(out) :: d3psidr3(:, :, :, :, :, :, :)
+
+   real(wp), allocatable :: dpsitr(:, :)
+   real(wp), allocatable :: d2psitr(:, :, :)
+   real(wp), allocatable :: d3psitr(:, :, :, :)
+
+   integer  :: iat, jat, img, inl
+   real(wp) :: vec(3), r, rhoi, rhoj, rvdwi, rvdwj
+   logical :: ijov, jiov
+
+   type(ad3) :: rad
+   type(ad3) :: gi, gj
+
+   allocate(dpsitr(3, nat))
+   allocate(d2psitr(3, 3, nat))
+   allocate(d3psitr(3, 3, 3, nat))
+
+   psi(:) = 0.0_wp
+   dpsidr(:, :, :) = 0.0_wp
+   d2psidr2(:, :, :, :, :) = 0.0_wp
+   d3psidr3(:, :, :, :, :, :, :) = 0.0_wp
+
+   dpsitr(:, :) = 0.0_wp
+   d2psitr(:, :, :) = 0.0_wp
+   d3psitr(:, :, :, :) = 0.0_wp
+
+   do iat = 1, nat
+      inl = list%inl(iat)
+      do img = 1, list%nnl(iat)
+         jat = list%nlat(inl+img)
+
+         vec(:) = xyz(:, iat) - xyz(:, jat)
+         r = norm2(vec)
+
+         rhoi = rho(iat)
+         rhoj = rho(jat)
+         rvdwi = vdwr(iat)
+         rvdwj = vdwr(jat)
+
+         ijov = r < (rvdwi + rhoj)
+         jiov = r < (rhoi + rvdwj)
+
+         rad = ad3_var(r)
+
+         if (.not.(ijov .or. jiov)) then
+            ! nonoverlapping spheres
+            if (abs(rhoi - rhoj) < 1.e-8_wp) then
+               gi = g_nonoverlap3(rad, rhoj)
+               call accum_pair3(iat, iat, jat, vec, r, gi, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+               call accum_pair3(jat, iat, jat, vec, r, gi, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+            else
+               gi = g_nonoverlap3(rad, rhoj)
+               gj = g_nonoverlap3(rad, rhoi)
+               call accum_pair3(iat, iat, jat, vec, r, gi, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+               call accum_pair3(jat, iat, jat, vec, r, gj, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+            end if
+
+         else if (.not.ijov .and. jiov) then
+            ! i gets nonoverlap with rhoj
+            gi = g_nonoverlap3(rad, rhoj)
+            call accum_pair3(iat, iat, jat, vec, r, gi, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+
+            ! j may get overlap term
+            if ((r + rhoi) > rvdwj) then
+               gj = g_overlap3(rad, rhoi, rvdwj)
+               call accum_pair3(jat, iat, jat, vec, r, gj, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+            end if
+
+         else if (ijov .and. .not.jiov) then
+            if ((r + rhoj) > rvdwi) then
+               gi = g_overlap3(rad, rhoj, rvdwi)
+               call accum_pair3(iat, iat, jat, vec, r, gi, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+            end if
+
+            gj = g_nonoverlap3(rad, rhoi)
+            call accum_pair3(jat, iat, jat, vec, r, gj, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+
+         else
+            ! ijov .and. jiov (overlap for both, if allowed)
+            if ((r + rhoj) > rvdwi) then
+               gi = g_overlap3(rad, rhoj, rvdwi)
+               call accum_pair3(iat, iat, jat, vec, r, gi, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+            end if
+
+            if ((r + rhoi) > rvdwj) then
+               gj = g_overlap3(rad, rhoi, rvdwj)
+               call accum_pair3(jat, iat, jat, vec, r, gj, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+            end if
+         end if
+      end do
+   end do
+
+   ! Save one-center terms (fully diagonal blocks)
+   do iat = 1, nat
+      dpsidr(:, iat, iat) = dpsitr(:, iat)
+      d2psidr2(:, iat, :, iat, iat) = d2psitr(:, :, iat)
+      d3psidr3(:, iat, :, iat, :, iat, iat) = d3psitr(:, :, :, iat)
+   end do
+end subroutine compute_psi_d3
+
+
+
+
 
 
 
@@ -781,6 +973,90 @@ pure elemental function log_ad2(a) result(c)
 end function
 
 
+pure elemental function ad3_c(x) result(a)
+   real(wp), intent(in) :: x
+   type(ad3) :: a
+   a%v = x; a%d1 = 0.0_wp; a%d2 = 0.0_wp; a%d3 = 0.0_wp
+end function ad3_c
+
+pure elemental function ad3_var(x) result(a)
+   real(wp), intent(in) :: x
+   type(ad3) :: a
+   a%v = x; a%d1 = 1.0_wp; a%d2 = 0.0_wp; a%d3 = 0.0_wp
+end function ad3_var
+
+pure elemental function add_ad3(a,b) result(c)
+   type(ad3), intent(in) :: a,b
+   type(ad3) :: c
+   c%v = a%v + b%v
+   c%d1 = a%d1 + b%d1
+   c%d2 = a%d2 + b%d2
+   c%d3 = a%d3 + b%d3
+end function add_ad3
+
+pure elemental function sub_ad3(a,b) result(c)
+   type(ad3), intent(in) :: a,b
+   type(ad3) :: c
+   c%v = a%v - b%v
+   c%d1 = a%d1 - b%d1
+   c%d2 = a%d2 - b%d2
+   c%d3 = a%d3 - b%d3
+end function sub_ad3
+
+pure elemental function neg_ad3(a) result(c)
+   type(ad3), intent(in) :: a
+   type(ad3) :: c
+   c%v = -a%v
+   c%d1 = -a%d1
+   c%d2 = -a%d2
+   c%d3 = -a%d3
+end function neg_ad3
+
+pure elemental function mul_ad3(a,b) result(c)
+   type(ad3), intent(in) :: a,b
+   type(ad3) :: c
+   c%v  = a%v*b%v
+   c%d1 = a%d1*b%v + a%v*b%d1
+   c%d2 = a%d2*b%v + 2.0_wp*a%d1*b%d1 + a%v*b%d2
+   c%d3 = a%d3*b%v + 3.0_wp*a%d2*b%d1 + 3.0_wp*a%d1*b%d2 + a%v*b%d3
+end function mul_ad3
+
+pure elemental function inv_ad3(b) result(r)
+   type(ad3), intent(in) :: b
+   type(ad3) :: r
+   real(wp) :: b0, b1, b2, b3, b02, b03, b04
+   b0 = b%v; b1 = b%d1; b2 = b%d2; b3 = b%d3
+   b02 = b0*b0
+   b03 = b02*b0
+   b04 = b03*b0
+
+   r%v  = 1.0_wp/b0
+   r%d1 = -b1/b02
+   r%d2 = (2.0_wp*b1*b1 - b0*b2)/b03
+   r%d3 = (-6.0_wp*b1*b1*b1 + 6.0_wp*b0*b1*b2 - b0*b0*b3)/b04
+end function inv_ad3
+
+pure elemental function div_ad3(a,b) result(c)
+   type(ad3), intent(in) :: a,b
+   type(ad3) :: c
+   c = a * inv_ad3(b)
+end function div_ad3
+
+pure elemental function ad3_log(a) result(c)
+   type(ad3), intent(in) :: a
+   type(ad3) :: c
+   real(wp) :: x, x2, x3
+   x  = a%v
+   x2 = x*x
+   x3 = x2*x
+   c%v  = log(x)                          ! intrinsic log(real)
+   c%d1 = a%d1/x
+   c%d2 = (a%d2*x - a%d1*a%d1)/x2
+   c%d3 = (a%d3*x2 - 3.0_wp*a%d2*x*a%d1 + 2.0_wp*a%d1*a%d1*a%d1)/x3
+end function ad3_log
+
+
+
 ! -------- Pair contribution functions (same formulas, AD-enabled) --------
 
 pure elemental function g_nonoverlap(r, rho_s) result(g)
@@ -794,7 +1070,7 @@ pure elemental function g_nonoverlap(r, rho_s) result(g)
    ab = ap * am
    rhab = ad2_c(rho_s) / ab
    r1 = ad2_c(1.0_wp) / r
-   lnab = ad2_c(0.5_wp) * log(am / ap) * r1
+   lnab = ad2_c(0.5_wp) * log_ad2(am / ap) * r1
    g = rhab + lnab
 end function g_nonoverlap
 
@@ -814,10 +1090,48 @@ pure elemental function g_overlap(r, rho_s, rvdw_t) result(g)
 
    rhr1 = ad2_c(1.0_wp) / ap
    aprh1 = ap * ad2_c(rh1)
-   lnab = log(aprh1)
+   lnab = log_ad2(aprh1)
 
    g = ad2_c(rh1) - rhr1 + r12 * ( ad2_c(0.5_wp) * am * (rhr1 - ad2_c(rh1)*aprh1) - lnab )
 end function g_overlap
+
+
+pure elemental function g_nonoverlap3(r, rho_s) result(g)
+   type(ad3), intent(in) :: r
+   real(wp), intent(in) :: rho_s
+   type(ad3) :: g
+   type(ad3) :: ap, am, ab, r1, lnab, rhab
+
+   ap = r + ad3_c(rho_s)
+   am = r - ad3_c(rho_s)
+   ab = ap * am
+   rhab = ad3_c(rho_s) / ab
+   r1 = ad3_c(1.0_wp) / r
+   lnab = ad3_c(0.5_wp) * ad3_log(am / ap) * r1
+   g = rhab + lnab
+end function g_nonoverlap3
+
+pure elemental function g_overlap3(r, rho_s, rvdw_t) result(g)
+   type(ad3), intent(in) :: r
+   real(wp), intent(in) :: rho_s, rvdw_t
+   type(ad3) :: g
+   type(ad3) :: ap, am, r1, r12, rhr1, aprh1, lnab
+   real(wp) :: rh1
+
+   rh1 = 1.0_wp/rvdw_t
+   r1  = ad3_c(1.0_wp) / r
+   r12 = ad3_c(0.5_wp) * r1
+
+   ap = r + ad3_c(rho_s)
+   am = r - ad3_c(rho_s)
+
+   rhr1 = ad3_c(1.0_wp) / ap
+   aprh1 = ap * ad3_c(rh1)
+   lnab = ad3_log(aprh1)
+
+   g = ad3_c(rh1) - rhr1 + r12 * ( ad3_c(0.5_wp) * am * (rhr1 - ad3_c(rh1)*aprh1) - lnab )
+end function g_overlap3
+
 
 ! -------- Accumulation of one scalar g(r) into psi(owner), grad, Hess --------
 pure subroutine accum_pair(owner, p, q, vec, r, g, psi, dpsidr, dpsitr, d2psidr2, d2psitr)
@@ -893,6 +1207,137 @@ pure subroutine add_block(owner, aidx, bidx, sgn, Hv, d2psidr2, d2psitr)
       d2psidr2(:, aidx, :, bidx, owner) = d2psidr2(:, aidx, :, bidx, owner) + sgn * Hv(:, :)
    end if
 end subroutine add_block
+
+
+
+pure subroutine accum_pair3(owner, p, q, vec, r, g, psi, dpsidr, dpsitr, d2psidr2, d2psitr, d3psidr3, d3psitr)
+   integer, intent(in) :: owner, p, q
+   real(wp), intent(in) :: vec(3), r
+   type(ad3), intent(in) :: g
+   real(wp), intent(inout) :: psi(:)
+   real(wp), intent(inout) :: dpsidr(:, :, :)
+   real(wp), intent(inout) :: dpsitr(:, :)
+   real(wp), intent(inout) :: d2psidr2(:, :, :, :, :)
+   real(wp), intent(inout) :: d2psitr(:, :, :)
+   real(wp), intent(inout) :: d3psidr3(:, :, :, :, :, :, :)
+   real(wp), intent(inout) :: d3psitr(:, :, :, :)
+
+   real(wp) :: gp, gpp, gppp
+   real(wp) :: g1, dd, beta
+   real(wp) :: dr(3)
+   real(wp) :: Hv(3,3)
+   real(wp) :: Tv(3,3,3)
+   integer :: a,b,c
+   integer :: i1,i2,i3
+   integer :: idx(2)
+   real(wp) :: sgn(2)
+   real(wp) :: s
+
+   gp   = g%d1
+   gpp  = g%d2
+   gppp = g%d3
+
+   ! gradient factor: g'(r)/r
+   g1 = gp / r
+
+   ! Hessian outer factor: (g'' r - g') / r^3
+   dd = (gpp*r - gp) / (r*r*r)
+
+   ! Third-derivative outer factor:
+   ! beta = g'''/r^3 - 3 g''/r^4 + 3 g'/r^5
+   beta = gppp/(r*r*r) - 3.0_wp*gpp/(r*r*r*r) + 3.0_wp*gp/(r*r*r*r*r)
+
+   psi(owner) = psi(owner) + g%v
+
+   ! ---- Gradient accumulation ----
+   dr(:) = g1 * vec(:)
+
+   if (p == owner) then
+      dpsitr(:, owner) = dpsitr(:, owner) + dr(:)
+   else
+      dpsidr(:, p, owner) = dpsidr(:, p, owner) + dr(:)
+   end if
+
+   if (q == owner) then
+      dpsitr(:, owner) = dpsitr(:, owner) - dr(:)
+   else
+      dpsidr(:, q, owner) = dpsidr(:, q, owner) - dr(:)
+   end if
+
+   ! ---- Hessian (same as your AD2 version) ----
+   Hv(:, :) = 0.0_wp
+   do a = 1,3
+      Hv(a,a) = g1
+   end do
+   do a = 1,3
+      do b = 1,3
+         Hv(a,b) = Hv(a,b) + dd * vec(a) * vec(b)
+      end do
+   end do
+
+   call add_block2(owner, p, p, +1.0_wp, Hv, d2psidr2, d2psitr)
+   call add_block2(owner, p, q, -1.0_wp, Hv, d2psidr2, d2psitr)
+   call add_block2(owner, q, p, -1.0_wp, Hv, d2psidr2, d2psitr)
+   call add_block2(owner, q, q, +1.0_wp, Hv, d2psidr2, d2psitr)
+
+   ! ---- Third derivative tensor w.r.t. v = r_p - r_q ----
+   ! T_abc = dd*(δ_ab v_c + δ_ac v_b + δ_bc v_a) + beta*v_a v_b v_c
+   Tv(:, :, :) = 0.0_wp
+   do a = 1,3
+      do b = 1,3
+         do c = 1,3
+            Tv(a,b,c) = Tv(a,b,c) + beta * vec(a)*vec(b)*vec(c)
+            if (a == b) Tv(a,b,c) = Tv(a,b,c) + dd * vec(c)
+            if (a == c) Tv(a,b,c) = Tv(a,b,c) + dd * vec(b)
+            if (b == c) Tv(a,b,c) = Tv(a,b,c) + dd * vec(a)
+         end do
+      end do
+   end do
+
+   ! sign bookkeeping: derivative wrt p -> +, wrt q -> -
+   idx(1) = p; sgn(1) = +1.0_wp
+   idx(2) = q; sgn(2) = -1.0_wp
+
+   do i1 = 1,2
+      do i2 = 1,2
+         do i3 = 1,2
+            s = sgn(i1)*sgn(i2)*sgn(i3)
+            call add_block3(owner, idx(i1), idx(i2), idx(i3), s, Tv, d3psidr3, d3psitr)
+         end do
+      end do
+   end do
+end subroutine accum_pair3
+
+
+pure subroutine add_block2(owner, aidx, bidx, sgn, Hv, d2psidr2, d2psitr)
+   integer, intent(in) :: owner, aidx, bidx
+   real(wp), intent(in) :: sgn
+   real(wp), intent(in) :: Hv(3,3)
+   real(wp), intent(inout) :: d2psidr2(:, :, :, :, :)
+   real(wp), intent(inout) :: d2psitr(:, :, :)
+
+   if (aidx == owner .and. bidx == owner) then
+      d2psitr(:, :, owner) = d2psitr(:, :, owner) + sgn * Hv(:, :)
+   else
+      d2psidr2(:, aidx, :, bidx, owner) = d2psidr2(:, aidx, :, bidx, owner) + sgn * Hv(:, :)
+   end if
+end subroutine add_block2
+
+
+pure subroutine add_block3(owner, aidx, bidx, cidx, sgn, Tv, d3psidr3, d3psitr)
+   integer, intent(in) :: owner, aidx, bidx, cidx
+   real(wp), intent(in) :: sgn
+   real(wp), intent(in) :: Tv(3,3,3)
+   real(wp), intent(inout) :: d3psidr3(:, :, :, :, :, :, :)
+   real(wp), intent(inout) :: d3psitr(:, :, :, :)
+
+   if (aidx == owner .and. bidx == owner .and. cidx == owner) then
+      d3psitr(:, :, :, owner) = d3psitr(:, :, :, owner) + sgn * Tv(:, :, :)
+   else
+      d3psidr3(:, aidx, :, bidx, :, cidx, owner) = d3psidr3(:, aidx, :, bidx, :, cidx, owner) + sgn * Tv(:, :, :)
+   end if
+end subroutine add_block3
+
 
 
 
