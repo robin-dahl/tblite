@@ -274,7 +274,7 @@ subroutine update(self, mol, cache)
    end if
 
    ! Compute multipole interaction matrix
-   call get_multipole_matrix(self, mol%nat, mol%xyz, self%keps, ptr%rad, ptr%draddr, &
+   call get_multipole_matrix(self, mol, mol%xyz, self%keps, ptr%rad, ptr%draddr, &
       & ptr%amat_sd, ptr%amat_dd)
 end subroutine update
 
@@ -310,11 +310,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    call gemv(ptr%amat_sd, wfn%qat(:, 1), vd)
    call gemv(ptr%amat_dd, wfn%dpat(:, :, 1), vd, beta=1.0_wp, alpha=0.5_wp)
 
-   ! Monopole-monopole
-   energies(:) = energies + ptr%vat * ptr%qscratch(:)
-
-   ! Monopole-dipole
-   energies(:) = energies + sum(wfn%dpat(:, :, 1) * vd, 1)
+   energies(:) = energies + ptr%vat * ptr%qscratch(:) + sum(wfn%dpat(:, :, 1) * vd, 1)
 
 end subroutine get_energy
 
@@ -543,89 +539,106 @@ subroutine get_adet_deriv(nAtom, xyz, rad, kEps, qvec, gradient)
 end subroutine get_adet_deriv
 
 
-!> Compute multipole interaction matrix from kernel gradient
-subroutine get_multipole_matrix(self, nat, xyz, keps, brad, brdr, amat_sd, amat_dd)
-   !> Instance of the solvation model
+subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_dd)
    class(alpb_solvation), intent(in) :: self
-   !> Number of atoms
-   integer, intent(in) :: nat
-   !> Cartesian coordinates
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
    real(wp), intent(in) :: xyz(:, :)
-   !> Dielectric screening (kept for API symmetry; kernel already carries keps internally)
    real(wp), intent(in) :: keps
-   !> Born radii
    real(wp), intent(in) :: brad(:)
-   !> Derivative of Born radii w.r.t. cartesian coordinates
    real(wp), contiguous, intent(in) :: brdr(:, :, :)
-   !> Multipole interaction matrix for charges and dipoles: (3,nat,nat)
-   !> Convention matches get_multipole_matrix_0d: amat_sd(:,j,i) = -∇_i K_ij
-   real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)
-   !> Interation matrix for dipoles and dipoles
-   real(wp), intent(inout) :: amat_dd(:, :, :, :)
+   real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)      ! (3,nat,nat)
+   real(wp), intent(inout) :: amat_dd(:, :, :, :)               ! (3,nat,3,nat)
 
    integer :: i, j
-   real(wp), allocatable :: dKdr(:,:,:,:), R(:)
-   real(wp), allocatable :: d2Kdr2(:, :, :, :, :, :), brdr2(:,:,:,:,:)
-   real(wp) :: rij, u(3), g(3), s
+   real(wp), allocatable :: dKdr_ij(:, :)                        ! (3,nat)
+
+   ! For 2nd derivatives: only one (i,j) slice at a time
+   real(wp), allocatable :: d2Kdr2_ij(:, :, :, :)                ! (3,nat,3,nat)
+   real(wp), allocatable :: brdr2(:, :, :, :, :)                 ! (3,nat,3,nat,nat)
+
+   real(wp), allocatable :: temp(:), temp2(:,:,:)
+
+   real(wp) :: rij, u(3), s
    real(wp) :: H(3,3)
    real(wp), parameter :: tiny_r = 1.0e-14_wp
 
+   real(wp) :: scal
+   real(wp) :: R(3)
 
-   allocate(R(3), source=0.0_wp)
+   integer :: nat
+
+   nat = mol%nat
+
+   allocate(dKdr_ij(3, nat), source=0.0_wp)
+   allocate(d2Kdr2_ij(3, nat, 3, nat), source=0.0_wp)
+   allocate(brdr2(3, nat, 3, nat, nat), source=0.0_wp)
+
+   allocate(temp(nat), source=0.0_wp)
+   allocate(temp2(3, nat, nat), source=0.0_wp)
+
+   ! Need second Born-radius derivatives once
+   call self%gbobc%get_rad(mol, temp, temp2, brdr2)
+   ! If you already have brdr2 from elsewhere, remove this call and pass it in.
 
    ! %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   ! Monopole-dipole interaction 
-   allocate(dKdr(3, nat, nat, nat), source=0.0_wp)
-   call self%kernel%compute_kernel_dkdr(nat, xyz, brad, brdr, dKdr)
-
-   ! Build charge–dipole interaction kernel:
-   ! amat_sd(:,j,i) += +vec/r^3 for Coulomb  <=>  amat_sd(:,j,i) = -∇_i K_ij in general
+   ! Monopole-dipole interaction  (legacy behaviour matching previous implementation)
    do i = 1, nat
       do j = 1, nat
          if (i == j) cycle
 
-         R = xyz(:,i) - xyz(:,j)
-         rij = sqrt(dot_product(R,R))
+         call self%kernel%compute_kernel_dkdr_ij(nat, xyz, brad, brdr, i, j, dKdr_ij)
 
+         R   = xyz(:, i) - xyz(:, j)
+         rij = sqrt(dot_product(R, R))
+         if (rij <= tiny_r) cycle
 
-         amat_sd(:, i, j) = - dot_product(R, dKdr(:,i,i,j)) / rij
+         scal = - dot_product(R, dKdr_ij(:, i)) / rij
+         amat_sd(:, i, j) = scal
       end do
    end do
 
-   deallocate(dKdr)
+   deallocate(dKdr_ij)
 
    ! %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   ! Dipole-dipole interaction
-   allocate(d2Kdr2(3, nat, 3, nat, nat, nat), source=0.0_wp)
-   allocate(brdr2(3, nat, 3, nat, nat), source=0.0_wp)
-   call self%kernel%compute_kernel_d2kdr2(nat, xyz, brad, brdr, brdr2, d2Kdr2)
-
+   ! Dipole–dipole interaction using ij Hessian slice
+   !
+   ! Previous code used:
+   !   H(:,:) = d2Kdr2(:, i, :, i, i, j)
+   ! i.e. the (3x3) block with respect to atom i twice for kernel element K_ij.
+   !
+   ! With the ij-slice routine we get:
+   !   d2Kdr2_ij(:, k, :, l) = ∂²K_ij / (∂r_k ∂r_l)
+   ! so the needed block is simply:
+   !   H = d2Kdr2_ij(:, i, :, i)
+   !
    do i = 1, nat
       do j = 1, nat
          if (i == j) cycle
 
-         R(:) = xyz(:, i) - xyz(:, j)
-         rij  = sqrt(dot_product(R, R))
+         u(:) = xyz(:, i) - xyz(:, j)
+         rij  = sqrt(dot_product(u, u))
          if (rij <= tiny_r) cycle
+         u(:) = u(:) / rij
 
-         u(:) = R(:) / rij
+         ! Compute only Hessian slice for this kernel element K_ij:
+         call self%kernel%compute_kernel_d2kdr2_ij(nat, xyz, brad, brdr, brdr2, i, j, d2Kdr2_ij)
 
-         ! Take Hessian block w.r.t. coordinates of atom i twice, for kernel element K_ij:
-         ! H(α,β) = ∂²K_ij / (∂r_{i,α} ∂r_{i,β})
-         H(:,:) = d2Kdr2(:, i, :, i, i, j)
+         ! Take the same 3x3 block as before (wrt atom i twice)
+         H(:, :) = d2Kdr2_ij(:, i, :, i)
 
-         ! Scalar: R^T H R / r^2 = u^T H u
          s = dot_product(u, matmul(H, u))
 
-         ! Promote scalar to 3x3 radial-projected interaction block:
-         ! T = (u ⊗ u) * s
          amat_dd(:, i, :, j) = amat_dd(:, i, :, j) - spread(u,2,3) * spread(u,1,3) * s
       end do
    end do
 
-
+   deallocate(d2Kdr2_ij, brdr2)
 
 end subroutine get_multipole_matrix
+
+
+
 
 
 
