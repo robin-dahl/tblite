@@ -36,7 +36,7 @@ module tblite_coulomb_multipole
    implicit none
    private
 
-   public :: new_damped_multipole
+   public :: new_damped_multipole, get_multipole_matrix, get_multipole_gradient_0d, get_multipole_gradient_3d
 
 
    !> Container to handle multipole electrostatics
@@ -518,7 +518,7 @@ subroutine get_multipole_matrix_0d(mol, rad, kdmp3, kdmp5, amat_sd, amat_dd, ama
          fdmp3 = 1.0_wp / (1.0_wp + 6.0_wp * rr**kdmp3)
          fdmp5 = 1.0_wp / (1.0_wp + 6.0_wp * rr**kdmp5)
 
-         amat_sd(:, jat, iat) = amat_sd(:, jat, iat) + vec * g3 * fdmp3
+         amat_sd(:, jat, iat) = amat_sd(:, jat, iat) + vec * g3* fdmp3
          amat_dd(:, jat, :, iat) = amat_dd(:, jat, :, iat) &
             & + unity * g3*fdmp5 - spread(vec, 1, 3) * spread(vec, 2, 3) * 3*g5*fdmp5
          tc(2) = 2*vec(1)*vec(2)*g5*fdmp5

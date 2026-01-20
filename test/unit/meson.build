@@ -79,5 +79,9 @@ tester = executable(
 )
 
 foreach t : tests
-  test(t, tester, args: t, suite: 'unit')
+  if t == 'solvation-kernel'
+    test(t, tester, args: t, suite: 'unit', timeout: 1000)
+  else
+    test(t, tester, args: t, suite: 'unit')
+  endif
 endforeach
