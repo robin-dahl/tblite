@@ -44,6 +44,8 @@ module tblite_coulomb_cache
       real(wp), allocatable :: amat_sd(:, :, :)
       real(wp), allocatable :: amat_dd(:, :, :, :)
       real(wp), allocatable :: amat_sq(:, :, :)
+      real(wp), allocatable :: amat_dq(:, :, :, :)
+      real(wp), allocatable :: amat_qq(:, :, :, :)
    contains
       procedure :: update
    end type coulomb_cache

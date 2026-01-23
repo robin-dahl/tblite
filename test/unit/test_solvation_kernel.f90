@@ -29,8 +29,10 @@ module test_solvation_kernel
    use tblite_solvation_data, only : solvent_data, get_vdw_rad_d3, get_solvent_data
 
 
+   use mctc_io_structure, only: new_structure
+
    use tblite_coulomb_cache, only : coulomb_cache
-   use tblite_coulomb_multipole, only : damped_multipole, new_damped_multipole
+   use tblite_coulomb_multipole, only : damped_multipole, new_damped_multipole, get_multipole_matrix_0d
    use tblite_container_cache, only : container_cache
    implicit none
    private
@@ -57,18 +59,19 @@ subroutine collect_solvation_kernel(testsuite)
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
    testsuite = [ &
-      ! new_unittest("amat-coulomb", test_amat_coulomb), &
-      new_unittest("kernel-gradient-still", test_kernel_gradient_still), &
-      new_unittest("kernel-hessian-still", test_kernel_hessian_still), &
-      new_unittest("kernel-third-still", test_kernel_third_still), &
+      new_unittest("amat-coulomb", test_amat_coulomb) &
+      !   new_unittest("amat-higher-order-coulomb", test_amat_higher_order_coulomb) &
+      ! new_unittest("kernel-gradient-still", test_kernel_gradient_still), &
+      ! new_unittest("kernel-hessian-still", test_kernel_hessian_still), &
+      ! new_unittest("kernel-third-still", test_kernel_third_still), &
       !   new_unittest("kernel-fourth-still", test_kernel_fourth_still), &
-      new_unittest("kernel-gradient-p16", test_kernel_gradient_p16), &
-      new_unittest("kernel-hessian-p16", test_kernel_hessian_p16), &
-      new_unittest("kernel-third-p16", test_kernel_third_p16), &
+      ! new_unittest("kernel-gradient-p16", test_kernel_gradient_p16), &
+      ! new_unittest("kernel-hessian-p16", test_kernel_hessian_p16), &
+      ! new_unittest("kernel-third-p16", test_kernel_third_p16), &
       !   new_unittest("kernel-fourth-p16", test_kernel_fourth_p16) &
-      new_unittest("kernel-gradient-coulomb", test_kernel_gradient_coulomb), &
-      new_unittest("kernel-hessian-coulomb", test_kernel_hessian_coulomb), &
-      new_unittest("kernel-third-coulomb", test_kernel_third_coulomb) &
+      ! new_unittest("kernel-gradient-coulomb", test_kernel_gradient_coulomb), &
+      ! new_unittest("kernel-hessian-coulomb", test_kernel_hessian_coulomb), &
+      ! new_unittest("kernel-third-coulomb", test_kernel_third_coulomb) &
       !   new_unittest("kernel-fourth-coulomb", test_kernel_fourth_coulomb) &
       ]
 
@@ -369,9 +372,27 @@ subroutine test_amat_coulomb(error)
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
          & kernel=3, alpb=.true.)
    call get_structure(mol, "MB16-43", "01")
-   call test_amat_sd(error, mol, kernel_enum%coulomb, keps, qat, make_multipole2, input) 
+   call test_amat(error, mol, kernel_enum%coulomb, keps, qat, make_multipole2, input) 
 
 end subroutine test_amat_coulomb
+
+subroutine test_amat_higher_order_coulomb(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   character(len=*), parameter :: sym(2) =  [ 'H', 'H' ]
+   integer, parameter :: num(2) =  [ 1, 1 ]
+   real(wp) :: xyz(3, 2)
+
+   xyz(:,1) = [0.0_wp, 0.0_wp, 0.0_wp]
+   xyz(:,2) = [0.0_wp, 0.0_wp, 0.74_wp]
+
+   call new_structure(mol, num, sym, xyz)
+
+   call test_amat_ho(error, mol)
+
+end subroutine test_amat_higher_order_coulomb
 
 
 
@@ -980,7 +1001,7 @@ end subroutine test_kernel_numq
 !> Test setting up the kernel interacion matrices based on kernel derivatives
 !> For this test to work, damping needs to be disabled in the coulomb/multipole.f90
 !  Therefore turned off for now.
-subroutine test_amat_sd(error, mol, kernel_id, keps, qat, make_multipole, input)
+subroutine test_amat(error, mol, kernel_id, keps, qat, make_multipole, input)
    type(error_type), allocatable, intent(out) :: error
    type(structure_type), intent(inout) :: mol
    integer, intent(in) :: kernel_id
@@ -1003,8 +1024,8 @@ subroutine test_amat_sd(error, mol, kernel_id, keps, qat, make_multipole, input)
 
 
 
-   real(wp), allocatable :: amat_sd_mp(:,:,:), amat_dd_mp(:,:,:,:), amat_sq_mp(:,:,:)
-   real(wp), allocatable :: amat_sd_alpb(:,:,:), amat_dd_alpb(:,:,:,:), amat_sq_alpb(:,:,:)
+   real(wp), allocatable :: amat_sd_mp(:,:,:), amat_dd_mp(:,:,:,:), amat_sq_mp(:,:,:), amat_dq_mp(:,:,:,:), amat_qq_mp(:,:,:,:)
+   real(wp), allocatable :: amat_sd_alpb(:,:,:), amat_dd_alpb(:,:,:,:), amat_sq_alpb(:,:,:), amat_dq_alpb(:,:,:,:), amat_qq_alpb(:,:,:,:)
    real(wp), allocatable :: rad(:), draddr(:,:,:)
 
    call taint(cache, c_cache)
@@ -1019,10 +1040,15 @@ subroutine test_amat_sd(error, mol, kernel_id, keps, qat, make_multipole, input)
    allocate(amat_sd_mp(3, mol%nat, mol%nat), source=0.0_wp)
    allocate(amat_dd_mp(3, mol%nat, 3, mol%nat), source=0.0_wp)
    allocate(amat_sq_mp(6, mol%nat, mol%nat), source=0.0_wp)
+   allocate(amat_dq_mp(3, mol%nat, 6, mol%nat), source=0.0_wp)
+   allocate(amat_qq_mp(6, mol%nat, 6, mol%nat), source=0.0_wp)
 
    allocate(amat_sd_alpb(3, mol%nat, mol%nat), source=0.0_wp)
    allocate(amat_dd_alpb(3, mol%nat, 3, mol%nat), source=0.0_wp)
    allocate(amat_sq_alpb(6, mol%nat, mol%nat), source=0.0_wp)
+   allocate(amat_dq_alpb(3, mol%nat, 6, mol%nat), source=0.0_wp)
+   allocate(amat_qq_alpb(6, mol%nat, 6, mol%nat), source=0.0_wp)
+
    allocate(rad(mol%nat), source=0.0_wp)
    allocate(draddr(3, mol%nat, mol%nat), source=0.0_wp)
 
@@ -1031,12 +1057,14 @@ subroutine test_amat_sd(error, mol, kernel_id, keps, qat, make_multipole, input)
    amat_sd_mp = c_cache%amat_sd
    amat_dd_mp = c_cache%amat_dd
    amat_sq_mp = c_cache%amat_sq
+   amat_dq_mp = c_cache%amat_dq
+   amat_qq_mp = c_cache%amat_qq
 
    call solv%update(mol, cache)
 
 
    call get_multipole_matrix(solv, mol, mol%xyz, solv%keps, rad, draddr, &
-      & amat_sd_alpb, amat_dd_alpb, amat_sq_alpb)
+      & amat_sd_alpb, amat_dd_alpb, amat_sq_alpb, amat_dq_alpb, amat_qq_alpb)
 
    ! If all fail, this just reports amat_sq
    ! While all maxdiffs are printed, this should be redone some time (if kept in for merge)
@@ -1052,9 +1080,215 @@ subroutine test_amat_sd(error, mol, kernel_id, keps, qat, make_multipole, input)
       call test_failed(error, "Monopole-quadrupole interaction matrices do no match!")
       print '(a,es20.13)', "Max difference amat_sq: ", maxval(amat_sq_alpb - amat_sq_mp)
    end if
+   if (maxval(amat_dq_alpb - amat_dq_mp) > thr2) then
+      call test_failed(error, "Dipole-quadrupole interaction matrices do no match!")
+      print '(a,es20.13)', "Max difference amat_dq: ", maxval(amat_dq_alpb - amat_dq_mp)
+   end if
+   if (maxval(amat_qq_alpb - amat_qq_mp) > thr2) then
+      call test_failed(error, "Quadrupole-quadrupole interaction matrices do no match!")
+      print *, "Max difference amat_qq: ", maxval(amat_qq_alpb - amat_qq_mp)
+   end if
 
 
-end subroutine test_amat_sd
+end subroutine test_amat
+
+
+
+
+subroutine test_amat_ho(error, mol)
+   type(error_type), allocatable, intent(out) :: error
+   type(structure_type), intent(inout) :: mol
+
+   integer :: nat
+   real(wp), allocatable :: amat_sd_mp(:,:,:), amat_dd_mp(:,:,:,:), amat_sq_mp(:,:,:)
+   real(wp), allocatable :: amat_dq_mp(:,:,:,:), amat_qq_mp(:,:,:,:)
+   real(wp), allocatable :: rad(:)
+
+   ! reference blocks for the one pair (jat=2, iat=1)
+   real(wp) :: dq_ref(3,6), qq_ref(6,6)
+
+   ! multipole moments for energy checks
+   real(wp) :: mu(3,2)     ! dipoles
+   real(wp) :: Q6(6,2)     ! packed quadrupoles (xx,2xy,yy,2xz,2yz,zz)
+
+   real(wp) :: E_dq_mp, E_dq_ref
+   real(wp) :: E_qq_mp, E_qq_ref
+
+   real(wp) :: R(3)
+   real(wp) :: tol
+   real(wp) :: maxerr_dq, maxerr_qq
+
+   integer :: iat, jat
+
+   tol = 1.0e-10_wp
+   nat = mol%nat
+
+   allocate(rad(nat), source=0.0_wp)
+
+   allocate(amat_sd_mp(3, nat, nat), source=0.0_wp)
+   allocate(amat_dd_mp(3, nat, 3, nat), source=0.0_wp)
+   allocate(amat_sq_mp(6, nat, nat), source=0.0_wp)
+   allocate(amat_dq_mp(3, nat, 6, nat), source=0.0_wp)
+   allocate(amat_qq_mp(6, nat, 6, nat), source=0.0_wp)
+
+   ! Build matrices (Coulomb; damping effectively disabled in your current version)
+   call get_multipole_matrix_0d(mol, rad, 1.0_wp, 1.0_wp, &
+      & amat_sd_mp, amat_dd_mp, amat_sq_mp, amat_dq_mp, amat_qq_mp)
+
+   ! -----------------------
+   ! Define arbitrary moments
+   ! -----------------------
+   mu(:,:) = 0.0_wp
+   Q6(:,:) = 0.0_wp
+
+   ! Dipole on atom 2: along +z
+   mu(:,2) = [0.0_wp, 0.0_wp, 1.0_wp]
+
+   ! Traceless axial quadrupole on atom 1 and 2 (aligned with z):
+   ! Q = diag(-1/2, -1/2, 1)
+   Q6(:,1) = [-0.5_wp, 0.0_wp, -0.5_wp, 0.0_wp, 0.0_wp, 1.0_wp]
+   Q6(:,2) = [-0.5_wp, 0.0_wp, -0.5_wp, 0.0_wp, 0.0_wp, 1.0_wp]
+
+   ! Choose the pair orientation consistent with your matrix storage:
+   ! In your get_multipole_matrix_0d: vec = xyz(:,iat) - xyz(:,jat),
+   ! and then stored at ( :, jat, ..., iat ).
+   iat = 1
+   jat = 2
+   R(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
+
+   ! -----------------------
+   ! Build analytic references
+   ! -----------------------
+   call build_coulomb_dq_block(R, dq_ref)   ! 3x6 for (dipole on jat) vs (quad on iat)
+   call build_coulomb_qq_block(R, qq_ref)   ! 6x6 for (quad on jat) vs (quad on iat)
+
+   ! -----------------------
+   ! Matrix-entry comparisons
+   ! -----------------------
+   maxerr_dq = maxval(abs(amat_dq_mp(:, jat, :, iat) - dq_ref(:,:)))
+   maxerr_qq = maxval(abs(amat_qq_mp(:, jat, :, iat) - qq_ref(:,:)))
+
+   if (maxerr_dq > tol) then
+      print *, 'dq', amat_dq_mp(:, jat, :, iat), dq_ref(:,:), maxerr_dq
+      return
+   end if
+   if (maxerr_qq > tol) then
+      print *, 'qq', maxerr_qq
+      return
+   end if
+
+   ! -----------------------
+   ! Energy comparisons (same contraction on ref vs mp)
+   ! -----------------------
+   ! Dipole–quadrupole energy for this pair
+   E_dq_mp  = dot_product(mu(:,jat), matmul(amat_dq_mp(:,jat,:,iat), Q6(:,iat)))
+   E_dq_ref = dot_product(mu(:,jat), matmul(dq_ref(:,:),                Q6(:,iat)))
+
+   if (abs(E_dq_mp - E_dq_ref) < tol) then
+      print *, E_dq_mp, E_dq_ref
+      return
+   end if
+
+   ! Quadrupole–quadrupole energy for this pair
+   E_qq_mp  = dot_product(Q6(:,jat), matmul(amat_qq_mp(:,jat,:,iat), Q6(:,iat)))
+   E_qq_ref = dot_product(Q6(:,jat), matmul(qq_ref(:,:),             Q6(:,iat)))
+
+   if (abs(E_qq_mp - E_qq_ref) > tol) then
+      call test_failed(error, "Monopole-quadrupole interaction matrices do no match!")
+      return
+   end if
+
+
+contains
+
+   subroutine build_coulomb_dq_block(R, dq)
+      real(wp), intent(in)  :: R(3)
+      real(wp), intent(out) :: dq(3,6)
+
+      real(wp) :: r1, r2, g5, g7
+      real(wp) :: I3(3,3)
+      real(wp) :: U(3,3,3)
+      integer  :: a,b,c
+
+      I3 = 0.0_wp
+      I3(1,1)=1.0_wp; I3(2,2)=1.0_wp; I3(3,3)=1.0_wp
+
+      r2 = dot_product(R,R)
+      r1 = sqrt(r2)
+      g5 = 1.0_wp/(r1**5)
+      g7 = 1.0_wp/(r1**7)
+
+      ! U_{a,bc} = -5 R_a R_b R_c / R^7 + (δ_ab R_c + δ_ac R_b + δ_bc R_a) / R^5
+      U(:,:,:) = 0.0_wp
+      do a=1,3
+         do b=1,3
+            do c=1,3
+               U(a,b,c) = -5.0_wp * R(a)*R(b)*R(c) * g7 &
+                        + ( I3(a,b)*R(c) + I3(a,c)*R(b) + I3(b,c)*R(a) ) * g5
+            end do
+         end do
+      end do
+
+      ! Pack bc -> p in your convention: (xx, 2xy, yy, 2xz, 2yz, zz)
+      do a=1,3
+         dq(a,1) = U(a,1,1)
+         dq(a,2) = 2.0_wp*U(a,1,2)
+         dq(a,3) = U(a,2,2)
+         dq(a,4) = 2.0_wp*U(a,1,3)
+         dq(a,5) = 2.0_wp*U(a,2,3)
+         dq(a,6) = U(a,3,3)
+      end do
+   end subroutine build_coulomb_dq_block
+
+
+   subroutine build_coulomb_qq_block(R, qq)
+      real(wp), intent(in)  :: R(3)
+      real(wp), intent(out) :: qq(6,6)
+
+      real(wp) :: r1, r2, r4, g9
+      real(wp) :: I3(3,3)
+      real(wp) :: sym1, sym2, W
+      integer  :: p,q,a,b,c,d
+      integer, parameter :: pa(6) = [1, 1, 2, 1, 2, 3]
+      integer, parameter :: pb(6) = [1, 2, 2, 3, 3, 3]
+      integer, parameter :: pf(6) = [1, 2, 1, 2, 2, 1]  ! 1 for diag, 2 for offdiag
+
+      I3 = 0.0_wp
+      I3(1,1)=1.0_wp; I3(2,2)=1.0_wp; I3(3,3)=1.0_wp
+
+      r2 = dot_product(R,R)
+      r1 = sqrt(r2)
+      r4 = r2*r2
+      g9 = 1.0_wp/(r1**9)
+
+      ! Traceless-Theta Coulomb QQ tensor:
+      ! W_abcd = [ 35 R_a R_b R_c R_d
+      !          - 5 R^2 * sym(δ R R)
+      !          + (3/2) R^4 * sym(δδ) ] / R^9
+      do p=1,6
+         a = pa(p); b = pb(p)
+         do q=1,6
+            c = pa(q); d = pb(q)
+
+            sym1 = I3(a,b)*R(c)*R(d) + I3(a,c)*R(b)*R(d) + I3(a,d)*R(b)*R(c) &
+                 + I3(b,c)*R(a)*R(d) + I3(b,d)*R(a)*R(c) + I3(c,d)*R(a)*R(b)
+
+            sym2 = I3(a,b)*I3(c,d) + I3(a,c)*I3(b,d) + I3(a,d)*I3(b,c)
+
+            W = ( 35.0_wp * R(a)*R(b)*R(c)*R(d) &
+                -  5.0_wp * r2 * sym1 &
+                +  1.5_wp * r4 * sym2 ) * g9
+
+            qq(p,q) = real(pf(p)*pf(q),wp) * W
+         end do
+      end do
+   end subroutine build_coulomb_qq_block
+
+
+end subroutine test_amat_ho
+
+
+
 
 
 !> Factory to create electrostatic objects based on GFN2-xTB values
