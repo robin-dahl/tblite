@@ -22,9 +22,9 @@ module test_solvation_kernel
    use mstore, only : get_structure
    use tblite_solvation_born, only : born_integrator, new_born_integrator
    use tblite_solvation_data, only : get_vdw_rad_cosmo, get_vdw_rad_d3
-   use tblite_solvation_kernel, only : kernel_type, new_kernel, kernel_enum, compute_kernel_dKdr_ij, compute_kernel_d2Kdr2_ij, compute_kernel_d3Kdr3_ij, &
-      & compute_kernel_d4Kdr4_ij
-   use tblite_solvation_alpb, only : alpb_solvation, alpb_input, get_multipole_matrix, alpb_cache
+   use tblite_solvation_kernel, only : kernel_type, new_kernel, kernel_enum, compute_kernel_d3Kdr3_ij, &
+      & compute_coulomb_dKdr, compute_kernel_dKdr, compute_kernel_d2Kdr2, compute_kernel_d3Kdr3, compute_kernel_d4Kdr4
+   use tblite_solvation_alpb, only : alpb_solvation, alpb_input, get_multipole_matrices, alpb_cache
    use tblite_solvation_data_alpb, only : get_alpb_param
    use tblite_solvation_data, only : solvent_data, get_vdw_rad_d3, get_solvent_data
 
@@ -59,20 +59,20 @@ subroutine collect_solvation_kernel(testsuite)
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
    testsuite = [ &
-      new_unittest("amat-coulomb", test_amat_coulomb) &
-      !   new_unittest("amat-higher-order-coulomb", test_amat_higher_order_coulomb) &
-      ! new_unittest("kernel-gradient-still", test_kernel_gradient_still), &
-      ! new_unittest("kernel-hessian-still", test_kernel_hessian_still), &
-      ! new_unittest("kernel-third-still", test_kernel_third_still), &
-      !   new_unittest("kernel-fourth-still", test_kernel_fourth_still), &
-      ! new_unittest("kernel-gradient-p16", test_kernel_gradient_p16), &
-      ! new_unittest("kernel-hessian-p16", test_kernel_hessian_p16), &
-      ! new_unittest("kernel-third-p16", test_kernel_third_p16), &
-      !   new_unittest("kernel-fourth-p16", test_kernel_fourth_p16) &
-      ! new_unittest("kernel-gradient-coulomb", test_kernel_gradient_coulomb), &
-      ! new_unittest("kernel-hessian-coulomb", test_kernel_hessian_coulomb), &
-      ! new_unittest("kernel-third-coulomb", test_kernel_third_coulomb) &
-      !   new_unittest("kernel-fourth-coulomb", test_kernel_fourth_coulomb) &
+      new_unittest("amat-coulomb", test_amat_coulomb), &
+      new_unittest("amat-higher-order-coulomb", test_amat_higher_order_coulomb), &
+      new_unittest("kernel-gradient-still", test_kernel_gradient_still), &
+      new_unittest("kernel-hessian-still", test_kernel_hessian_still), &
+      new_unittest("kernel-third-still", test_kernel_third_still), &
+      ! new_unittest("kernel-fourth-still", test_kernel_fourth_still) &
+      new_unittest("kernel-gradient-p16", test_kernel_gradient_p16), &
+      new_unittest("kernel-hessian-p16", test_kernel_hessian_p16), &
+      new_unittest("kernel-third-p16", test_kernel_third_p16), &
+      !  new_unittest("kernel-fourth-p16", test_kernel_fourth_p16) &
+      new_unittest("kernel-gradient-coulomb", test_kernel_gradient_coulomb), &
+      new_unittest("kernel-hessian-coulomb", test_kernel_hessian_coulomb), &
+      new_unittest("kernel-third-coulomb", test_kernel_third_coulomb) &
+      !  new_unittest("kernel-fourth-coulomb", test_kernel_fourth_coulomb) &
       ]
 
 end subroutine collect_solvation_kernel
@@ -397,6 +397,81 @@ end subroutine test_amat_higher_order_coulomb
 
 
 !> Test kernel gradient against numerical one.
+! subroutine test_kernel_numg(error, mol, kernel_id, keps, qat)
+!    type(error_type), allocatable, intent(out) :: error
+!    type(structure_type), intent(inout) :: mol
+!    integer, intent(in) :: kernel_id
+!    real(wp), intent(in) :: keps
+!    real(wp), intent(in) :: qat(:)
+
+!    type(born_integrator) :: gbobc
+!    class(kernel_type), allocatable :: kernel
+!    real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
+!    real(wp), allocatable :: amat_r(:, :), amat_l(:, :)
+!    real(wp), allocatable :: numg_kernel(:, :, :, :)
+!    real(wp), allocatable :: ana_ij(:, :)
+!    real(wp), parameter :: step = 1.0e-6_wp
+!    integer :: iat, jat, ic, jc
+!    real(wp) :: maxdiff
+
+!    rvdw = get_vdw_rad_d3(mol%num)
+!    call new_born_integrator(gbobc, mol, rvdw)
+!    kernel = new_kernel(kernel_id, keps)
+
+!    allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
+!    allocate(amat_r(mol%nat, mol%nat), amat_l(mol%nat, mol%nat))
+!    allocate(numg_kernel(3, mol%nat, mol%nat, mol%nat))
+!    allocate(ana_ij(3, mol%nat))
+
+!    ! --- Numerical derivative: numg_kernel(alpha, k, m, n) = dK_mn / dr_k,alpha
+!    numg_kernel(:, :, :, :) = 0.0_wp
+
+!    do iat = 1, mol%nat
+!       do ic = 1, 3
+!          mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
+!          call gbobc%get_rad(mol, rad)
+!          amat_r(:, :) = 0.0_wp
+!          call kernel%add_kernel_mat(mol%nat, mol%xyz, rad, amat_r)
+
+!          mol%xyz(ic, iat) = mol%xyz(ic, iat) - 2*step
+!          call gbobc%get_rad(mol, rad)
+!          amat_l(:, :) = 0.0_wp
+!          call kernel%add_kernel_mat(mol%nat, mol%xyz, rad, amat_l)
+
+!          mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
+
+!          do jat = 1, mol%nat
+!             do jc = 1, mol%nat
+!                numg_kernel(ic, iat, jat, jc) = 0.5_wp * (amat_r(jat, jc) - amat_l(jat, jc)) / step
+!             end do
+!          end do
+!       end do
+!    end do
+
+!    ! --- Analytical: get brad + brdr once at reference geometry
+!    call gbobc%get_rad(mol, rad, draddr)
+
+!    ! Compare: for each (m,n), compute ana_ij(:,k)=dK_mn/dr_k and compare to numg_kernel(:,:,m,n)
+!    do jat = 1, mol%nat
+!       do jc = 1, mol%nat
+!          call compute_kernel_dkdr_ij(kernel_id, keps, mol%nat, mol%xyz, rad, draddr, jat, jc, ana_ij)
+
+!          maxdiff = maxval(abs(ana_ij(:, :) - numg_kernel(:, :, jat, jc)))
+!          if (maxdiff > thr2) then
+!             call test_failed(error, "Kernel gradient does not match finite difference solution")
+!             print '(a,2i6, a, es20.13)', "Mismatch at (m,n)=(", jat, jc, "), max|diff|=", maxdiff
+!             print '(a)', "Analytical dK_mn/dr_k (3,nat):"
+!             print '(3es20.13)', ana_ij
+!             print '(a)', "Numerical dK_mn/dr_k (3,nat):"
+!             print '(3es20.13)', numg_kernel(:, :, jat, jc)
+!             print '(a)', "Difference (ana - num):"
+!             print '(3es20.13)', ana_ij - numg_kernel(:, :, jat, jc)
+!             return
+!          end if
+!       end do
+!    end do
+! end subroutine test_kernel_numg
+
 subroutine test_kernel_numg(error, mol, kernel_id, keps, qat)
    type(error_type), allocatable, intent(out) :: error
    type(structure_type), intent(inout) :: mol
@@ -409,10 +484,12 @@ subroutine test_kernel_numg(error, mol, kernel_id, keps, qat)
    real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
    real(wp), allocatable :: amat_r(:, :), amat_l(:, :)
    real(wp), allocatable :: numg_kernel(:, :, :, :)
-   real(wp), allocatable :: ana_ij(:, :)
+   real(wp), allocatable :: ana_ij(:, :)         ! (3,nat) from old "matrix-returning" routine (optional)
+   real(wp), allocatable :: ana_elem(:, :)       ! (3,nat) built element-by-element
    real(wp), parameter :: step = 1.0e-6_wp
-   integer :: iat, jat, ic, jc
-   real(wp) :: maxdiff
+   integer :: iat, jat, ic, jc, k, alpha
+   real(wp) :: maxdiff, dKdr_elem
+   integer :: loc(2)
 
    rvdw = get_vdw_rad_d3(mol%num)
    call new_born_integrator(gbobc, mol, rvdw)
@@ -421,11 +498,12 @@ subroutine test_kernel_numg(error, mol, kernel_id, keps, qat)
    allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
    allocate(amat_r(mol%nat, mol%nat), amat_l(mol%nat, mol%nat))
    allocate(numg_kernel(3, mol%nat, mol%nat, mol%nat))
-   allocate(ana_ij(3, mol%nat))
+   allocate(ana_elem(3, mol%nat))
+   allocate(ana_ij(3, mol%nat))   ! keep if you still want to cross-check old routine too
 
    ! --- Numerical derivative: numg_kernel(alpha, k, m, n) = dK_mn / dr_k,alpha
    numg_kernel(:, :, :, :) = 0.0_wp
-
+   call gbobc%get_rad(mol, rad)
    do iat = 1, mol%nat
       do ic = 1, 3
          mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
@@ -448,32 +526,181 @@ subroutine test_kernel_numg(error, mol, kernel_id, keps, qat)
       end do
    end do
 
-   ! --- Analytical: get brad + brdr once at reference geometry
+   ! --- Analytical geometry-dependent quantities once at reference geometry
    call gbobc%get_rad(mol, rad, draddr)
 
-   ! Compare: for each (m,n), compute ana_ij(:,k)=dK_mn/dr_k and compare to numg_kernel(:,:,m,n)
+   ! Compare for each (m,n): build analytical dK_mn/dr_k,alpha element-by-element
    do jat = 1, mol%nat
       do jc = 1, mol%nat
-         call compute_kernel_dkdr_ij(kernel_id, keps, mol%nat, mol%xyz, rad, draddr, jat, jc, ana_ij)
 
-         maxdiff = maxval(abs(ana_ij(:, :) - numg_kernel(:, :, jat, jc)))
+         ! -------- element-by-element analytical gradient -----------
+         ana_elem(:, :) = 0.0_wp
+         do k = 1, mol%nat
+            do alpha = 1, 3
+               dKdr_elem = 0.0_wp
+
+               ! Type-bound call on the kernel object.
+               ! Adjust the binding name/signature to whatever you standardized, e.g.:
+               !   call kernel%compute_dKdr_elem(nat, xyz, brad, i, j, k, alpha, dKdr_elem, brdr)
+               !
+               call compute_kernel_dKdr(kernel_id, keps, mol%nat, mol%xyz, rad,  &
+                  jat, jc, k, alpha, dKdr_elem, brdr=draddr )
+
+               ana_elem(alpha, k) = dKdr_elem
+                              
+            end do
+         end do
+
+         maxdiff = maxval(abs(ana_elem(:, :) - numg_kernel(:, :, jat, jc)))
          if (maxdiff > thr2) then
-            call test_failed(error, "Kernel gradient does not match finite difference solution")
+            loc = maxloc(abs(ana_elem(:, :) - numg_kernel(:, :, jat, jc)))
+            call test_failed(error, "Kernel gradient (elem-by-elem) does not match finite difference solution")
             print '(a,2i6, a, es20.13)', "Mismatch at (m,n)=(", jat, jc, "), max|diff|=", maxdiff
-            print '(a)', "Analytical dK_mn/dr_k (3,nat):"
-            print '(3es20.13)', ana_ij
-            print '(a)', "Numerical dK_mn/dr_k (3,nat):"
-            print '(3es20.13)', numg_kernel(:, :, jat, jc)
-            print '(a)', "Difference (ana - num):"
-            print '(3es20.13)', ana_ij - numg_kernel(:, :, jat, jc)
+            print '(a,i2,a,i6)', "Worst entry at alpha=", loc(1), " k=", loc(2)
+            print '(a,3es20.13)', "ana_elem(:,k)=", ana_elem(:, loc(2))
+            print '(a,3es20.13)', "numg   (:,k)=", numg_kernel(:, loc(2), jat, jc)
+            print '(a,3es20.13)', "diff   (:,k)=", ana_elem(:, loc(2)) - numg_kernel(:, loc(2), jat, jc)
             return
          end if
+
       end do
    end do
+
 end subroutine test_kernel_numg
+
 
 !> Test kernel 2nd derivative against numerical finite difference of the 
 !> analytical 1st derivative.
+! subroutine test_kernel_numh(error, mol, kernel_id, keps, qat)
+!    type(error_type), allocatable, intent(out) :: error
+!    type(structure_type), intent(inout) :: mol
+!    integer, intent(in) :: kernel_id
+!    real(wp), intent(in) :: keps
+!    real(wp), intent(in) :: qat(:)
+
+!    type(born_integrator) :: gbobc
+!    class(kernel_type), allocatable :: kernel
+
+!    real(wp), allocatable :: rvdw(:), rad(:)
+!    real(wp), allocatable :: draddr(:, :, :)
+!    real(wp), allocatable :: draddr2(:, :, :, :, :)
+
+!    real(wp), allocatable :: dkdr_p_ij(:, :)     ! (3,nat)
+!    real(wp), allocatable :: dkdr_m_ij(:, :)     ! (3,nat)
+!    real(wp), allocatable :: num2(:, :, :, :)    ! (3,nat,3,nat) for one (m,n)
+!    real(wp), allocatable :: ana2(:, :, :, :)    ! (3,nat,3,nat) for one (m,n)
+
+!    real(wp), parameter :: step = 1.0e-6_wp
+!    integer :: nat, m, n, l, beta, k, alpha
+!    real(wp) :: diff, maxdiff
+!    integer :: imax_alpha, imax_k, imax_beta, imax_l, imax_m, imax_n
+
+!    nat = mol%nat
+
+!    rvdw = get_vdw_rad_d3(mol%num)
+!    call new_born_integrator(gbobc, mol, rvdw)
+!    kernel = new_kernel(kernel_id, keps)
+
+!    allocate(rad(nat))
+!    allocate(draddr(3, nat, nat))
+!    allocate(draddr2(3, nat, 3, nat, nat))
+
+!    allocate(dkdr_p_ij(3, nat), dkdr_m_ij(3, nat))
+!    allocate(num2(3, nat, 3, nat))
+!    allocate(ana2(3, nat, 3, nat))
+
+!    ! Analytical Born radii derivatives at reference geometry (need brdr2!)
+!    call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
+
+!    maxdiff = 0.0_wp
+!    imax_alpha=1; imax_k=1; imax_beta=1; imax_l=1; imax_m=1; imax_n=1
+
+!    do m = 1, nat
+!       do n = 1, nat
+
+!          ! ---- Analytical slice for this (m,n)
+!          call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, m, n, ana2)
+
+!          ! ---- Numerical slice for this (m,n) by FD of dkdr_ij
+!          num2(:, :, :, :) = 0.0_wp
+
+!          do l = 1, nat
+!             do beta = 1, 3
+
+!                ! +step
+!                mol%xyz(beta, l) = mol%xyz(beta, l) + step
+!                call gbobc%get_rad(mol, rad, draddr)
+!                call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, m, n, dkdr_p_ij)
+
+!                ! -step
+!                mol%xyz(beta, l) = mol%xyz(beta, l) - 2.0_wp*step
+!                call gbobc%get_rad(mol, rad, draddr)
+!                call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, m, n, dkdr_m_ij)
+
+!                ! restore
+!                mol%xyz(beta, l) = mol%xyz(beta, l) + step
+
+!                do k = 1, nat
+!                   do alpha = 1, 3
+!                      num2(alpha, k, beta, l) = 0.5_wp * (dkdr_p_ij(alpha, k) - dkdr_m_ij(alpha, k)) / step
+!                   end do
+!                end do
+
+!             end do
+!          end do
+
+!          ! ---- Compare this slice
+!          do k = 1, nat
+!             do alpha = 1, 3
+!                do l = 1, nat
+!                   do beta = 1, 3
+!                      diff = abs(ana2(alpha, k, beta, l) - num2(alpha, k, beta, l))
+!                      if (diff > maxdiff) then
+!                         maxdiff = diff
+!                         imax_alpha = alpha
+!                         imax_k     = k
+!                         imax_beta  = beta
+!                         imax_l     = l
+!                         imax_m     = m
+!                         imax_n     = n
+!                      end if
+!                   end do
+!                end do
+!             end do
+!          end do
+
+!       end do
+!    end do
+
+!    if (maxdiff > thr2) then
+!       call test_failed(error, "Kernel second derivative does not match finite difference solution")
+!       print '(a,es20.13)', "Max |d2K/dr2| difference: ", maxdiff
+!       print '(a,6(i0,1x))', "At indices (alpha,k,beta,l,m,n) = ", imax_alpha, imax_k, imax_beta, imax_l, imax_m, imax_n
+!       ! Recompute the offending slice and report the single entry
+!       call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
+!       call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, imax_m, imax_n, ana2)
+
+!       mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) + step
+!       call gbobc%get_rad(mol, rad, draddr)
+!       call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, imax_m, imax_n, dkdr_p_ij)
+
+!       mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) - 2.0_wp*step
+!       call gbobc%get_rad(mol, rad, draddr)
+!       call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, imax_m, imax_n, dkdr_m_ij)
+
+!       mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) + step
+
+!       num2(imax_alpha, imax_k, imax_beta, imax_l) = 0.5_wp * (dkdr_p_ij(imax_alpha, imax_k) - dkdr_m_ij(imax_alpha, imax_k)) / step
+
+!       print '(a,es20.13)', "Analytical value: ", ana2(imax_alpha, imax_k, imax_beta, imax_l)
+!       print '(a,es20.13)', "Numerical  value: ", num2(imax_alpha, imax_k, imax_beta, imax_l)
+!       print '(a,es20.13)', "Difference       : ", ana2(imax_alpha, imax_k, imax_beta, imax_l) - num2(imax_alpha, imax_k, imax_beta, imax_l)
+!    end if
+
+! end subroutine test_kernel_numh
+
+
+
 subroutine test_kernel_numh(error, mol, kernel_id, keps, qat)
    type(error_type), allocatable, intent(out) :: error
    type(structure_type), intent(inout) :: mol
@@ -484,19 +711,28 @@ subroutine test_kernel_numh(error, mol, kernel_id, keps, qat)
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
 
-   real(wp), allocatable :: rvdw(:), rad(:)
-   real(wp), allocatable :: draddr(:, :, :)
-   real(wp), allocatable :: draddr2(:, :, :, :, :)
+   integer :: nat
+   real(wp), allocatable :: rvdw(:)
 
-   real(wp), allocatable :: dkdr_p_ij(:, :)     ! (3,nat)
-   real(wp), allocatable :: dkdr_m_ij(:, :)     ! (3,nat)
-   real(wp), allocatable :: num2(:, :, :, :)    ! (3,nat,3,nat) for one (m,n)
-   real(wp), allocatable :: ana2(:, :, :, :)    ! (3,nat,3,nat) for one (m,n)
+   ! --- Reference (unperturbed) Born data
+   real(wp), allocatable :: rad_ref(:)
+   real(wp), allocatable :: draddr_ref(:, :, :)
+   real(wp), allocatable :: draddr2_ref(:, :, :, :, :)
+
+   ! --- Work (perturbed) Born data for FD
+   real(wp), allocatable :: rad_w(:)
+   real(wp), allocatable :: draddr_w(:, :, :)
+
+   ! --- Numerical Hessian slice for one (m,n): (3,nat,3,nat)
+   real(wp), allocatable :: num2(:, :, :, :)
 
    real(wp), parameter :: step = 1.0e-6_wp
-   integer :: nat, m, n, l, beta, k, alpha
+   integer :: m, n, k, alpha, l, beta
+   real(wp) :: g_p, g_m
+   real(wp) :: ana_elem
    real(wp) :: diff, maxdiff
-   integer :: imax_alpha, imax_k, imax_beta, imax_l, imax_m, imax_n
+
+   integer :: imax_m, imax_n, imax_k, imax_alpha, imax_l, imax_beta
 
    nat = mol%nat
 
@@ -504,69 +740,88 @@ subroutine test_kernel_numh(error, mol, kernel_id, keps, qat)
    call new_born_integrator(gbobc, mol, rvdw)
    kernel = new_kernel(kernel_id, keps)
 
-   allocate(rad(nat))
-   allocate(draddr(3, nat, nat))
-   allocate(draddr2(3, nat, 3, nat, nat))
-
-   allocate(dkdr_p_ij(3, nat), dkdr_m_ij(3, nat))
+   allocate(rad_ref(nat), rad_w(nat))
+   allocate(draddr_ref(3, nat, nat), draddr_w(3, nat, nat))
+   allocate(draddr2_ref(3, nat, 3, nat, nat))
    allocate(num2(3, nat, 3, nat))
-   allocate(ana2(3, nat, 3, nat))
 
-   ! Analytical Born radii derivatives at reference geometry (need brdr2!)
-   call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
+   ! --- Reference geometry Born data (need brdr2 for analytical Hessian)
+   call gbobc%get_rad(mol, rad_ref, draddr_ref, dradd2r=draddr2_ref)
 
    maxdiff = 0.0_wp
-   imax_alpha=1; imax_k=1; imax_beta=1; imax_l=1; imax_m=1; imax_n=1
+   imax_m=1; imax_n=1; imax_k=1; imax_alpha=1; imax_l=1; imax_beta=1
 
    do m = 1, nat
       do n = 1, nat
 
-         ! ---- Analytical slice for this (m,n)
-         call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, m, n, ana2)
-
-         ! ---- Numerical slice for this (m,n) by FD of dkdr_ij
+         ! ============================================================
+         ! Numerical Hessian for this (m,n) by FD of element gradient:
+         !   num2(alpha,k,beta,l) = d/d r_{l,beta} ( dK_mn / d r_{k,alpha} )
+         ! ============================================================
          num2(:, :, :, :) = 0.0_wp
 
          do l = 1, nat
             do beta = 1, 3
 
-               ! +step
+               ! +step state
                mol%xyz(beta, l) = mol%xyz(beta, l) + step
-               call gbobc%get_rad(mol, rad, draddr)
-               call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, m, n, dkdr_p_ij)
-
-               ! -step
-               mol%xyz(beta, l) = mol%xyz(beta, l) - 2.0_wp*step
-               call gbobc%get_rad(mol, rad, draddr)
-               call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, m, n, dkdr_m_ij)
-
-               ! restore
-               mol%xyz(beta, l) = mol%xyz(beta, l) + step
+               call gbobc%get_rad(mol, rad_w, draddr_w)
 
                do k = 1, nat
                   do alpha = 1, 3
-                     num2(alpha, k, beta, l) = 0.5_wp * (dkdr_p_ij(alpha, k) - dkdr_m_ij(alpha, k)) / step
+                     g_p = 0.0_wp
+                     call compute_kernel_dKdr(kernel_id, keps, nat, mol%xyz, rad_w,  &
+                          m, n, k, alpha, g_p, brdr=draddr_w)
+                     num2(alpha, k, beta, l) = g_p   ! temporarily store g_p
                   end do
                end do
+
+               ! -step state
+               mol%xyz(beta, l) = mol%xyz(beta, l) - 2.0_wp*step
+               call gbobc%get_rad(mol, rad_w, draddr_w)
+
+               do k = 1, nat
+                  do alpha = 1, 3
+                     g_m = 0.0_wp
+                     call compute_kernel_dKdr(kernel_id, keps, nat, mol%xyz, rad_w,  &
+                          m, n, k, alpha, g_m, brdr=draddr_w)
+
+                     ! central difference: (g_p - g_m) / (2*step)
+                     num2(alpha, k, beta, l) = 0.5_wp * (num2(alpha, k, beta, l) - g_m) / step
+                  end do
+               end do
+
+               ! restore geometry
+               mol%xyz(beta, l) = mol%xyz(beta, l) + step
 
             end do
          end do
 
-         ! ---- Compare this slice
+         ! ============================================================
+         ! Compare against analytical element-wise Hessian at reference:
+         !   ana_elem = d^2 K_mn / ( d r_{k,alpha} d r_{l,beta} )
+         ! ============================================================
          do k = 1, nat
             do alpha = 1, 3
                do l = 1, nat
                   do beta = 1, 3
-                     diff = abs(ana2(alpha, k, beta, l) - num2(alpha, k, beta, l))
+
+                     ana_elem = 0.0_wp
+                     call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_ref,  &
+                          m, n, k, alpha, l, beta, ana_elem,  &
+                          brdr=draddr_ref, brdr2=draddr2_ref)
+
+                     diff = abs(ana_elem - num2(alpha, k, beta, l))
                      if (diff > maxdiff) then
-                        maxdiff = diff
-                        imax_alpha = alpha
-                        imax_k     = k
-                        imax_beta  = beta
-                        imax_l     = l
+                        maxdiff    = diff
                         imax_m     = m
                         imax_n     = n
+                        imax_k     = k
+                        imax_alpha = alpha
+                        imax_l     = l
+                        imax_beta  = beta
                      end if
+
                   end do
                end do
             end do
@@ -576,36 +831,153 @@ subroutine test_kernel_numh(error, mol, kernel_id, keps, qat)
    end do
 
    if (maxdiff > thr2) then
-      call test_failed(error, "Kernel second derivative does not match finite difference solution")
+      call test_failed(error, "Kernel Hessian (elem-by-elem) does not match finite difference solution")
       print '(a,es20.13)', "Max |d2K/dr2| difference: ", maxdiff
-      print '(a,6(i0,1x))', "At indices (alpha,k,beta,l,m,n) = ", imax_alpha, imax_k, imax_beta, imax_l, imax_m, imax_n
-      ! Recompute the offending slice and report the single entry
-      call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
-      call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, imax_m, imax_n, ana2)
+      print '(a,6(i0,1x))', "At indices (m,n,k,alpha,l,beta) = ", imax_m, imax_n, imax_k, imax_alpha, imax_l, imax_beta
 
+      ! Recompute analytical at reference
+      ! call gbobc%get_rad(mol, rad_ref, draddr_ref, dradd2r=draddr2_ref)
+      ana_elem = 0.0_wp
+      call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_ref,  &
+           imax_m, imax_n, imax_k, imax_alpha, imax_l, imax_beta, ana_elem) !, &
+         !   brdr=draddr_ref, brdr2=draddr2_ref)
+
+      ! Recompute numerical entry by FD of element gradient
       mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) + step
-      call gbobc%get_rad(mol, rad, draddr)
-      call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, imax_m, imax_n, dkdr_p_ij)
+      ! call gbobc%get_rad(mol, rad_w, draddr_w)
+      g_p = 0.0_wp
+      call compute_kernel_dKdr(kernel_id, keps, nat, mol%xyz, rad_w,  &
+           imax_m, imax_n, imax_k, imax_alpha, g_p) !, brdr=draddr_w)
 
       mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) - 2.0_wp*step
-      call gbobc%get_rad(mol, rad, draddr)
-      call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, imax_m, imax_n, dkdr_m_ij)
+      ! call gbobc%get_rad(mol, rad_w, draddr_w)
+      g_m = 0.0_wp
+      call compute_kernel_dKdr(kernel_id, keps, nat, mol%xyz, rad_w,  &
+           imax_m, imax_n, imax_k, imax_alpha, g_m) !, brdr=draddr_w)
 
       mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) + step
 
-      num2(imax_alpha, imax_k, imax_beta, imax_l) = 0.5_wp * (dkdr_p_ij(imax_alpha, imax_k) - dkdr_m_ij(imax_alpha, imax_k)) / step
-
-      print '(a,es20.13)', "Analytical value: ", ana2(imax_alpha, imax_k, imax_beta, imax_l)
-      print '(a,es20.13)', "Numerical  value: ", num2(imax_alpha, imax_k, imax_beta, imax_l)
-      print '(a,es20.13)', "Difference       : ", ana2(imax_alpha, imax_k, imax_beta, imax_l) - num2(imax_alpha, imax_k, imax_beta, imax_l)
+      print '(a,es20.13)', "Analytical value: ", ana_elem
+      print '(a,es20.13)', "Numerical  value: ", 0.5_wp * (g_p - g_m) / step
+      print '(a,es20.13)', "Difference       : ", ana_elem - (0.5_wp * (g_p - g_m) / step)
    end if
 
 end subroutine test_kernel_numh
 
 
 
-!> Test kernel 3rd derivative against numerical finite difference of the 
-!> analytical 2nd derivative.
+! > Test kernel 3rd derivative against numerical finite difference of the 
+! > analytical 2nd derivative.
+! subroutine test_kernel_numt(error, mol, kernel_id, keps, qat)
+!    type(error_type), allocatable, intent(out) :: error
+!    type(structure_type), intent(inout) :: mol
+!    integer, intent(in) :: kernel_id
+!    real(wp), intent(in) :: keps
+!    real(wp), intent(in) :: qat(:)
+
+!    type(born_integrator) :: gbobc
+!    class(kernel_type), allocatable :: kernel
+
+!    real(wp), allocatable :: rvdw(:), rad(:)
+!    real(wp), allocatable :: draddr(:, :, :)
+!    real(wp), allocatable :: draddr2(:, :, :, :, :)
+!    real(wp), allocatable :: draddr3(:, :, :, :, :, :, :)
+
+!    real(wp), allocatable :: d2p(:, :, :, :)      ! (3,nat,3,nat) for one (i,j)
+!    real(wp), allocatable :: d2m(:, :, :, :)      ! (3,nat,3,nat) for one (i,j)
+!    real(wp), allocatable :: num3(:, :, :, :, :, :) ! (3,nat,3,nat,3,nat) for one (i,j)
+!    real(wp), allocatable :: ana3(:, :, :, :, :, :) ! (3,nat,3,nat,3,nat) for one (i,j)
+
+!    real(wp), parameter :: step = 1.0e-6_wp
+!    integer :: nat, i, j, k, l, m, alpha, beta, gamma
+!    real(wp) :: diff, maxdiff
+!    integer :: ia, ik, ib, il, ig, im, ii, ij  ! index record for reporting
+
+!    nat = mol%nat
+!    rvdw = get_vdw_rad_d3(mol%num)
+!    call new_born_integrator(gbobc, mol, rvdw)
+!    kernel = new_kernel(kernel_id, keps)
+
+!    allocate(rad(nat))
+!    allocate(draddr(3,nat,nat))
+!    allocate(draddr2(3,nat,3,nat,nat))
+!    allocate(draddr3(3,nat,3,nat,3,nat,nat))
+
+!    allocate(d2p(3,nat,3,nat), d2m(3,nat,3,nat))
+!    allocate(num3(3,nat,3,nat,3,nat))
+!    allocate(ana3(3,nat,3,nat,3,nat))
+
+!    ! reference geometry: need up to brdr3 for analytical
+!    call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
+
+!    maxdiff = 0.0_wp
+!    ia=1;ik=1;ib=1;il=1;ig=1;im=1;ii=1;ij=1
+
+!    do i = 1, nat
+!       do j = 1, nat
+
+!          ! ---- analytical 3rd-derivative slab for this (i,j)
+!          call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, ana3)
+
+!          ! ---- numerical slab via FD of the ij Hessian
+!          num3(:, :, :, :, :, :) = 0.0_wp
+
+!          do m = 1, nat
+!             do gamma = 1, 3
+
+!                mol%xyz(gamma, m) = mol%xyz(gamma, m) + step
+!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
+!                call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, i, j, d2p)
+
+!                mol%xyz(gamma, m) = mol%xyz(gamma, m) - 2.0_wp*step
+!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
+!                call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, i, j, d2m)
+
+!                mol%xyz(gamma, m) = mol%xyz(gamma, m) + step
+
+!                do k = 1, nat
+!                   do alpha = 1, 3
+!                      do l = 1, nat
+!                         do beta = 1, 3
+!                            num3(alpha,k,beta,l,gamma,m) = 0.5_wp * (d2p(alpha,k,beta,l) - d2m(alpha,k,beta,l)) / step
+!                         end do
+!                      end do
+!                   end do
+!                end do
+
+!             end do
+!          end do
+
+!          ! ---- compare this slab; track worst entry globally
+!          do k = 1, nat
+!             do alpha = 1, 3
+!                do l = 1, nat
+!                   do beta = 1, 3
+!                      do m = 1, nat
+!                         do gamma = 1, 3
+!                            diff = abs(ana3(alpha,k,beta,l,gamma,m) - num3(alpha,k,beta,l,gamma,m))
+!                            if (diff > maxdiff) then
+!                               maxdiff = diff
+!                               ia=alpha; ik=k; ib=beta; il=l; ig=gamma; im=m; ii=i; ij=j
+!                            end if
+!                         end do
+!                      end do
+!                   end do
+!                end do
+!             end do
+!          end do
+
+!       end do
+!    end do
+
+!    if (maxdiff > thr2) then
+!       call test_failed(error, "Kernel third derivative does not match finite difference solution")
+!       print '(a,es20.13)', "Max |d3K/dr3| difference: ", maxdiff
+!       print '(a,8(i0,1x))', "At indices (a,k,b,l,g,m,i,j) = ", ia,ik,ib,il,ig,im,ii,ij
+!    end if
+
+! end subroutine test_kernel_numt
+
 subroutine test_kernel_numt(error, mol, kernel_id, keps, qat)
    type(error_type), allocatable, intent(out) :: error
    type(structure_type), intent(inout) :: mol
@@ -616,37 +988,43 @@ subroutine test_kernel_numt(error, mol, kernel_id, keps, qat)
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
 
-   real(wp), allocatable :: rvdw(:), rad(:)
-   real(wp), allocatable :: draddr(:, :, :)
-   real(wp), allocatable :: draddr2(:, :, :, :, :)
-   real(wp), allocatable :: draddr3(:, :, :, :, :, :, :)
+   integer :: nat
+   real(wp), allocatable :: rvdw(:)
 
-   real(wp), allocatable :: d2p(:, :, :, :)      ! (3,nat,3,nat) for one (i,j)
-   real(wp), allocatable :: d2m(:, :, :, :)      ! (3,nat,3,nat) for one (i,j)
-   real(wp), allocatable :: num3(:, :, :, :, :, :) ! (3,nat,3,nat,3,nat) for one (i,j)
-   real(wp), allocatable :: ana3(:, :, :, :, :, :) ! (3,nat,3,nat,3,nat) for one (i,j)
+   ! --- Reference (unperturbed) Born data for analytical d3K
+   real(wp), allocatable :: rad_ref(:)
+   real(wp), allocatable :: draddr_ref(:, :, :)
+   real(wp), allocatable :: draddr2_ref(:, :, :, :, :)
+   real(wp), allocatable :: draddr3_ref(:, :, :, :, :, :, :)
+
+   ! --- Work (perturbed) Born data for FD of Hessian
+   real(wp), allocatable :: rad_w(:)
+   real(wp), allocatable :: draddr_w(:, :, :)
+   real(wp), allocatable :: draddr2_w(:, :, :, :, :)
+
+   ! --- Hessian work blocks (one (i,j) per perturbation)
+   real(wp), allocatable :: d2p(:, :, :, :)   ! (3,nat,3,nat)
+   real(wp), allocatable :: d2m(:, :, :, :)   ! (3,nat,3,nat)
 
    real(wp), parameter :: step = 1.0e-6_wp
-   integer :: nat, i, j, k, l, m, alpha, beta, gamma
-   real(wp) :: diff, maxdiff
-   integer :: ia, ik, ib, il, ig, im, ii, ij  ! index record for reporting
+   integer :: i, j, k, l, m, alpha, beta, gamma
+   real(wp) :: ana3_elem, num3_elem, diff, maxdiff
+   integer :: ia, ik, ib, il, ig, im, ii, ij
 
    nat = mol%nat
    rvdw = get_vdw_rad_d3(mol%num)
    call new_born_integrator(gbobc, mol, rvdw)
    kernel = new_kernel(kernel_id, keps)
 
-   allocate(rad(nat))
-   allocate(draddr(3,nat,nat))
-   allocate(draddr2(3,nat,3,nat,nat))
-   allocate(draddr3(3,nat,3,nat,3,nat,nat))
+   allocate(rad_ref(nat), rad_w(nat))
+   allocate(draddr_ref(3,nat,nat), draddr_w(3,nat,nat))
+   allocate(draddr2_ref(3,nat,3,nat,nat), draddr2_w(3,nat,3,nat,nat))
+   allocate(draddr3_ref(3,nat,3,nat,3,nat,nat))
 
    allocate(d2p(3,nat,3,nat), d2m(3,nat,3,nat))
-   allocate(num3(3,nat,3,nat,3,nat))
-   allocate(ana3(3,nat,3,nat,3,nat))
 
-   ! reference geometry: need up to brdr3 for analytical
-   call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
+   ! --- Reference geometry: need up to brdr3 for analytical d3K
+   call gbobc%get_rad(mol, rad_ref, draddr_ref, dradd2r=draddr2_ref, dradd3r=draddr3_ref)
 
    maxdiff = 0.0_wp
    ia=1;ik=1;ib=1;il=1;ig=1;im=1;ii=1;ij=1
@@ -654,54 +1032,80 @@ subroutine test_kernel_numt(error, mol, kernel_id, keps, qat)
    do i = 1, nat
       do j = 1, nat
 
-         ! ---- analytical 3rd-derivative slab for this (i,j)
-         call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, ana3)
-
-         ! ---- numerical slab via FD of the ij Hessian
-         num3(:, :, :, :, :, :) = 0.0_wp
-
+         ! Numerical: FD of Hessian elements w.r.t. r_{m,gamma}
          do m = 1, nat
             do gamma = 1, 3
 
+               ! --------------------
+               ! +step: compute Hessian block d2p(alpha,k,beta,l)
+               ! --------------------
                mol%xyz(gamma, m) = mol%xyz(gamma, m) + step
-               call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
-               call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, i, j, d2p)
+               call gbobc%get_rad(mol, rad_w, draddr_w, dradd2r=draddr2_w)
 
-               mol%xyz(gamma, m) = mol%xyz(gamma, m) - 2.0_wp*step
-               call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
-               call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, i, j, d2m)
-
-               mol%xyz(gamma, m) = mol%xyz(gamma, m) + step
-
+               d2p(:, :, :, :) = 0.0_wp
                do k = 1, nat
                   do alpha = 1, 3
                      do l = 1, nat
                         do beta = 1, 3
-                           num3(alpha,k,beta,l,gamma,m) = 0.5_wp * (d2p(alpha,k,beta,l) - d2m(alpha,k,beta,l)) / step
+                           call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_w, &
+                                i, j, k, alpha, l, beta, d2p(alpha,k,beta,l), &
+                                brdr=draddr_w, brdr2=draddr2_w)
                         end do
                      end do
                   end do
                end do
 
-            end do
-         end do
+               ! --------------------
+               ! -step: compute Hessian block d2m(alpha,k,beta,l)
+               ! --------------------
+               mol%xyz(gamma, m) = mol%xyz(gamma, m) - 2.0_wp*step
+               call gbobc%get_rad(mol, rad_w, draddr_w, dradd2r=draddr2_w)
 
-         ! ---- compare this slab; track worst entry globally
-         do k = 1, nat
-            do alpha = 1, 3
-               do l = 1, nat
-                  do beta = 1, 3
-                     do m = 1, nat
-                        do gamma = 1, 3
-                           diff = abs(ana3(alpha,k,beta,l,gamma,m) - num3(alpha,k,beta,l,gamma,m))
+               d2m(:, :, :, :) = 0.0_wp
+               do k = 1, nat
+                  do alpha = 1, 3
+                     do l = 1, nat
+                        do beta = 1, 3
+                           call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_w, &
+                                i, j, k, alpha, l, beta, d2m(alpha,k,beta,l), &
+                                brdr=draddr_w, brdr2=draddr2_w)
+                        end do
+                     end do
+                  end do
+               end do
+
+               ! restore reference geometry
+               mol%xyz(gamma, m) = mol%xyz(gamma, m) + step
+
+               ! --------------------
+               ! Compare element-wise: ana3 vs FD(d2)
+               ! --------------------
+               do k = 1, nat
+                  do alpha = 1, 3
+                     do l = 1, nat
+                        do beta = 1, 3
+
+                           num3_elem = 0.5_wp * (d2p(alpha,k,beta,l) - d2m(alpha,k,beta,l)) / step
+
+                           ana3_elem = 0.0_wp
+                           call compute_kernel_d3Kdr3(kernel_id, keps, nat, mol%xyz, rad_ref, &
+                                i, j, k, alpha, l, beta, m, gamma, ana3_elem, &
+                                brdr=draddr_ref, brdr2=draddr2_ref, brdr3=draddr3_ref)
+
+                           diff = abs(ana3_elem - num3_elem)
                            if (diff > maxdiff) then
                               maxdiff = diff
-                              ia=alpha; ik=k; ib=beta; il=l; ig=gamma; im=m; ii=i; ij=j
+                              ia = alpha; ik = k
+                              ib = beta ; il = l
+                              ig = gamma; im = m
+                              ii = i    ; ij = j
                            end if
+
                         end do
                      end do
                   end do
                end do
+
             end do
          end do
 
@@ -709,12 +1113,38 @@ subroutine test_kernel_numt(error, mol, kernel_id, keps, qat)
    end do
 
    if (maxdiff > thr2) then
-      call test_failed(error, "Kernel third derivative does not match finite difference solution")
+      call test_failed(error, "Kernel third derivative (elem-by-elem) does not match finite difference solution")
       print '(a,es20.13)', "Max |d3K/dr3| difference: ", maxdiff
       print '(a,8(i0,1x))', "At indices (a,k,b,l,g,m,i,j) = ", ia,ik,ib,il,ig,im,ii,ij
+
+      ! Optional: print the offending values (recompute once, scalar only)
+      ana3_elem = 0.0_wp
+      call compute_kernel_d3Kdr3(kernel_id, keps, nat, mol%xyz, rad_ref, &
+           ii, ij, ik, ia, il, ib, im, ig, ana3_elem, &
+           brdr=draddr_ref, brdr2=draddr2_ref, brdr3=draddr3_ref)
+
+      mol%xyz(ig, im) = mol%xyz(ig, im) + step
+      call gbobc%get_rad(mol, rad_w, draddr_w, dradd2r=draddr2_w)
+      call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_w, &
+           ii, ij, ik, ia, il, ib, d2p(ia,ik,ib,il), brdr=draddr_w, brdr2=draddr2_w)
+
+      mol%xyz(ig, im) = mol%xyz(ig, im) - 2.0_wp*step
+      call gbobc%get_rad(mol, rad_w, draddr_w, dradd2r=draddr2_w)
+      call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_w, &
+           ii, ij, ik, ia, il, ib, d2m(ia,ik,ib,il), brdr=draddr_w, brdr2=draddr2_w)
+
+      mol%xyz(ig, im) = mol%xyz(ig, im) + step
+
+      num3_elem = 0.5_wp * (d2p(ia,ik,ib,il) - d2m(ia,ik,ib,il)) / step
+
+      print '(a,es20.13)', "Analytical value: ", ana3_elem
+      print '(a,es20.13)', "Numerical  value: ", num3_elem
+      print '(a,es20.13)', "Difference       : ", ana3_elem - num3_elem
    end if
 
 end subroutine test_kernel_numt
+
+
 
 
 ! subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
@@ -839,47 +1269,205 @@ end subroutine test_kernel_numt
 ! end subroutine test_kernel_numq
 
 
+! subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
+!    type(error_type), allocatable, intent(out) :: error
+!    type(structure_type), intent(inout) :: mol
+!    integer, intent(in) :: kernel_id
+!    real(wp), intent(in) :: keps
+!    real(wp), intent(in) :: qat(:)
+
+!    type(born_integrator) :: gbobc
+!    class(kernel_type), allocatable :: kernel
+
+!    real(wp), allocatable :: rvdw(:), rad(:)
+!    real(wp), allocatable :: draddr(:, :, :)
+!    real(wp), allocatable :: draddr2(:, :, :, :, :)
+!    real(wp), allocatable :: draddr3(:, :, :, :, :, :, :)
+!    real(wp), allocatable :: draddr4(:, :, :, :, :, :, :, :, :)
+
+!    ! 3rd-derivative slabs at shifted coordinates (for one (i,j))
+!    real(wp), allocatable :: d3pp(:, :, :, :, :, :)   ! x + 2h
+!    real(wp), allocatable :: d3p (:, :, :, :, :, :)   ! x + h
+!    real(wp), allocatable :: d3m (:, :, :, :, :, :)   ! x - h
+!    real(wp), allocatable :: d3mm(:, :, :, :, :, :)   ! x - 2h
+
+!    real(wp), allocatable :: num4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat) for one (i,j)
+!    real(wp), allocatable :: ana4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat) for one (i,j)
+
+!    real(wp), parameter :: step = 1.0e-6_wp
+!    integer :: nat, i, j, k, l, m, n, a, b, c, d
+!    real(wp) :: diff, maxdiff
+!    real(wp) :: x0
+!    integer :: ia, ik, ib, il, ic, im, id, in, ii, ij  ! index record for reporting
+
+!    nat = mol%nat
+!    rvdw = get_vdw_rad_d3(mol%num)
+!    call new_born_integrator(gbobc, mol, rvdw)
+!    kernel = new_kernel(kernel_id, keps)
+
+!    allocate(rad(nat))
+!    allocate(draddr(3,nat,nat))
+!    allocate(draddr2(3,nat,3,nat,nat))
+!    allocate(draddr3(3,nat,3,nat,3,nat,nat))
+!    allocate(draddr4(3,nat,3,nat,3,nat,3,nat,nat))
+
+!    allocate(d3pp(3,nat,3,nat,3,nat))
+!    allocate(d3p (3,nat,3,nat,3,nat))
+!    allocate(d3m (3,nat,3,nat,3,nat))
+!    allocate(d3mm(3,nat,3,nat,3,nat))
+
+!    allocate(num4(3,nat,3,nat,3,nat,3,nat))
+!    allocate(ana4(3,nat,3,nat,3,nat,3,nat))
+
+!    ! reference geometry: need up to brdr4 for analytical
+!    call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3, dradd4r=draddr4)
+
+!    maxdiff = 0.0_wp
+!    ia=1;ik=1;ib=1;il=1;ic=1;im=1;id=1;in=1;ii=1;ij=1
+
+!    do i = 1, nat
+!       do j = 1, nat
+
+!          ! ---- analytical 4th-derivative slab for this (i,j)
+!          call compute_kernel_d4kdr4_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, draddr4, i, j, ana4)
+
+!          ! ---- numerical slab via 4-point central FD of the ij third derivative
+!          num4(:, :, :, :, :, :, :, :) = 0.0_wp
+
+!          do n = 1, nat
+!             do d = 1, 3
+
+!                x0 = mol%xyz(d, n)
+
+!                ! x + 2h
+!                mol%xyz(d, n) = x0 + 2.0_wp*step
+!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
+!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3pp)
+
+!                ! x + h
+!                mol%xyz(d, n) = x0 + 1.0_wp*step
+!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
+!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3p)
+
+!                ! x - h
+!                mol%xyz(d, n) = x0 - 1.0_wp*step
+!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
+!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3m)
+
+!                ! x - 2h
+!                mol%xyz(d, n) = x0 - 2.0_wp*step
+!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
+!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3mm)
+
+!                ! restore
+!                mol%xyz(d, n) = x0
+
+!                ! 4-point (4th-order) central difference for first derivative:
+!                ! f'(x) ≈ (-f(x+2h) + 8f(x+h) - 8f(x-h) + f(x-2h)) / (12h)
+!                do k = 1, nat
+!                   do a = 1, 3
+!                      do l = 1, nat
+!                         do b = 1, 3
+!                            do m = 1, nat
+!                               do c = 1, 3
+!                                  num4(a,k,b,l,c,m,d,n) = (-d3pp(a,k,b,l,c,m) + 8.0_wp*d3p(a,k,b,l,c,m) &
+!                                                           -8.0_wp*d3m(a,k,b,l,c,m) + d3mm(a,k,b,l,c,m)) &
+!                                                           / (12.0_wp*step)
+!                               end do
+!                            end do
+!                         end do
+!                      end do
+!                   end do
+!                end do
+
+!             end do
+!          end do
+
+!          ! ---- compare this slab; track worst entry globally
+!          do k = 1, nat
+!             do a = 1, 3
+!                do l = 1, nat
+!                   do b = 1, 3
+!                      do m = 1, nat
+!                         do c = 1, 3
+!                            do n = 1, nat
+!                               do d = 1, 3
+!                                  diff = abs(ana4(a,k,b,l,c,m,d,n) - num4(a,k,b,l,c,m,d,n))
+!                                  if (diff > maxdiff) then
+!                                     maxdiff = diff
+!                                     ia=a; ik=k; ib=b; il=l; ic=c; im=m; id=d; in=n; ii=i; ij=j
+!                                     print *, ana4(a,k,b,l,c,m,d,n), num4(a,k,b,l,c,m,d,n)
+!                                  end if
+!                               end do
+!                            end do
+!                         end do
+!                      end do
+!                   end do
+!                end do
+!             end do
+!          end do
+
+!       end do
+!    end do
+
+!    if (maxdiff > thr2) then
+!       call test_failed(error, "Kernel fourth derivative does not match finite difference solution")
+!       print '(a,es20.13)', "Max |d4K/dr4| difference: ", maxdiff
+!       print '(a,10(i0,1x))', "At indices (a,k,b,l,c,m,d,n,i,j) = ", ia,ik,ib,il,ic,im,id,in,ii,ij
+!    end if
+
+! end subroutine test_kernel_numq
+
+
+
 subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
    type(error_type), allocatable, intent(out) :: error
-   type(structure_type), intent(inout) :: mol
-   integer, intent(in) :: kernel_id
-   real(wp), intent(in) :: keps
-   real(wp), intent(in) :: qat(:)
+   type(structure_type), intent(inout)        :: mol
+   integer, intent(in)                        :: kernel_id
+   real(wp), intent(in)                       :: keps
+   real(wp), intent(in)                       :: qat(:)
 
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
 
-   real(wp), allocatable :: rvdw(:), rad(:)
-   real(wp), allocatable :: draddr(:, :, :)
-   real(wp), allocatable :: draddr2(:, :, :, :, :)
-   real(wp), allocatable :: draddr3(:, :, :, :, :, :, :)
-   real(wp), allocatable :: draddr4(:, :, :, :, :, :, :, :, :)
+   integer :: nat
+   real(wp), allocatable :: rvdw(:)
 
-   ! 3rd-derivative slabs at shifted coordinates (for one (i,j))
+   ! Reference Born data (physics: held fixed for shifts)
+   real(wp), allocatable :: rad_ref(:)
+   real(wp), allocatable :: draddr_ref(:, :, :)
+   real(wp), allocatable :: draddr2_ref(:, :, :, :, :)
+   real(wp), allocatable :: draddr3_ref(:, :, :, :, :, :, :)
+   real(wp), allocatable :: draddr4_ref(:, :, :, :, :, :, :, :, :)
+
+   ! d3K slabs at shifted coordinates for one (i,j)
    real(wp), allocatable :: d3pp(:, :, :, :, :, :)   ! x + 2h
    real(wp), allocatable :: d3p (:, :, :, :, :, :)   ! x + h
    real(wp), allocatable :: d3m (:, :, :, :, :, :)   ! x - h
    real(wp), allocatable :: d3mm(:, :, :, :, :, :)   ! x - 2h
 
-   real(wp), allocatable :: num4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat) for one (i,j)
-   real(wp), allocatable :: ana4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat) for one (i,j)
+   ! Numerical d4K slab for one (i,j)
+   real(wp), allocatable :: num4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat)
 
    real(wp), parameter :: step = 1.0e-6_wp
-   integer :: nat, i, j, k, l, m, n, a, b, c, d
-   real(wp) :: diff, maxdiff
    real(wp) :: x0
-   integer :: ia, ik, ib, il, ic, im, id, in, ii, ij  ! index record for reporting
+   real(wp) :: num4_elem, ana4_elem, diff, maxdiff
+
+   integer :: i, j, k, l, m, n
+   integer :: a, b, c, d
+   integer :: ia, ik, ib, il, ic, im, id, in, ii, ij
 
    nat = mol%nat
+
    rvdw = get_vdw_rad_d3(mol%num)
    call new_born_integrator(gbobc, mol, rvdw)
    kernel = new_kernel(kernel_id, keps)
 
-   allocate(rad(nat))
-   allocate(draddr(3,nat,nat))
-   allocate(draddr2(3,nat,3,nat,nat))
-   allocate(draddr3(3,nat,3,nat,3,nat,nat))
-   allocate(draddr4(3,nat,3,nat,3,nat,3,nat,nat))
+   allocate(rad_ref(nat))
+   allocate(draddr_ref(3,nat,nat))
+   allocate(draddr2_ref(3,nat,3,nat,nat), source=0.0_wp)
+   allocate(draddr3_ref(3,nat,3,nat,3,nat,nat), source=0.0_wp)
+   allocate(draddr4_ref(3,nat,3,nat,3,nat,3,nat,nat), source=0.0_wp)
 
    allocate(d3pp(3,nat,3,nat,3,nat))
    allocate(d3p (3,nat,3,nat,3,nat))
@@ -887,10 +1475,11 @@ subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
    allocate(d3mm(3,nat,3,nat,3,nat))
 
    allocate(num4(3,nat,3,nat,3,nat,3,nat))
-   allocate(ana4(3,nat,3,nat,3,nat,3,nat))
 
-   ! reference geometry: need up to brdr4 for analytical
-   call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3, dradd4r=draddr4)
+   ! Reference geometry Born data (used for analytical; and also held fixed for shifted numerical d3)
+   call gbobc%get_rad(mol, rad_ref, draddr_ref) !, dradd2r=draddr2_ref, dradd3r=draddr3_ref, dradd4r=draddr4_ref)
+
+   draddr_ref = 0.0_wp
 
    maxdiff = 0.0_wp
    ia=1;ik=1;ib=1;il=1;ic=1;im=1;id=1;in=1;ii=1;ij=1
@@ -898,11 +1487,10 @@ subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
    do i = 1, nat
       do j = 1, nat
 
-         ! ---- analytical 4th-derivative slab for this (i,j)
-         call compute_kernel_d4kdr4_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, draddr4, i, j, ana4)
-
-         ! ---- numerical slab via 4-point central FD of the ij third derivative
-         num4(:, :, :, :, :, :, :, :) = 0.0_wp
+         ! ------------------------------------------------------------
+         ! Build numerical d4K slab for this (i,j) by FD on d3K slabs.
+         ! ------------------------------------------------------------
+         num4(:,:,:,:,:,:,:,:) = 0.0_wp
 
          do n = 1, nat
             do d = 1, 3
@@ -911,49 +1499,40 @@ subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
 
                ! x + 2h
                mol%xyz(d, n) = x0 + 2.0_wp*step
-               call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3pp)
+               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad_ref, &
+                    draddr_ref, draddr2_ref, draddr3_ref, i, j, d3pp)
 
                ! x + h
                mol%xyz(d, n) = x0 + 1.0_wp*step
-               call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3p)
+               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad_ref, &
+                    draddr_ref, draddr2_ref, draddr3_ref, i, j, d3p)
 
                ! x - h
                mol%xyz(d, n) = x0 - 1.0_wp*step
-               call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3m)
+               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad_ref, &
+                    draddr_ref, draddr2_ref, draddr3_ref, i, j, d3m)
 
                ! x - 2h
                mol%xyz(d, n) = x0 - 2.0_wp*step
-               call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3mm)
+               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad_ref, &
+                    draddr_ref, draddr2_ref, draddr3_ref, i, j, d3mm)
 
                ! restore
                mol%xyz(d, n) = x0
 
-               ! 4-point (4th-order) central difference for first derivative:
+               ! 4-point (4th-order) central FD for first derivative of the d3 slab:
                ! f'(x) ≈ (-f(x+2h) + 8f(x+h) - 8f(x-h) + f(x-2h)) / (12h)
-               do k = 1, nat
-                  do a = 1, 3
-                     do l = 1, nat
-                        do b = 1, 3
-                           do m = 1, nat
-                              do c = 1, 3
-                                 num4(a,k,b,l,c,m,d,n) = (-d3pp(a,k,b,l,c,m) + 8.0_wp*d3p(a,k,b,l,c,m) &
-                                                          -8.0_wp*d3m(a,k,b,l,c,m) + d3mm(a,k,b,l,c,m)) &
-                                                          / (12.0_wp*step)
-                              end do
-                           end do
-                        end do
-                     end do
-                  end do
-               end do
+               num4(:,:,:,:,:,:,d,n) = ( -d3pp(:,:,:,:,:,:) + 8.0_wp*d3p(:,:,:,:,:,:) &
+                                       -8.0_wp*d3m(:,:,:,:,:,:) + d3mm(:,:,:,:,:,:) ) &
+                                       / (12.0_wp*step)
 
             end do
          end do
 
-         ! ---- compare this slab; track worst entry globally
+         ! ------------------------------------------------------------
+         ! Element-by-element analytical d4K vs cached numerical num4.
+         ! This is the part that validates your scalar d4 routine.
+         ! ------------------------------------------------------------
          do k = 1, nat
             do a = 1, 3
                do l = 1, nat
@@ -962,12 +1541,19 @@ subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
                         do c = 1, 3
                            do n = 1, nat
                               do d = 1, 3
-                                 diff = abs(ana4(a,k,b,l,c,m,d,n) - num4(a,k,b,l,c,m,d,n))
+
+                                 num4_elem = num4(a,k,b,l,c,m,d,n)
+
+                                 ana4_elem = 0.0_wp
+                                 call compute_kernel_d4Kdr4(kernel_id, keps, nat, mol%xyz, rad_ref, &
+                                      i, j, k, a, l, b, m, c, n, d, ana4_elem)
+
+                                 diff = abs(ana4_elem - num4_elem)
                                  if (diff > maxdiff) then
                                     maxdiff = diff
                                     ia=a; ik=k; ib=b; il=l; ic=c; im=m; id=d; in=n; ii=i; ij=j
-                                    print *, ana4(a,k,b,l,c,m,d,n), num4(a,k,b,l,c,m,d,n)
                                  end if
+
                               end do
                            end do
                         end do
@@ -981,15 +1567,21 @@ subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
    end do
 
    if (maxdiff > thr2) then
-      call test_failed(error, "Kernel fourth derivative does not match finite difference solution")
+      call test_failed(error, "Kernel fourth derivative (scalar d4 vs cached FD(d3 slab)) mismatch")
       print '(a,es20.13)', "Max |d4K/dr4| difference: ", maxdiff
       print '(a,10(i0,1x))', "At indices (a,k,b,l,c,m,d,n,i,j) = ", ia,ik,ib,il,ic,im,id,in,ii,ij
+
+      ! Optional: print the two scalar values at the worst index
+      num4_elem = num4(ia,ik,ib,il,ic,im,id,in)
+      ana4_elem = 0.0_wp
+      call compute_kernel_d4Kdr4(kernel_id, keps, nat, mol%xyz, rad_ref, &
+           ii, ij, ik, ia, il, ib, im, ic, in, id, ana4_elem)
+      print '(a,es20.13)', "Analytical value: ", ana4_elem
+      print '(a,es20.13)', "Numerical  value: ", num4_elem
+      print '(a,es20.13)', "Difference       : ", ana4_elem - num4_elem
    end if
 
 end subroutine test_kernel_numq
-
-
-
 
 
 
@@ -1063,8 +1655,9 @@ subroutine test_amat(error, mol, kernel_id, keps, qat, make_multipole, input)
    call solv%update(mol, cache)
 
 
-   call get_multipole_matrix(solv, mol, mol%xyz, solv%keps, rad, draddr, &
+   call get_multipole_matrices(solv, mol, mol%xyz, solv%keps, rad, draddr, &
       & amat_sd_alpb, amat_dd_alpb, amat_sq_alpb, amat_dq_alpb, amat_qq_alpb)
+
 
    ! If all fail, this just reports amat_sq
    ! While all maxdiffs are printed, this should be redone some time (if kept in for merge)

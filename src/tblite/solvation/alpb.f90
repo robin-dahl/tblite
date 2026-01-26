@@ -35,13 +35,13 @@ module tblite_solvation_alpb
    use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
    use tblite_solvation_cm5, only : get_cm5_charges
-   use tblite_solvation_kernel, only : kernel_type, new_kernel, kernel_enum, kernel_enum_type
+   use tblite_solvation_kernel, only : kernel_type, new_kernel, kernel_enum, kernel_enum_type, compute_coulomb_dKdr
    implicit none
    private
 
    public :: new_alpb
    public :: born_kernel
-   public :: get_multipole_matrix
+   public :: get_multipole_matrices
 
    ! Alias for backward compatibility
    type(kernel_enum_type), parameter :: born_kernel = kernel_enum
@@ -195,6 +195,8 @@ subroutine new_alpb(self, mol, input, method)
       self%useCM5 = trim(method) == 'gfn1'
    endif
 
+   print *, "kernel: ", input%kernel
+
    if (allocated(input%rvdw)) then
       rvdw = input%rvdw
    else
@@ -290,8 +292,12 @@ subroutine update(self, mol, cache)
    end if
 
    ! Compute multipole interaction matrix
-   call get_multipole_matrix(self, mol, mol%xyz, self%keps, ptr%rad, ptr%draddr, &
+   ! call get_multipole_matrix(self, mol, mol%xyz, self%keps, ptr%rad, ptr%draddr, &
+   !    & ptr%amat_sd, ptr%amat_dd, ptr%amat_sq, ptr%amat_dq, ptr%amat_qq)
+   call get_multipole_matrices(self, mol, mol%xyz, self%keps, ptr%rad, ptr%draddr, &
       & ptr%amat_sd, ptr%amat_dd, ptr%amat_sq, ptr%amat_dq, ptr%amat_qq)
+
+
 end subroutine update
 
 
@@ -566,228 +572,18 @@ subroutine get_adet_deriv(nAtom, xyz, rad, kEps, qvec, gradient)
 end subroutine get_adet_deriv
 
 
-! subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_dd, amat_sq)
-!    class(alpb_solvation), intent(in) :: self
-!    type(structure_type), intent(in)  :: mol
-!    real(wp), intent(in)              :: xyz(:, :)
-!    real(wp), intent(in)              :: keps
-!    real(wp), intent(in)              :: brad(:)
-!    real(wp), contiguous, intent(in)  :: brdr(:, :, :)
-!    real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)      ! (3,nat,nat)
-!    real(wp), intent(inout)             :: amat_dd(:, :, :, :)    ! (3,nat,3,nat)
-!    real(wp), intent(inout)             :: amat_sq(:, :, :)       ! (6,nat,nat)
-
-!    integer :: i, j, nat
-!    real(wp), allocatable :: dKdr_ij(:, :)          ! (3,nat)
-!    real(wp), allocatable :: d2Kdr2_ij(:, :, :, :)  ! (3,nat,3,nat)
-
-!    ! kept for interface compatibility
-!    real(wp), allocatable :: brdr2(:, :, :, :, :)   ! (3,nat,3,nat,nat)
-!    real(wp), allocatable :: temp(:), temp2(:,:,:)
-
-!    real(wp), parameter :: tiny_r = 1.0e-14_wp
-!    real(wp) :: R(3), rij, invr
-!    real(wp) :: u(3), g(3), Hu(3), gpar, kpp, coef
-!    real(wp) :: Q11, Q22, Q33, Q12, Q13, Q23
-!    real(wp) :: tc(6)
-
-!    nat = mol%nat
-
-!    allocate(dKdr_ij(3, nat), source=0.0_wp)
-!    allocate(d2Kdr2_ij(3, nat, 3, nat), source=0.0_wp)
-
-!    allocate(brdr2(3, nat, 3, nat, nat), source=0.0_wp)
-!    allocate(temp(nat), source=0.0_wp)
-!    allocate(temp2(3, nat, nat), source=0.0_wp)
-
-!    call self%gbobc%get_rad(mol, temp, temp2, brdr2)
-
-!    do i = 1, nat
-!       do j = 1, nat
-!          if (i == j) cycle
-
-!          R(:)  = xyz(:, i) - xyz(:, j)
-!          rij   = sqrt(dot_product(R, R))
-!          if (rij <= tiny_r) cycle
-!          invr  = 1.0_wp / rij
-!          u(:)  = R(:) * invr
-
-!          ! ---- First derivatives (for SD and for SQ coefficient) ----
-!          call self%kernel%compute_kernel_dkdr_ij(nat, xyz, brad, brdr, i, j, dKdr_ij)
-
-!          g(:) = dKdr_ij(:, j)
-
-!          ! SD: A_sd(:,j,i) += dK/dr_j
-!          amat_sd(:, j, i) = amat_sd(:, j, i) + g(:)
-
-!          ! ---- Second derivatives (for DD and for SQ coefficient) ----
-!          call self%kernel%compute_kernel_d2kdr2_ij(nat, xyz, brad, brdr, brdr2, i, j, d2Kdr2_ij)
-
-!          ! DD: A_dd(:,j,:,i) -= d2K/(dr_j dr_j)
-!          amat_dd(:, j, :, i) = amat_dd(:, j, :, i) - d2Kdr2_ij(:, j, :, j)
-
-!          ! ---- SQ (universal): build Q = c * u u^T, pack into tc ----
-!          ! radial projections:
-!          gpar = dot_product(g, u)
-
-!          Hu(:) = matmul(d2Kdr2_ij(:, j, :, j), u)
-!          kpp   = dot_product(u, Hu)
-
-!          ! universal coefficient:
-!          coef  = (kpp + gpar * invr) / 3.0_wp
-
-!          ! symmetric tensor Q = coef * (u u^T)
-!          Q11 = coef * u(1) * u(1)
-!          Q22 = coef * u(2) * u(2)
-!          Q33 = coef * u(3) * u(3)
-!          Q12 = coef * u(1) * u(2)
-!          Q13 = coef * u(1) * u(3)
-!          Q23 = coef * u(2) * u(3)
-
-!          ! pack in legacy order (xx, 2xy, yy, 2xz, 2yz, zz)
-!          tc(1) = Q11
-!          tc(2) = 2.0_wp * Q12
-!          tc(3) = Q22
-!          tc(4) = 2.0_wp * Q13
-!          tc(5) = 2.0_wp * Q23
-!          tc(6) = Q33
-
-!          amat_sq(:, j, i) = amat_sq(:, j, i) + tc
-!       end do
-!    end do
-
-!    deallocate(dKdr_ij, d2Kdr2_ij, brdr2, temp, temp2)
-! end subroutine get_multipole_matrix
-
-! subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_dd, amat_sq, amat_dq)
-!    class(alpb_solvation), intent(in) :: self
-!    type(structure_type), intent(in)  :: mol
-!    real(wp), intent(in)              :: xyz(:, :)
-!    real(wp), intent(in)              :: keps
-!    real(wp), intent(in)              :: brad(:)
-!    real(wp), contiguous, intent(in)  :: brdr(:, :, :)
-
-!    real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)      ! (3,nat,nat)
-!    real(wp), intent(inout)             :: amat_dd(:, :, :, :)    ! (3,nat,3,nat)
-!    real(wp), intent(inout)             :: amat_sq(:, :, :)       ! (6,nat,nat)
-!    real(wp), intent(inout)             :: amat_dq(:, :, :, :)    ! (3,nat,6,nat)
-
-!    integer :: i, j, nat, a
-
-!    real(wp), allocatable :: dKdr_ij(:, :)                 ! (3,nat)
-!    real(wp), allocatable :: d2Kdr2_ij(:, :, :, :)         ! (3,nat,3,nat)
-!    real(wp), allocatable :: d3Kdr3_ij(:, :, :, :, :, :)   ! (3,nat,3,nat,3,nat)
-
-!    ! kept for interface compatibility
-!    real(wp), allocatable :: brdr2(:, :, :, :, :)          ! (3,nat,3,nat,nat)
-!    real(wp), allocatable :: brdr3(:, :, :, :, :, :, :)       ! (3,nat,3,nat,nat,nat)  <-- one more dimension than brdr2
-!    real(wp), allocatable :: temp(:), temp2(:,:,:)
-
-!    real(wp), parameter :: tiny_r = 1.0e-14_wp
-!    real(wp) :: R(3), rij, invr
-!    real(wp) :: uvec(3), g(3), Hu(3), gpar, kpp, coef
-!    real(wp) :: Q11, Q22, Q33, Q12, Q13, Q23
-!    real(wp) :: tc(6)
-
-!    real(wp) :: U_dq(3,3,3)   ! dipole-quadrupole tensor U_{a,bc}
-
-!    nat = mol%nat
-
-!    allocate(dKdr_ij(3, nat), source=0.0_wp)
-!    allocate(d2Kdr2_ij(3, nat, 3, nat), source=0.0_wp)
-!    allocate(d3Kdr3_ij(3, nat, 3, nat, 3, nat), source=0.0_wp)
-
-!    allocate(brdr2(3, nat, 3, nat, nat), source=0.0_wp)
-!    allocate(brdr3(3, nat, 3, nat, 3, nat, nat), source=0.0_wp)   ! frozen radii => stays zero
-!    allocate(temp(nat), source=0.0_wp)
-!    allocate(temp2(3, nat, nat), source=0.0_wp)
-
-!    call self%gbobc%get_rad(mol, temp, temp2, brdr2)
-
-!    do i = 1, nat
-!       do j = 1, nat
-!          if (i == j) cycle
-
-!          R(:)  = xyz(:, i) - xyz(:, j)
-!          rij   = sqrt(dot_product(R, R))
-!          if (rij <= tiny_r) cycle
-
-!          invr    = 1.0_wp / rij
-!          uvec(:) = R(:) * invr
-
-!          ! ---- First derivatives (SD and SQ coefficient) ----
-!          call self%kernel%compute_kernel_dkdr_ij(nat, xyz, brad, brdr, i, j, dKdr_ij)
-!          g(:) = dKdr_ij(:, j)
-
-!          ! SD: A_sd(:,j,i) += dK/dr_j
-!          amat_sd(:, j, i) = amat_sd(:, j, i) + g(:)
-
-!          ! ---- Second derivatives (DD and SQ coefficient) ----
-!          call self%kernel%compute_kernel_d2kdr2_ij(nat, xyz, brad, brdr, brdr2, i, j, d2Kdr2_ij)
-
-!          ! DD: A_dd(:,j,:,i) -= d2K/(dr_j dr_j)
-!          amat_dd(:, j, :, i) = amat_dd(:, j, :, i) - d2Kdr2_ij(:, j, :, j)
-
-!          ! ---- SQ (legacy-compatible radial form): Q = coef * u u^T ----
-!          gpar  = dot_product(g, uvec)
-!          Hu(:) = matmul(d2Kdr2_ij(:, j, :, j), uvec)
-!          kpp   = dot_product(uvec, Hu)
-
-!          coef  = (kpp + gpar * invr) / 3.0_wp
-
-!          Q11 = coef * uvec(1) * uvec(1)
-!          Q22 = coef * uvec(2) * uvec(2)
-!          Q33 = coef * uvec(3) * uvec(3)
-!          Q12 = coef * uvec(1) * uvec(2)
-!          Q13 = coef * uvec(1) * uvec(3)
-!          Q23 = coef * uvec(2) * uvec(3)
-
-!          tc(1) = Q11
-!          tc(2) = 2.0_wp * Q12
-!          tc(3) = Q22
-!          tc(4) = 2.0_wp * Q13
-!          tc(5) = 2.0_wp * Q23
-!          tc(6) = Q33
-
-!          amat_sq(:, j, i) = amat_sq(:, j, i) + tc
-
-!          ! ---- Third derivatives (DQ) ----
-!          call self%kernel%compute_kernel_d3Kdr3_ij(nat, xyz, brad, brdr, brdr2, brdr3, i, j, d3Kdr3_ij)
-
-!          ! U_{a,bc} = -(1/3) * d^3K / (dx_{j,a} dx_{j,b} dx_{j,c})
-!          U_dq(:,:,:) = - (1.0_wp/3.0_wp) * d3Kdr3_ij(:, j, :, j, :, j)
-
-!          ! Pack (bc) -> p in (11,12,22,13,23,33) with off-diagonals doubled
-!          do a = 1, 3
-!             amat_dq(a, j, 1, i) = amat_dq(a, j, 1, i) + U_dq(a,1,1)
-!             amat_dq(a, j, 2, i) = amat_dq(a, j, 2, i) + 2.0_wp * U_dq(a,1,2)
-!             amat_dq(a, j, 3, i) = amat_dq(a, j, 3, i) + U_dq(a,2,2)
-!             amat_dq(a, j, 4, i) = amat_dq(a, j, 4, i) + 2.0_wp * U_dq(a,1,3)
-!             amat_dq(a, j, 5, i) = amat_dq(a, j, 5, i) + 2.0_wp * U_dq(a,2,3)
-!             amat_dq(a, j, 6, i) = amat_dq(a, j, 6, i) + U_dq(a,3,3)
-!          end do
-
-!       end do
-!    end do
-
-!    deallocate(dKdr_ij, d2Kdr2_ij, d3Kdr3_ij, brdr2, brdr3, temp, temp2)
-
-! end subroutine get_multipole_matrix
-
-
-subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_dd, amat_sq, amat_dq, amat_qq)
+subroutine get_multipole_matrices(self, mol, xyz, keps, brad, brdr, amat_sd, amat_dd, amat_sq, amat_dq, amat_qq)
    ! Convention-consistent multipole interaction matrices built purely from kernel derivatives.
    !
-   ! This routine is "universal" in the sense that it works for any kernel K as long as the
-   ! derivative providers return the correct derivatives w.r.t. coordinates of atom j.
+   ! Element-by-element build: no global derivative tensors are stored; we only accumulate into amat_*.
    !
-   ! SD, DD, DQ are direct derivative definitions (same as before).
-   ! SQ is kept in the same legacy radial form used in your existing implicit routine:
-   !    Q_bc = coef * u_b u_c,  with  coef = (kpp + gpar/r) / 3
+   ! SD, DD, DQ use direct coordinate-derivative definitions (w.r.t. coordinates of atom j).
+   ! SQ is kept in the same legacy radial form:
+   !    Q_bc = coef * u_b u_c,  coef = (kpp + gpar/r) / 3
    !
-   ! QQ is constructed to match the explicit Coulomb W_abcd convention:
-   !    W_abcd = (1/3) * d4K_abcd  +  (1/2) * sym(δδ)_abcd * s5
-   ! with s5 = coef / r^2 (=> 1/r^5 for Coulomb), and sym(δδ)_abcd = δ_ab δ_cd + δ_ac δ_bd + δ_ad δ_bc.
+   ! QQ matches the explicit Coulomb W_abcd convention for any kernel:
+   !    W_abcd = (1/3) * d4K_abcd  +  (1/2) * (δ_ab δ_cd + δ_ac δ_bd + δ_ad δ_bc) * s5
+   ! with s5 = coef / r^2.
    !
    ! Packing convention for symmetric pairs:
    !   p = 1..6 corresponds to (11,12,22,13,23,33) and off-diagonals are doubled in storage.
@@ -805,51 +601,29 @@ subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_
    real(wp), intent(inout)             :: amat_dq(:, :, :, :)      ! (3,nat,6,nat)
    real(wp), intent(inout)             :: amat_qq(:, :, :, :)      ! (6,nat,6,nat)
 
-   integer :: i, j, nat, a, b, c, d, p, q
+   integer :: i, j, nat
+   integer :: a, b, c, d, p, q
    integer :: fab, fcd
 
    real(wp), parameter :: tiny_r = 1.0e-14_wp
-   real(wp) :: R(3), rij, invr
-   real(wp) :: uvec(3), g(3), Hu(3), gpar, kpp, coef
+   real(wp) :: R(3), rij, invr, invr2
+   real(wp) :: uvec(3)
+   real(wp) :: g(3), H(3,3), Hu(3)
+   real(wp) :: gpar, kpp, coef, s5
    real(wp) :: Q11, Q22, Q33, Q12, Q13, Q23
    real(wp) :: tc(6)
 
+   real(wp) :: dK_elem, d2K_elem, d3K_elem, d4K_elem
    real(wp) :: U_dq(3,3,3)
 
    real(wp) :: I3(3,3)
-   real(wp) :: sym2, Wabcd, s5
-
-   ! Derivative work arrays
-   real(wp), allocatable :: dKdr_ij(:, :)                         ! (3,nat)
-   real(wp), allocatable :: d2Kdr2_ij(:, :, :, :)                 ! (3,nat,3,nat)
-   real(wp), allocatable :: d3Kdr3_ij(:, :, :, :, :, :)           ! (3,nat,3,nat,3,nat)
-   real(wp), allocatable :: d4Kdr4_ij(:, :, :, :, :, :, :, :)     ! (3,nat,3,nat,3,nat,3,nat)
-
-   ! Born radii derivative tensors (kept for interface compatibility)
-   real(wp), allocatable :: brdr2(:, :, :, :, :)                  ! (3,nat,3,nat,nat)
-   real(wp), allocatable :: brdr3(:, :, :, :, :, :, :)            ! (3,nat,3,nat,3,nat,nat)
-   real(wp), allocatable :: brdr4(:, :, :, :, :, :, :, :, :)      ! (3,nat,3,nat,3,nat,3,nat,nat)
-   real(wp), allocatable :: temp(:), temp2(:,:,:)
+   real(wp) :: sym2, Wabcd
 
    integer, parameter :: pa(6) = [1, 1, 2, 1, 2, 3]
    integer, parameter :: pb(6) = [1, 2, 2, 3, 3, 3]
    integer, parameter :: pf(6) = [1, 2, 1, 2, 2, 1]
 
    nat = mol%nat
-
-   allocate(dKdr_ij(3, nat), source=0.0_wp)
-   allocate(d2Kdr2_ij(3, nat, 3, nat), source=0.0_wp)
-   allocate(d3Kdr3_ij(3, nat, 3, nat, 3, nat), source=0.0_wp)
-   allocate(d4Kdr4_ij(3, nat, 3, nat, 3, nat, 3, nat), source=0.0_wp)
-
-   allocate(brdr2(3, nat, 3, nat, nat), source=0.0_wp)
-   allocate(brdr3(3, nat, 3, nat, 3, nat, nat), source=0.0_wp)          ! frozen radii => stays zero
-   allocate(brdr4(3, nat, 3, nat, 3, nat, 3, nat, nat), source=0.0_wp)  ! frozen radii => stays zero
-
-   allocate(temp(nat), source=0.0_wp)
-   allocate(temp2(3, nat, nat), source=0.0_wp)
-
-   call self%gbobc%get_rad(mol, temp, temp2, brdr2)
 
    I3 = 0.0_wp
    I3(1,1)=1.0_wp; I3(2,2)=1.0_wp; I3(3,3)=1.0_wp
@@ -858,33 +632,49 @@ subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_
       do j = 1, nat
          if (i == j) cycle
 
-         R(:)  = xyz(:, i) - xyz(:, j)
-         rij   = sqrt(dot_product(R, R))
+         R(:) = xyz(:, i) - xyz(:, j)
+         rij  = sqrt(dot_product(R, R))
          if (rij <= tiny_r) cycle
 
-         invr    = 1.0_wp / rij
+         invr  = 1.0_wp / rij
+         invr2 = invr * invr
          uvec(:) = R(:) * invr
 
-         ! ---- First derivatives (SD and also used to form coef) ----
-         call self%kernel%compute_kernel_dkdr_ij(nat, xyz, brad, brdr, i, j, dKdr_ij)
-         g(:) = dKdr_ij(:, j)
+         ! ============================================================
+         ! 1) First derivatives: g_a = dK_ij / d r_{j,a}    (SD)
+         ! ============================================================
+         do a = 1, 3
+            call self%kernel%compute_kernel_dkdr(nat, xyz, brad, i, j, j, a, dK_elem)
+            g(a) = dK_elem
+         end do
 
-         ! SD: A_sd(:,j,i) += dK/dr_j
          amat_sd(:, j, i) = amat_sd(:, j, i) + g(:)
 
-         ! ---- Second derivatives (DD and used to form coef and SQ) ----
-         call self%kernel%compute_kernel_d2kdr2_ij(nat, xyz, brad, brdr, brdr2, i, j, d2Kdr2_ij)
+         ! ============================================================
+         ! 2) Second derivatives: H_ab = d^2K_ij / (d r_{j,a} d r_{j,b}) (DD + coef + SQ)
+         ! ============================================================
+         do a = 1, 3
+            do b = 1, 3
+               call self%kernel%compute_kernel_d2kdr2(nat, xyz, brad, i, j, j, a, j, b, d2K_elem) 
+               H(a,b) = d2K_elem
+            end do
+         end do
 
-         ! DD: A_dd(:,j,:,i) -= d2K/(dr_j dr_j)
-         amat_dd(:, j, :, i) = amat_dd(:, j, :, i) - d2Kdr2_ij(:, j, :, j)
+         ! DD: A_dd(:,j,:,i) -= H
+         do a = 1, 3
+            do b = 1, 3
+               amat_dd(a, j, b, i) = amat_dd(a, j, b, i) - H(a,b)
+            end do
+         end do
 
-         ! ---- SQ (legacy-compatible radial form): Q = coef * u u^T ----
+         ! gpar = g · u,  kpp = u^T H u
          gpar  = dot_product(g, uvec)
-         Hu(:) = matmul(d2Kdr2_ij(:, j, :, j), uvec)
+         Hu(:) = matmul(H, uvec)
          kpp   = dot_product(uvec, Hu)
 
-         coef  = (kpp + gpar * invr) / 3.0_wp
+         coef = (kpp + gpar * invr) / 3.0_wp
 
+         ! SQ (legacy radial form): Q = coef * u u^T, then pack with doubled off-diagonals
          Q11 = coef * uvec(1) * uvec(1)
          Q22 = coef * uvec(2) * uvec(2)
          Q33 = coef * uvec(3) * uvec(3)
@@ -899,13 +689,20 @@ subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_
          tc(5) = 2.0_wp * Q23
          tc(6) = Q33
 
-         amat_sq(:, j, i) = amat_sq(:, j, i) + tc
+         amat_sq(:, j, i) = amat_sq(:, j, i) + tc(:)
 
-         ! ---- Third derivatives (DQ) ----
-         call self%kernel%compute_kernel_d3Kdr3_ij(nat, xyz, brad, brdr, brdr2, brdr3, i, j, d3Kdr3_ij)
-
-         ! U_{a,bc} = -(1/3) * d^3K / (dx_{j,a} dx_{j,b} dx_{j,c})
-         U_dq(:,:,:) = - (1.0_wp/3.0_wp) * d3Kdr3_ij(:, j, :, j, :, j)
+         ! ============================================================
+         ! 3) Third derivatives: U_{a,bc} = -(1/3) d^3K / (dj,a dj,b dj,c)  (DQ)
+         !    We compute all (a,b,c) explicitly (27 scalars).
+         ! ============================================================
+         do a = 1, 3
+            do b = 1, 3
+               do c = 1, 3
+                  call self%kernel%compute_kernel_d3kdr3(nat, xyz, brad, i, j, j, a, j, b, j, c, d3K_elem) 
+                  U_dq(a,b,c) = - (1.0_wp/3.0_wp) * d3K_elem
+               end do
+            end do
+         end do
 
          ! Pack (bc) -> p in (11,12,22,13,23,33) with off-diagonals doubled
          do a = 1, 3
@@ -917,11 +714,11 @@ subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_
             amat_dq(a, j, 6, i) = amat_dq(a, j, 6, i) + U_dq(a,3,3)
          end do
 
-         ! ---- Fourth derivatives (QQ, convention-consistent) ----
-         call self%kernel%compute_kernel_d4Kdr4_ij(nat, xyz, brad, brdr, brdr2, brdr3, brdr4, i, j, d4Kdr4_ij)
-
-         ! s5 = coef / r^2  (for Coulomb: coef=1/r^3 => s5=1/r^5)
-         s5 = coef * invr * invr
+         ! ============================================================
+         ! 4) Fourth derivatives: QQ
+         !    W_abcd = (1/3) d4K_abcd + (1/2) sym(δδ)_abcd * s5
+         ! ============================================================
+         s5 = coef * invr2   ! for Coulomb: coef=1/r^3 => s5=1/r^5
 
          do p = 1, 6
             a   = pa(p)
@@ -936,10 +733,9 @@ subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_
                ! sym2 = δ_ab δ_cd + δ_ac δ_bd + δ_ad δ_bc
                sym2 = I3(a,b)*I3(c,d) + I3(a,c)*I3(b,d) + I3(a,d)*I3(b,c)
 
-               ! Match explicit Coulomb convention for any kernel:
-               !   W = (1/3) * d4K_abcd + (1/2) * sym(δδ)_abcd * s5
-               Wabcd = (1.0_wp/3.0_wp) * d4Kdr4_ij(a, j, b, j, c, j, d, j) &
-                     + 0.5_wp * sym2 * s5
+               call self%kernel%compute_kernel_d4kdr4(nat, xyz, brad, i, j, j, a, j, b, j, c, j, d, d4K_elem) 
+
+               Wabcd = (1.0_wp/3.0_wp) * d4K_elem + 0.5_wp * sym2 * s5
 
                amat_qq(p, j, q, i) = amat_qq(p, j, q, i) + real(fab*fcd, wp) * Wabcd
             end do
@@ -948,10 +744,63 @@ subroutine get_multipole_matrix(self, mol, xyz, keps, brad, brdr, amat_sd, amat_
       end do
    end do
 
-   deallocate(dKdr_ij, d2Kdr2_ij, d3Kdr3_ij, d4Kdr4_ij)
-   deallocate(brdr2, brdr3, brdr4, temp, temp2)
+end subroutine get_multipole_matrices
 
-end subroutine get_multipole_matrix
+
+! subroutine get_multipole_matrices(self, mol, xyz, keps, brad, brdr, amat_sd)
+!    ! Element-wise construction of the SD matrix:
+!    !   amat_sd(:, j, i) += dK_ij / dr_j
+!    !
+!    ! Uses the *element-wise* kernel derivative provider:
+!    !   compute_kernel_dkdr(..., i, j, k, alpha, dKdr_elem)
+!    ! which returns: dK_ij / d r_{k,alpha}
+
+!    class(alpb_solvation), intent(in) :: self
+!    type(structure_type), intent(in)  :: mol
+!    real(wp), intent(in)              :: xyz(:, :)
+!    real(wp), intent(in)              :: keps
+!    real(wp), intent(in)              :: brad(:)
+!    real(wp), contiguous, intent(in)  :: brdr(:, :, :)
+
+!    real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)   ! (3,nat,nat)
+
+!    integer :: i, j, nat, a
+!    real(wp), parameter :: tiny_r = 1.0e-14_wp
+!    real(wp) :: R(3), rij
+!    real(wp) :: dKdr_elem
+
+!    nat = mol%nat
+
+!    ! This routine only computes SD, so we can safely overwrite.
+!    amat_sd(:, :, :) = 0.0_wp
+
+!    do i = 1, nat
+!       do j = 1, nat
+!          if (i == j) cycle
+
+!          ! Optional safety against coincident atoms (also avoids 1/r^3 blowups downstream).
+!          R(:) = xyz(:, i) - xyz(:, j)
+!          rij  = sqrt(dot_product(R, R))
+!          if (rij <= tiny_r) cycle
+
+!          ! Build g = dK_ij / dr_j element-by-element and accumulate:
+!          do a = 1, 3
+!             call compute_coulomb_dKdr( &
+!                nat, xyz, brad, brdr, &
+!                i, j,            &  ! matrix element (i,j)
+!                j, a,            &  ! derivative w.r.t. atom k=j, component alpha=a
+!                dKdr_elem )
+
+!             amat_sd(a, j, i) = amat_sd(a, j, i) + dKdr_elem
+!          end do
+
+!       end do
+!    end do
+
+!    ! keps is not used here directly; it typically lives inside the kernel (self%kernel%...).
+!    ! It remains in the interface for consistency with the original routine.
+! end subroutine get_multipole_matrices
+
 
 
 
