@@ -30,6 +30,7 @@ module tblite_solvation_kernel_type
    contains
       procedure(add_kernel_mat_interface),           deferred :: add_kernel_mat
       procedure(add_kernel_deriv_interface),         deferred :: add_kernel_deriv
+      procedure(add_kernel_deriv_multipole_contributions_interface),         deferred :: add_kernel_deriv_multipole_contributions
       procedure(kernel_d1_pair_interface),           deferred :: kernel_d1_pair
       procedure(kernel_d1_pair_dborn_interface),     deferred :: kernel_d1_pair_dborn
       procedure(kernel_d2_pair_interface),           deferred :: kernel_d2_pair
@@ -77,6 +78,20 @@ module tblite_solvation_kernel_type
          !> Molecular gradient
          real(wp), contiguous, intent(inout) :: gradient(:, :)
       end subroutine add_kernel_deriv_interface
+
+      subroutine add_kernel_deriv_multipole_contributions_interface(self, nat, xyz, q_at, mu_at, q_at2, brad, brdr, gradient)
+       import :: kernel_type, wp
+
+      class(kernel_type), intent(in) :: self
+      integer, intent(in) :: nat
+      real(wp), intent(in) :: xyz(:, :)          ! (3,nat)
+      real(wp), intent(in) :: q_at(:)               ! (nat)
+      real(wp), intent(in) :: mu_at(:, :)           ! (3,nat)
+      real(wp), intent(in) :: q_at2(:, :)         ! (6,nat)  (lower-tri: xx,xy,yy,xz,yz,zz), moments NOT doubled
+      real(wp), intent(in) :: brad(:)            ! (nat)
+      real(wp), contiguous, intent(in) :: brdr(:, :, :)   ! (3,nat,nat) -> gemv-compatible like in add_still_deriv
+      real(wp), contiguous, intent(inout) :: gradient(:, :) ! (3,nat)
+      end subroutine add_kernel_deriv_multipole_contributions_interface
 
       !> Pairwise kernel gradient (interface) 
       subroutine kernel_d1_pair_interface(self, rA, rB, bornA, bornB, d1)

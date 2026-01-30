@@ -212,7 +212,7 @@ subroutine test_mb03(error)
 end subroutine test_mb03
 
 
-subroutine test_e(error, mol, input, qat, ref, method)
+subroutine test_e(error, mol, input, qat, dpat, qpat, ref, method)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -223,8 +223,14 @@ subroutine test_e(error, mol, input, qat, ref, method)
    !> Solvation model input
    type(alpb_input), intent(in) :: input
 
-   !> Atomic partial charges
-   real(wp), intent(in) :: qat(:)
+   !> Atomic partial charges for this structure
+   real(wp), contiguous, intent(in) :: qat(:)
+
+   !> Atomic dipole moments for this structure
+   real(wp), contiguous, intent(in) :: dpat(:, :)
+
+   !> Atomic quadrupole moments for this structure
+   real(wp), contiguous, intent(in) :: qpat(:, :)
 
    !> Reference energy
    real(wp), intent(in) :: ref
@@ -241,8 +247,8 @@ subroutine test_e(error, mol, input, qat, ref, method)
 
    energy = 0.0_wp
    wfn%qat = reshape(qat, [size(qat), 1])
-   allocate(wfn%dpat(3, size(qat, 1), 1), source=0.0_wp)
-   allocate(wfn%qpat(6, size(qat, 1), 1), source=0.0_wp)
+   wfn%dpat = reshape(dpat, [shape(dpat), 1])
+   wfn%qpat = reshape(qpat, [shape(qpat), 1])
    allocate(pot%vat(size(qat, 1), 1))
    allocate(pot%vdp(3, size(qat, 1), 1))
    allocate(pot%vqp(6, size(qat, 1), 1))
@@ -266,12 +272,12 @@ subroutine test_e(error, mol, input, qat, ref, method)
 
    if (abs(sum(energy) - ref) > thr) then
       call test_failed(error, "Energy does not match reference")
-      print *, sum(energy)
+      print *, abs(sum(energy) - ref)
    end if
 end subroutine test_e
 
 
-subroutine test_g(error, mol, input, qat, method)
+subroutine test_g(error, mol, input, qat, dpat, qpat, method)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -284,6 +290,8 @@ subroutine test_g(error, mol, input, qat, method)
 
    !> Atomic partial charges
    real(wp), intent(in) :: qat(:)
+   real(wp), intent(in) :: dpat(:)
+   real(wp), intent(in) :: qpat(:)
 
    !> Method for parameter selection
    character(len=*), intent(in), optional :: method
@@ -299,8 +307,8 @@ subroutine test_g(error, mol, input, qat, method)
    integer :: ii, ic
 
    wfn%qat = reshape(qat, [size(qat), 1])
-   allocate(wfn%dpat(3, size(qat, 1), 1), source=0.0_wp)
-   allocate(wfn%qpat(6, size(qat, 1), 1), source=0.0_wp)
+   wfn%dpat = reshape(dpat, [3, size(qat, 1), 1])
+   wfn%qpat = reshape(qpat, [6, size(qat, 1), 1])
    allocate(pot%vat(size(qat, 1), 1))
    allocate(pot%vdp(3, size(qat, 1), 1))
    allocate(pot%vqp(6, size(qat, 1), 1))
@@ -345,9 +353,12 @@ subroutine test_g(error, mol, input, qat, method)
    call solv%get_energy(mol, cache, wfn, energy)
    call solv%get_gradient(mol, cache, wfn, gradient, sigma)
    
-
    if (any(abs(gradient - numg) > thr2)) then
-      call test_failed(error, "Gradient does not match")
+      if (input%do_multipoles) then
+         call test_failed(error, "Multipole gradient does not match")
+      else
+         call test_failed(error, "Gradient does not match")
+      end if
       print '(3es20.13)', gradient
       print '(a)', "---"
       print '(3es20.13)', numg
@@ -449,18 +460,76 @@ subroutine test_e_p16(error)
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
-   real(wp), parameter :: qat(*) = [&
-      &-8.99890404486076E-2_wp, 9.42168087556583E-2_wp,-1.49387631509499E-1_wp, &
-      &-2.99114121895542E-1_wp, 4.85527734875224E-1_wp,-6.83156326406137E-2_wp, &
-      & 1.50011293889337E-2_wp, 2.79368544459465E-1_wp,-1.24072452878322E-1_wp, &
-      &-9.36760994051244E-2_wp,-2.19062123031622E-1_wp, 2.14538817685587E-1_wp, &
-      & 3.06156726072831E-1_wp,-3.86105514712244E-1_wp,-1.51265171389388E-3_wp, &
-      & 3.64255069977693E-2_wp]
+   real(wp), parameter :: qat(16) = [&
+      &-8.99891426876454E-2_wp, 9.42167151049675E-2_wp,-1.49390480695042E-1_wp, &
+      &-2.99114077043291E-1_wp, 4.85528544756154E-1_wp,-6.83158233623334E-2_wp, &
+      & 1.49989659279676E-2_wp, 2.79361802448324E-1_wp,-1.24070454865924E-1_wp, &
+      &-9.36742767297382E-2_wp,-2.19062009156706E-1_wp, 2.14544824574956E-1_wp, &
+      & 3.06160853875672E-1_wp,-3.86107183037218E-1_wp,-1.51404848137219E-3_wp, &
+      & 3.64257893712230E-2_wp]
+   real(wp), parameter :: dpat(3, 16) = reshape([&
+      &-3.64731729820407E-2_wp,-2.13686275288388E-2_wp, 6.68806426144540E-2_wp, &
+      & 4.04240419990876E-2_wp,-1.49843414114636E-1_wp,-5.58836609439025E-3_wp, &
+      &-6.05242232810174E-2_wp, 9.15234565804751E-2_wp,-7.40096212350601E-2_wp, &
+      &-2.00610828069480E-2_wp, 8.79914756075611E-2_wp, 1.17474526864424E-1_wp, &
+      &-1.23227254106242E-1_wp, 5.17071359855638E-2_wp,-3.45193834725206E-1_wp, &
+      & 8.38659891802097E-2_wp,-1.85766281220651E-3_wp, 2.16613946001174E-3_wp, &
+      & 7.28212028877821E-2_wp,-1.11656708078832E-1_wp, 4.44987301144173E-2_wp, &
+      & 5.21199968878805E-1_wp, 2.42009354648746E-1_wp,-2.59373648270648E-1_wp, &
+      & 2.42771833481858E-3_wp, 1.33481324585323E-1_wp, 4.70393507351052E-2_wp, &
+      & 6.59447581952794E-2_wp,-4.77190059636476E-2_wp, 1.41459747150361E-1_wp, &
+      &-5.74635892974854E-3_wp,-9.43452985224502E-2_wp,-4.14652054192348E-2_wp, &
+      & 1.18721461568371E-1_wp,-8.07370651006255E-2_wp, 1.47715903211519E-1_wp, &
+      & 1.80051594470901E-1_wp, 2.31074137154501E-1_wp, 4.61275280422502E-1_wp, &
+      & 7.00280160506826E-2_wp,-6.56712228336652E-2_wp, 5.83187156889666E-2_wp, &
+      &-7.73514384205769E-2_wp,-6.11970211951996E-3_wp,-1.18441889940799E-1_wp, &
+      &-2.63615278011550E-2_wp,-8.98662961570448E-2_wp, 9.70285404014370E-2_wp],&
+      & shape(dpat))
+   real(wp), parameter :: qpat(6, 16) = reshape([&
+      & 2.07660448410257E-2_wp, 4.77562367062922E-2_wp,-6.38136462827382E-2_wp, &
+      &-6.08076485231580E-2_wp,-2.89106396726373E-3_wp, 4.30476014417125E-2_wp, &
+      & 5.32310785129656E-2_wp, 5.56201199842301E-2_wp,-1.94185137737050E-1_wp, &
+      &-1.69435262877121E-2_wp, 4.06941497321145E-2_wp, 1.40954059224083E-1_wp, &
+      &-1.77841513693408E-2_wp,-2.75394740661722E-2_wp, 8.23579661010067E-3_wp, &
+      & 3.34177535391165E-2_wp,-5.71071859403073E-3_wp, 9.54835475924012E-3_wp, &
+      & 2.42936845781245E-2_wp, 5.48198008679115E-3_wp, 9.79238907789204E-4_wp, &
+      & 5.02629146832239E-3_wp,-3.26133215380267E-2_wp,-2.52729234859127E-2_wp, &
+      & 6.13790503829809E-1_wp, 5.32657270579180E-1_wp, 1.54187752434240E-1_wp, &
+      &-5.16490059386104E-1_wp, 5.67205701727938E-2_wp,-7.67978256264049E-1_wp, &
+      & 7.83646726355242E-2_wp, 7.93496900696582E-3_wp,-6.64025879132266E-2_wp, &
+      &-2.39938346396998E-2_wp, 2.27466901433374E-2_wp,-1.19620847222975E-2_wp, &
+      &-2.05612814844119E-2_wp,-4.95270994769136E-2_wp, 3.87946677272715E-2_wp, &
+      & 2.09792192994460E-2_wp, 1.57023828153490E-2_wp,-1.82333862428595E-2_wp, &
+      & 2.06990008614840E-1_wp,-9.40931225186795E-1_wp,-9.81260233409964E-1_wp, &
+      & 1.81683320051775E-1_wp,-2.29434219507657E-1_wp, 7.74270224795126E-1_wp, &
+      &-4.49851593643217E-2_wp,-1.43120792142963E-2_wp, 8.76827127392763E-2_wp, &
+      & 7.95606845308971E-5_wp, 1.49470897135840E-2_wp,-4.26975533749547E-2_wp, &
+      &-3.98095736465717E-2_wp,-4.34657048996160E-2_wp, 1.60460563069101E-2_wp, &
+      & 1.10714431698586E-2_wp, 2.00213367980184E-2_wp, 2.37635173396616E-2_wp, &
+      & 2.31027463622808E-2_wp,-3.26295375143408E-2_wp,-1.33550726444072E-1_wp, &
+      &-1.53667922610297E-1_wp, 3.82022829991620E-2_wp, 1.10447980081791E-1_wp, &
+      &-4.50996897167389E-1_wp,-1.02330031032349E+0_wp, 8.40160246681131E-2_wp, &
+      &-3.56277305140736E-1_wp,-6.25766606417323E-1_wp, 3.66980872499278E-1_wp, &
+      & 2.08713890794846E-1_wp, 8.09936390516330E-1_wp,-1.01293604136016E+0_wp, &
+      & 3.35301352962707E-1_wp, 3.38610231741285E-1_wp, 8.04222150565318E-1_wp, &
+      & 2.87096625886200E-2_wp, 3.36901296815917E-2_wp,-2.68793522207332E-3_wp, &
+      &-2.05780563238218E-2_wp,-6.21642900499840E-3_wp,-2.60217273665459E-2_wp, &
+      &-1.50087159351410E-2_wp,-3.69461704433247E-3_wp,-1.82860627486028E-2_wp, &
+      & 4.40210284335156E-2_wp, 2.60057075458535E-2_wp, 3.32947786837439E-2_wp, &
+      & 4.27111264045819E-1_wp, 4.85129382065812E-2_wp,-6.56980004019461E-1_wp, &
+      &-1.30593579650094E-1_wp,-2.07993009790954E-1_wp, 2.29868739973643E-1_wp],&
+      & shape(qpat))
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "04")
+
+   ! Without multipoles
    call test_e(error, mol, alpb_input(feps, kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.), &
-      & qat, -7.2620663020537416E-3_wp) ! cosmo radii
+      & qat, dpat, qpat, -7.2619981784854421E-003_wp) ! cosmo radii
+
+   ! With multipoles
+   call test_e(error, mol, alpb_input(feps, kernel=born_kernel%p16, alpb=.true., do_multipoles=.true.), &
+      & qat, dpat, qpat, -3.5672123597123508E-003_wp) ! cosmo radii
 
 end subroutine test_e_p16
 
@@ -478,6 +547,9 @@ subroutine test_e_alpb_gfn1_all_solvents(error)
       &-9.36760994051244E-2_wp,-2.19062123031622E-1_wp, 2.14538817685587E-1_wp, &
       & 3.06156726072831E-1_wp,-3.86105514712244E-1_wp,-1.51265171389388E-3_wp, &
       & 3.64255069977693E-2_wp]
+   real(wp), parameter :: dpat(3, 16) = 0.0_wp
+   real(wp), parameter :: qpat(6, 16) = 0.0_wp 
+
    type(alpb_input) :: input
    integer, parameter :: nsolvents = 25
    character(len=*), parameter :: solvents(*) = [character(len=nsolvents):: &
@@ -505,7 +577,7 @@ subroutine test_e_alpb_gfn1_all_solvents(error)
       solvent = get_solvent_data(solvents(i))
       input = alpb_input(solvent%eps, solvent=solvent%solvent, &
          & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
-      call test_e(error, mol, input, qat, refs(i), method='gfn1')
+      call test_e(error, mol, input, qat, dpat, qpat, refs(i), method='gfn1')
       if(allocated(error)) return
    end do 
 
@@ -525,6 +597,8 @@ subroutine test_e_alpb_gfn2_all_solvents(error)
       &-9.36760994051244E-2_wp,-2.19062123031622E-1_wp, 2.14538817685587E-1_wp, &
       & 3.06156726072831E-1_wp,-3.86105514712244E-1_wp,-1.51265171389388E-3_wp, &
       & 3.64255069977693E-2_wp]
+   real(wp), parameter :: dpat(3, 16) = 0.0_wp
+   real(wp), parameter :: qpat(6, 16) = 0.0_wp
    type(alpb_input) :: input
    integer, parameter :: nsolvents = 25
    character(len=*), parameter :: solvents(*) = [character(len=nsolvents):: &
@@ -552,7 +626,7 @@ subroutine test_e_alpb_gfn2_all_solvents(error)
       solvent = get_solvent_data(solvents(i))
       input = alpb_input(solvent%eps, solvent=solvent%solvent, &
          & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
-      call test_e(error, mol, input, qat, refs(i), method='gfn2') 
+      call test_e(error, mol, input, qat, dpat, qpat, refs(i), method='gfn2') 
       if(allocated(error)) return
    end do 
 
@@ -565,18 +639,77 @@ subroutine test_e_still(error)
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
-   real(wp), parameter :: qat(*) = [&
-      & 2.29208822115185E-1_wp, 4.70816658242009E-2_wp,-3.52834459119718E-2_wp, &
-      & 3.09012847396269E-2_wp, 3.28898468854920E-1_wp,-2.01747405019535E-1_wp, &
-      & 5.46554362391008E-2_wp,-1.09681283064574E-1_wp,-3.47340505091849E-1_wp, &
-      & 1.84567817865267E-1_wp,-2.07552337277185E-1_wp, 4.67140380802351E-1_wp, &
-      &-1.84261319200178E-2_wp,-1.05015595324833E-1_wp, 6.52511545312054E-2_wp, &
-      &-3.82658324740237E-1_wp]
+   real(wp), parameter :: qat(16) = [&
+      & 2.29216160742194E-1_wp, 4.71025340158282E-2_wp,-3.52853843840331E-2_wp, &
+      & 3.09109494571158E-2_wp, 3.28899921234171E-1_wp,-2.01752645265381E-1_wp, &
+      & 5.46543133415123E-2_wp,-1.09690925298550E-1_wp,-3.47346448335524E-1_wp, &
+      & 1.84561311715549E-1_wp,-2.07552642508510E-1_wp, 4.67143385624953E-1_wp, &
+      &-1.84214559781700E-2_wp,-1.05015851128102E-1_wp, 6.52406633071011E-2_wp, &
+      &-3.82663886540142E-1_wp]
+   real(wp), parameter :: dpat(3, 16) = reshape([&
+      &-1.36866725567795E-1_wp, 8.98162734808879E-2_wp, 1.93992067964322E-1_wp, &
+      &-7.94862211844545E-2_wp, 1.72156341648282E-1_wp, 1.09913940611171E-1_wp, &
+      & 4.98989463722096E-3_wp, 5.29170302861464E-2_wp,-2.76614889872771E-2_wp, &
+      & 9.88532719472691E-2_wp,-1.40034980230081E-2_wp, 5.34276261339990E-3_wp, &
+      &-1.43509540880904E-1_wp,-1.53177661284083E-1_wp,-1.44819803333425E-1_wp, &
+      &-2.04156814828549E-2_wp,-1.36595645633772E-1_wp, 9.21268600746920E-2_wp, &
+      & 4.82467726581279E-2_wp,-6.83638402837403E-2_wp, 2.25756519899868E-2_wp, &
+      &-1.07827737715754E-1_wp,-1.57029392143043E-2_wp,-4.52817748323062E-3_wp, &
+      &-5.75565163095502E-2_wp, 8.04433988598797E-2_wp,-6.18156660422769E-2_wp, &
+      &-5.40875924342744E-2_wp, 8.84669124477697E-2_wp, 5.79993467185712E-2_wp, &
+      & 1.17647171474739E-1_wp, 1.47697439492523E-2_wp, 1.01604279159870E-1_wp, &
+      &-5.04764399493363E-1_wp,-9.83938684357523E-3_wp,-3.12571551890408E-1_wp, &
+      & 3.55860816794651E-2_wp,-1.31041235123739E-1_wp,-8.75524850448995E-2_wp, &
+      & 7.29800329344290E-2_wp,-9.87358811335129E-2_wp,-9.28538506341673E-2_wp, &
+      &-8.73682094598224E-2_wp,-2.05679212716268E-1_wp,-1.33550747139953E-1_wp, &
+      & 8.30672094549445E-2_wp, 6.79087546790233E-2_wp, 7.61092730005571E-3_wp],&
+      & shape(dpat))
+   real(wp), parameter :: qpat(6, 16) = reshape([&
+      &-3.21923529804590E-2_wp, 1.01247911778500E-1_wp,-1.60153050884742E-1_wp, &
+      & 2.09688971314230E-1_wp,-5.53870278646362E-1_wp, 1.92345403865201E-1_wp, &
+      & 1.42745048693680E-1_wp, 3.96650238849656E-1_wp,-1.85556055670220E-2_wp, &
+      & 2.09624026315852E-1_wp,-1.00919824206596E-1_wp,-1.24189443126656E-1_wp, &
+      &-4.76658863743303E-4_wp, 2.90471575684891E-2_wp, 1.07961071436757E-1_wp, &
+      &-9.53915574675821E-2_wp, 3.36258209533697E-2_wp,-1.07484412573014E-1_wp, &
+      & 1.27092159973006E-1_wp, 1.21655068472347E-2_wp,-5.40941977072504E-2_wp, &
+      &-1.59997403617732E-2_wp,-3.07740637834542E-6_wp,-7.29979622657559E-2_wp, &
+      & 5.53303994778954E-1_wp,-2.99239292851686E-1_wp,-2.51102054122008E-1_wp, &
+      &-6.26827633889481E-1_wp,-8.42332212885064E-1_wp,-3.02201940656946E-1_wp, &
+      & 2.19857432174074E-1_wp, 2.27516201446880E-1_wp,-2.10413952758986E-1_wp, &
+      &-4.07388945048188E-1_wp,-1.26641550036282E-1_wp,-9.44347941508889E-3_wp, &
+      & 2.93948297678871E-2_wp,-3.43251555808793E-2_wp,-2.11422152270078E-2_wp, &
+      & 5.41372742690424E-2_wp,-3.39231131165861E-2_wp,-8.25261454087947E-3_wp, &
+      & 2.37070130746082E-1_wp, 3.85988938198882E-3_wp,-1.72140997530014E-1_wp, &
+      &-1.84923389243440E-1_wp,-2.83535528712180E-3_wp,-6.49291332160717E-2_wp, &
+      &-5.91277580612433E-3_wp, 2.78962136409584E-2_wp,-4.44146350092125E-2_wp, &
+      & 4.21395120616379E-2_wp, 1.77901916517195E-2_wp, 5.03274108153378E-2_wp, &
+      &-1.69793065817916E-2_wp,-4.35671755332885E-2_wp,-8.26169504201363E-3_wp, &
+      &-3.08726223882655E-2_wp, 7.19218791920170E-2_wp, 2.52410016238050E-2_wp, &
+      &-1.16489039702432E-1_wp, 1.21709469870565E-1_wp, 1.61694380019930E-1_wp, &
+      &-1.78938261587284E-1_wp,-2.40115227627245E-1_wp,-4.52053403174976E-2_wp, &
+      & 9.96286547963425E-1_wp,-1.19749514806617E-1_wp,-1.35617319657923E+0_wp, &
+      & 8.55455083538778E-1_wp,-9.90077412493467E-1_wp, 3.59886648615801E-1_wp, &
+      & 5.22916600071566E-2_wp,-3.91715496559764E-2_wp, 6.83298122566691E-3_wp, &
+      &-2.53231481131226E-2_wp,-5.89822395445022E-2_wp,-5.91246412328236E-2_wp, &
+      & 4.75850655614168E-3_wp,-1.05070993090875E-2_wp,-9.80745234500818E-3_wp, &
+      &-1.41037515552590E-2_wp, 3.45290550320865E-2_wp, 5.04894578886597E-3_wp, &
+      & 3.84056205679418E-1_wp, 4.90928417189913E-1_wp,-4.20009072583480E-1_wp, &
+      & 1.27378622840086E-1_wp, 2.70322396743841E-1_wp, 3.59528669040627E-2_wp, &
+      & 1.02687867732048E-1_wp,-9.41266714173517E-2_wp,-1.57143312769043E-2_wp, &
+      &-1.16797766346470E-1_wp,-2.25346145494165E-1_wp,-8.69735364551442E-2_wp],&
+      & shape(qpat))
+
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "05")
+   
+   ! Without multipoles
    call test_e(error, mol, alpb_input(feps, kernel=born_kernel%still, alpb=.false., do_multipoles=.false.), &
-      & qat, -5.8170737856555370E-3_wp) ! cosmo radii
+      & qat, dpat, qpat, -5.8173811610460532E-003_wp) ! cosmo radii
+
+   ! With multipoles
+   call test_e(error, mol, alpb_input(feps, kernel=born_kernel%still, alpb=.false., do_multipoles=.true.), &
+      & qat, dpat, qpat, -3.7859501826777529E-003_wp) ! cosmo radii
              
 end subroutine test_e_still
 
@@ -594,6 +727,8 @@ subroutine test_e_gbsa_gfn1_all_solvents(error)
       & 1.84567817865267E-1_wp,-2.07552337277185E-1_wp, 4.67140380802351E-1_wp, &
       &-1.84261319200178E-2_wp,-1.05015595324833E-1_wp, 6.52511545312054E-2_wp, &
       &-3.82658324740237E-1_wp]
+   real(wp), parameter :: dpat(3, 16) = 0.0_wp
+   real(wp), parameter :: qpat(6, 16) = 0.0_wp 
    type(alpb_input) :: input
    integer, parameter :: nsolvents = 12
    character(len=*), parameter :: solvents(*) = [character(len=nsolvents):: &
@@ -613,7 +748,7 @@ subroutine test_e_gbsa_gfn1_all_solvents(error)
       solvent = get_solvent_data(solvents(i))
       input = alpb_input(solvent%eps, solvent=solvent%solvent, &
          & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
-      call test_e(error, mol, input, qat, refs(i), method='gfn1') 
+      call test_e(error, mol, input, qat, dpat, qpat, refs(i), method='gfn1') 
       if(allocated(error)) return
    end do 
 
@@ -633,6 +768,8 @@ subroutine test_e_gbsa_gfn2_all_solvents(error)
       & 1.84567817865267E-1_wp,-2.07552337277185E-1_wp, 4.67140380802351E-1_wp, &
       &-1.84261319200178E-2_wp,-1.05015595324833E-1_wp, 6.52511545312054E-2_wp, &
       &-3.82658324740237E-1_wp]
+   real(wp), parameter :: dpat(3, 16) = 0.0_wp
+   real(wp), parameter :: qpat(6, 16) = 0.0_wp 
    type(alpb_input) :: input
    integer, parameter :: nsolvents = 14
    character(len=*), parameter :: solvents(*) = [character(len=nsolvents):: &
@@ -654,7 +791,7 @@ subroutine test_e_gbsa_gfn2_all_solvents(error)
       solvent = get_solvent_data(solvents(i))
       input = alpb_input(solvent%eps, solvent=solvent%solvent, &
          & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
-      call test_e(error, mol, input, qat, refs(i), method='gfn2') 
+      call test_e(error, mol, input, qat, dpat, qpat, refs(i), method='gfn2') 
       if(allocated(error)) return
    end do 
 
@@ -689,11 +826,14 @@ subroutine test_e_charged_p16(error)
       & 9.81620738022878E-2_wp, 5.14984224707990E-2_wp, 9.63222020737258E-2_wp, &
       & 3.80443799704811E-2_wp,-4.41189291092377E-1_wp, 3.13549746324888E-1_wp, &
       &-4.41335746902051E-1_wp, 3.01219329594079E-1_wp]
+   real(wp), parameter :: dpat(3, 59) = 0.0_wp
+   real(wp), parameter :: qpat(6, 59) = 0.0_wp 
    real(wp), parameter :: feps = 80.0_wp
+
 
    call get_structure(mol, "UPU23", "0a")
    input = alpb_input(feps, kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
-   call test_e(error, mol, input, qat, -6.2623428747454107E-2_wp) ! cosmo radii
+   call test_e(error, mol, input, qat, dpat, qpat, -6.2623428747454107E-2_wp) ! cosmo radii
 
 end subroutine test_e_charged_p16
 
@@ -726,12 +866,14 @@ subroutine test_e_charged_alpb_gfn1(error)
       & 9.81620738022878E-2_wp, 5.14984224707990E-2_wp, 9.63222020737258E-2_wp, &
       & 3.80443799704811E-2_wp,-4.41189291092377E-1_wp, 3.13549746324888E-1_wp, &
       &-4.41335746902051E-1_wp, 3.01219329594079E-1_wp]
+   real(wp), parameter :: dpat(6, 59) = 0.0_wp
+   real(wp), parameter :: qpat(6, 59) = 0.0_wp 
 
    call get_structure(mol, "UPU23", "0a")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
       & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
-   call test_e(error, mol, input, qat, -9.7339246821001216E-002_wp, method='gfn1')
+   call test_e(error, mol, input, qat, dpat, qpat, -9.7339246821001216E-002_wp, method='gfn1')
    
 end subroutine test_e_charged_alpb_gfn1
 
@@ -764,12 +906,14 @@ subroutine test_e_charged_alpb_gfn2(error)
       & 9.81620738022878E-2_wp, 5.14984224707990E-2_wp, 9.63222020737258E-2_wp, &
       & 3.80443799704811E-2_wp,-4.41189291092377E-1_wp, 3.13549746324888E-1_wp, &
       &-4.41335746902051E-1_wp, 3.01219329594079E-1_wp]
+   real(wp), parameter :: dpat(6, 59) = 0.0_wp
+   real(wp), parameter :: qpat(6, 59) = 0.0_wp
 
    call get_structure(mol, "UPU23", "0a")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
       & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
-   call test_e(error, mol, input, qat, -0.10736560684364888_wp, method='gfn2')
+   call test_e(error, mol, input, qat, dpat, qpat, -0.10736560684364888_wp, method='gfn2')
    
 end subroutine test_e_charged_alpb_gfn2
 
@@ -801,11 +945,13 @@ subroutine test_e_charged_still(error)
       & 9.81620738022878E-2_wp, 5.14984224707990E-2_wp, 9.63222020737258E-2_wp, &
       & 3.80443799704811E-2_wp,-4.41189291092377E-1_wp, 3.13549746324888E-1_wp, &
       &-4.41335746902051E-1_wp, 3.01219329594079E-1_wp]
+   real(wp), parameter :: dpat(6, 59) = 0.0_wp
+   real(wp), parameter :: qpat(6, 59) = 0.0_wp
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "UPU23", "0a")
    input = alpb_input(feps, kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
-   call test_e(error, mol, input, qat, -6.2623428747454107E-2_wp) ! cosmo radii
+   call test_e(error, mol, input, qat, dpat, qpat, -6.2623428747454107E-2_wp) ! cosmo radii
 
 end subroutine test_e_charged_still
 
@@ -838,12 +984,14 @@ subroutine test_e_charged_gbsa_gfn1(error)
       & 9.81620738022878E-2_wp, 5.14984224707990E-2_wp, 9.63222020737258E-2_wp, &
       & 3.80443799704811E-2_wp,-4.41189291092377E-1_wp, 3.13549746324888E-1_wp, &
       &-4.41335746902051E-1_wp, 3.01219329594079E-1_wp]
+   real(wp), parameter :: dpat(6, 59) = 0.0_wp
+   real(wp), parameter :: qpat(6, 59) = 0.0_wp
 
    call get_structure(mol, "UPU23", "0a")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
       & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
-   call test_e(error, mol, input, qat, -0.11225040798405941_wp, method='gfn1')
+   call test_e(error, mol, input, qat, dpat, qpat, -0.11225040798405941_wp, method='gfn1')
    
 end subroutine test_e_charged_gbsa_gfn1
 
@@ -876,12 +1024,14 @@ subroutine test_e_charged_gbsa_gfn2(error)
       & 9.81620738022878E-2_wp, 5.14984224707990E-2_wp, 9.63222020737258E-2_wp, &
       & 3.80443799704811E-2_wp,-4.41189291092377E-1_wp, 3.13549746324888E-1_wp, &
       &-4.41335746902051E-1_wp, 3.01219329594079E-1_wp]
+   real(wp), parameter :: dpat(6, 59) = 0.0_wp
+   real(wp), parameter :: qpat(6, 59) = 0.0_wp
 
    call get_structure(mol, "UPU23", "0a")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
       & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
-   call test_e(error, mol, input, qat, -9.5967790364628852E-002_wp, method='gfn2')
+   call test_e(error, mol, input, qat, dpat, qpat, -9.5967790364628852E-002_wp, method='gfn2')
    
 end subroutine test_e_charged_gbsa_gfn2
 
@@ -894,17 +1044,75 @@ subroutine test_g_p16(error)
    type(structure_type) :: mol
    type(alpb_input) :: input
    real(wp), parameter :: qat(*) = [&
-      & 2.08159387594211E-1_wp,-3.78010519998818E-1_wp, 3.36498247356244E-2_wp, &
-      &-4.11556158912895E-1_wp, 8.14928196660512E-2_wp,-2.00886649303053E-1_wp, &
-      & 2.44756994282684E-1_wp, 2.54580499189089E-2_wp, 2.59835128092562E-1_wp, &
-      & 4.21683321877209E-1_wp, 1.37097163086023E-1_wp, 4.06951664942900E-2_wp, &
-      &-1.10955378625897E-1_wp,-6.44033540918074E-2_wp,-1.91525919028143E-1_wp, &
-      &-9.54898757869102E-2_wp]
+      &-3.28160099939119E-1_wp, 3.63839789415764E-1_wp,-9.39678438468329E-1_wp,&
+      &-5.67353131753718E-1_wp, 3.91549236321241E-1_wp,-7.25527696006913E-1_wp,&
+      & 2.81658498913997E-1_wp, 6.37609035711367E-1_wp,-3.32341795239006E-1_wp,&
+      & 1.57147288398166E-1_wp,-2.15641708745235E-1_wp, 6.23132575019337E-1_wp,&
+      & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
+      & 2.29058416549171E-1_wp]
+
+   real(wp), parameter :: dpat(*) = [&
+      &-1.02866383946914E-1_wp,-6.59701808627942E-2_wp, 1.67698043002308E-1_wp,&
+      &-6.23739039114127E-2_wp,-1.97051591839775E-1_wp,-1.22265382825162E-1_wp,&
+      &-1.64257857747057E-2_wp, 2.27490812781041E-2_wp,-1.84302388618745E-2_wp,&
+      &-8.56553766483229E-4_wp, 2.74842733013248E-3_wp, 2.55949906672251E-3_wp,&
+      &-1.61115426160772E-1_wp, 1.66196888766802E-1_wp,-1.20546783549511E-1_wp,&
+      & 9.88324537231105E-2_wp, 2.50428455703373E-3_wp,-2.88635579792292E-3_wp,&
+      & 8.34445890794251E-2_wp,-1.34421662914771E-1_wp, 3.99666225357878E-2_wp,&
+      &-4.83529798793855E-2_wp, 5.74113854317782E-3_wp, 5.87539955830004E-2_wp,&
+      &-2.97630886764780E-3_wp, 2.19742923198916E-1_wp, 6.43178710881168E-2_wp,&
+      & 9.28242957167868E-2_wp,-6.85043369046399E-2_wp, 2.00259137721060E-1_wp,&
+      & 7.09776971104250E-5_wp, 2.03464908299606E-2_wp, 1.45200228907336E-2_wp,&
+      &-2.15470436895541E-2_wp,-1.67828530829147E-2_wp,-3.81704914987720E-2_wp,&
+      &-6.92951149767597E-2_wp, 9.85295808358629E-2_wp,-4.67219521543993E-3_wp,&
+      &-1.41470268241085E-2_wp, 1.89740357101272E-2_wp,-6.41196409236768E-3_wp,&
+      &-8.82996388817125E-2_wp,-1.65518095011688E-2_wp,-1.35247354235483E-1_wp,&
+      &-2.61342733605818E-1_wp,-6.17705247109865E-2_wp, 4.23216561956390E-1_wp]
+
+    real(wp), parameter :: qpat(*) = [&
+    & 4.51357475089842E-2_wp,-4.17318742479749E-2_wp,-1.36136078209980E-2_wp,&
+      & 9.12863796761614E-2_wp, 7.51195530423392E-2_wp,-3.15221396879885E-2_wp,&
+      &-9.80963767772843E-2_wp, 1.45280277246739E-1_wp,-5.11292962085315E-1_wp,&
+      &-1.16185111757740E-2_wp,-2.61668573633159E-1_wp, 6.09389338862585E-1_wp,&
+      & 6.52037683652264E-3_wp, 3.69171710073827E-2_wp,-1.39436488066209E-2_wp,&
+      &-2.83004471610422E-2_wp, 3.62439775801960E-2_wp, 7.42327197009803E-3_wp,&
+      &-3.86296110845069E-2_wp,-1.21112119157970E-2_wp, 9.97808370410505E-3_wp,&
+      &-1.91278825077846E-2_wp, 6.47092359099180E-2_wp, 2.86515273804006E-2_wp,&
+      & 8.56200033892328E-1_wp, 9.74235458476180E-1_wp, 1.18086922059802E-1_wp,&
+      &-8.71949362470118E-1_wp, 2.97351048258474E-1_wp,-9.74286955952133E-1_wp,&
+      &-2.09879239083559E-1_wp, 9.31236036478151E-2_wp, 5.30742905878537E-2_wp,&
+      & 2.06227339580677E-2_wp,-7.56884351806246E-3_wp, 1.56804948495703E-1_wp,&
+      & 2.93163202989695E-2_wp, 1.59225627857236E-1_wp,-1.42600503718415E-1_wp,&
+      &-3.26169646892855E-2_wp, 6.57594862333770E-2_wp, 1.13284183419448E-1_wp,&
+      &-3.36105260187027E-1_wp,-6.53815224929778E-1_wp, 5.72904099232633E-2_wp,&
+      & 3.91795155531810E-1_wp, 1.49074708451067E-1_wp, 2.78814850263761E-1_wp,&
+      & 1.39849278576512E-1_wp, 1.62052454092380E-2_wp,-2.52552662853771E-1_wp,&
+      & 4.12583681109575E-3_wp,-1.03140151821042E-1_wp, 1.12703384277264E-1_wp,&
+      & 1.14113595393239E-1_wp, 7.38176190606366E-2_wp, 1.63093603236892E-1_wp,&
+      &-2.24757223472586E-1_wp, 1.63465059762335E-1_wp,-2.77207198630140E-1_wp,&
+      & 4.49629181418368E-1_wp, 4.25710033896662E-1_wp,-4.29670969707868E-1_wp,&
+      &-8.92661030885367E-1_wp,-1.88058091049599E-1_wp,-1.99582117104920E-2_wp,&
+      & 7.59715738599860E-1_wp, 8.23127259363381E-1_wp,-1.17603646025185E+0_wp,&
+      &-1.44601626881170E+0_wp, 6.22081607059793E-1_wp, 4.16320721651909E-1_wp,&
+      &-3.31955764455255E-1_wp, 1.15087423515139E+0_wp,-2.25645212472335E-1_wp,&
+      & 1.18140494652646E+0_wp,-7.02380712786817E-1_wp, 5.57600976927600E-1_wp,&
+      & 5.67085367397220E-2_wp, 1.13737943078387E-1_wp,-1.02296461455588E-2_wp,&
+      &-8.06936077116478E-2_wp, 5.38804500826868E-2_wp,-4.64788905941666E-2_wp,&
+      & 2.11496816821796E-2_wp,-3.21916493532053E-2_wp, 1.22390310502235E-1_wp,&
+      &-1.62481131000237E-1_wp,-4.62447548254617E-2_wp,-1.43539992184418E-1_wp,&
+      & 4.32313899320035E-1_wp,-2.95562991660850E-1_wp,-1.10104884940963E+0_wp,&
+      & 3.42643149336475E-1_wp,-6.71823237278679E-1_wp, 6.68734950089545E-1_wp]
+
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "06")
+   ! Without multipoles
    input = alpb_input(feps, kernel=born_kernel%p16, alpb = .true., do_multipoles=.false.)
-   call test_g(error, mol, input, qat, method='gfn2')
+   call test_g(error, mol, input, qat, dpat, qpat, method='gfn2')
+
+   ! With multipoles
+   input = alpb_input(feps, kernel=born_kernel%p16, alpb = .true., do_multipoles=.true.)
+   call test_g(error, mol, input, qat, dpat, qpat, method='gfn2')
 
 end subroutine test_g_p16
 
@@ -917,18 +1125,77 @@ subroutine test_g_alpb(error)
    type(solvent_data) :: solvent
    type(alpb_input) :: input
    real(wp), parameter :: qat(*) = [&
-      & 2.08159387594211E-1_wp,-3.78010519998818E-1_wp, 3.36498247356244E-2_wp, &
-      &-4.11556158912895E-1_wp, 8.14928196660512E-2_wp,-2.00886649303053E-1_wp, &
-      & 2.44756994282684E-1_wp, 2.54580499189089E-2_wp, 2.59835128092562E-1_wp, &
-      & 4.21683321877209E-1_wp, 1.37097163086023E-1_wp, 4.06951664942900E-2_wp, &
-      &-1.10955378625897E-1_wp,-6.44033540918074E-2_wp,-1.91525919028143E-1_wp, &
-      &-9.54898757869102E-2_wp]
+      &-3.28160099939119E-1_wp, 3.63839789415764E-1_wp,-9.39678438468329E-1_wp,&
+      &-5.67353131753718E-1_wp, 3.91549236321241E-1_wp,-7.25527696006913E-1_wp,&
+      & 2.81658498913997E-1_wp, 6.37609035711367E-1_wp,-3.32341795239006E-1_wp,&
+      & 1.57147288398166E-1_wp,-2.15641708745235E-1_wp, 6.23132575019337E-1_wp,&
+      & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
+      & 2.29058416549171E-1_wp]
+
+   real(wp), parameter :: dpat(*) = [&
+      &-1.02866383946914E-1_wp,-6.59701808627942E-2_wp, 1.67698043002308E-1_wp,&
+      &-6.23739039114127E-2_wp,-1.97051591839775E-1_wp,-1.22265382825162E-1_wp,&
+      &-1.64257857747057E-2_wp, 2.27490812781041E-2_wp,-1.84302388618745E-2_wp,&
+      &-8.56553766483229E-4_wp, 2.74842733013248E-3_wp, 2.55949906672251E-3_wp,&
+      &-1.61115426160772E-1_wp, 1.66196888766802E-1_wp,-1.20546783549511E-1_wp,&
+      & 9.88324537231105E-2_wp, 2.50428455703373E-3_wp,-2.88635579792292E-3_wp,&
+      & 8.34445890794251E-2_wp,-1.34421662914771E-1_wp, 3.99666225357878E-2_wp,&
+      &-4.83529798793855E-2_wp, 5.74113854317782E-3_wp, 5.87539955830004E-2_wp,&
+      &-2.97630886764780E-3_wp, 2.19742923198916E-1_wp, 6.43178710881168E-2_wp,&
+      & 9.28242957167868E-2_wp,-6.85043369046399E-2_wp, 2.00259137721060E-1_wp,&
+      & 7.09776971104250E-5_wp, 2.03464908299606E-2_wp, 1.45200228907336E-2_wp,&
+      &-2.15470436895541E-2_wp,-1.67828530829147E-2_wp,-3.81704914987720E-2_wp,&
+      &-6.92951149767597E-2_wp, 9.85295808358629E-2_wp,-4.67219521543993E-3_wp,&
+      &-1.41470268241085E-2_wp, 1.89740357101272E-2_wp,-6.41196409236768E-3_wp,&
+      &-8.82996388817125E-2_wp,-1.65518095011688E-2_wp,-1.35247354235483E-1_wp,&
+      &-2.61342733605818E-1_wp,-6.17705247109865E-2_wp, 4.23216561956390E-1_wp]
+
+    real(wp), parameter :: qpat(*) = [&
+    & 4.51357475089842E-2_wp,-4.17318742479749E-2_wp,-1.36136078209980E-2_wp,&
+      & 9.12863796761614E-2_wp, 7.51195530423392E-2_wp,-3.15221396879885E-2_wp,&
+      &-9.80963767772843E-2_wp, 1.45280277246739E-1_wp,-5.11292962085315E-1_wp,&
+      &-1.16185111757740E-2_wp,-2.61668573633159E-1_wp, 6.09389338862585E-1_wp,&
+      & 6.52037683652264E-3_wp, 3.69171710073827E-2_wp,-1.39436488066209E-2_wp,&
+      &-2.83004471610422E-2_wp, 3.62439775801960E-2_wp, 7.42327197009803E-3_wp,&
+      &-3.86296110845069E-2_wp,-1.21112119157970E-2_wp, 9.97808370410505E-3_wp,&
+      &-1.91278825077846E-2_wp, 6.47092359099180E-2_wp, 2.86515273804006E-2_wp,&
+      & 8.56200033892328E-1_wp, 9.74235458476180E-1_wp, 1.18086922059802E-1_wp,&
+      &-8.71949362470118E-1_wp, 2.97351048258474E-1_wp,-9.74286955952133E-1_wp,&
+      &-2.09879239083559E-1_wp, 9.31236036478151E-2_wp, 5.30742905878537E-2_wp,&
+      & 2.06227339580677E-2_wp,-7.56884351806246E-3_wp, 1.56804948495703E-1_wp,&
+      & 2.93163202989695E-2_wp, 1.59225627857236E-1_wp,-1.42600503718415E-1_wp,&
+      &-3.26169646892855E-2_wp, 6.57594862333770E-2_wp, 1.13284183419448E-1_wp,&
+      &-3.36105260187027E-1_wp,-6.53815224929778E-1_wp, 5.72904099232633E-2_wp,&
+      & 3.91795155531810E-1_wp, 1.49074708451067E-1_wp, 2.78814850263761E-1_wp,&
+      & 1.39849278576512E-1_wp, 1.62052454092380E-2_wp,-2.52552662853771E-1_wp,&
+      & 4.12583681109575E-3_wp,-1.03140151821042E-1_wp, 1.12703384277264E-1_wp,&
+      & 1.14113595393239E-1_wp, 7.38176190606366E-2_wp, 1.63093603236892E-1_wp,&
+      &-2.24757223472586E-1_wp, 1.63465059762335E-1_wp,-2.77207198630140E-1_wp,&
+      & 4.49629181418368E-1_wp, 4.25710033896662E-1_wp,-4.29670969707868E-1_wp,&
+      &-8.92661030885367E-1_wp,-1.88058091049599E-1_wp,-1.99582117104920E-2_wp,&
+      & 7.59715738599860E-1_wp, 8.23127259363381E-1_wp,-1.17603646025185E+0_wp,&
+      &-1.44601626881170E+0_wp, 6.22081607059793E-1_wp, 4.16320721651909E-1_wp,&
+      &-3.31955764455255E-1_wp, 1.15087423515139E+0_wp,-2.25645212472335E-1_wp,&
+      & 1.18140494652646E+0_wp,-7.02380712786817E-1_wp, 5.57600976927600E-1_wp,&
+      & 5.67085367397220E-2_wp, 1.13737943078387E-1_wp,-1.02296461455588E-2_wp,&
+      &-8.06936077116478E-2_wp, 5.38804500826868E-2_wp,-4.64788905941666E-2_wp,&
+      & 2.11496816821796E-2_wp,-3.21916493532053E-2_wp, 1.22390310502235E-1_wp,&
+      &-1.62481131000237E-1_wp,-4.62447548254617E-2_wp,-1.43539992184418E-1_wp,&
+      & 4.32313899320035E-1_wp,-2.95562991660850E-1_wp,-1.10104884940963E+0_wp,&
+      & 3.42643149336475E-1_wp,-6.71823237278679E-1_wp, 6.68734950089545E-1_wp]
 
    call get_structure(mol, "MB16-43", "06")
    solvent = get_solvent_data("water")
+
+   ! Without multipoles
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
       & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
-   call test_g(error, mol, input, qat)
+   call test_g(error, mol, input, qat, dpat, qpat)
+
+   ! With multipoles
+   input = alpb_input(solvent%eps, solvent=solvent%solvent, &
+      & kernel=born_kernel%p16, alpb=.true., do_multipoles=.true.)
+   call test_g(error, mol, input, qat, dpat, qpat)
 
 end subroutine test_g_alpb
 
@@ -948,11 +1215,69 @@ subroutine test_g_still(error)
       & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
       & 2.29058416549171E-1_wp]
 
+   real(wp), parameter :: dpat(*) = [&
+      &-1.02866383946914E-1_wp,-6.59701808627942E-2_wp, 1.67698043002308E-1_wp,&
+      &-6.23739039114127E-2_wp,-1.97051591839775E-1_wp,-1.22265382825162E-1_wp,&
+      &-1.64257857747057E-2_wp, 2.27490812781041E-2_wp,-1.84302388618745E-2_wp,&
+      &-8.56553766483229E-4_wp, 2.74842733013248E-3_wp, 2.55949906672251E-3_wp,&
+      &-1.61115426160772E-1_wp, 1.66196888766802E-1_wp,-1.20546783549511E-1_wp,&
+      & 9.88324537231105E-2_wp, 2.50428455703373E-3_wp,-2.88635579792292E-3_wp,&
+      & 8.34445890794251E-2_wp,-1.34421662914771E-1_wp, 3.99666225357878E-2_wp,&
+      &-4.83529798793855E-2_wp, 5.74113854317782E-3_wp, 5.87539955830004E-2_wp,&
+      &-2.97630886764780E-3_wp, 2.19742923198916E-1_wp, 6.43178710881168E-2_wp,&
+      & 9.28242957167868E-2_wp,-6.85043369046399E-2_wp, 2.00259137721060E-1_wp,&
+      & 7.09776971104250E-5_wp, 2.03464908299606E-2_wp, 1.45200228907336E-2_wp,&
+      &-2.15470436895541E-2_wp,-1.67828530829147E-2_wp,-3.81704914987720E-2_wp,&
+      &-6.92951149767597E-2_wp, 9.85295808358629E-2_wp,-4.67219521543993E-3_wp,&
+      &-1.41470268241085E-2_wp, 1.89740357101272E-2_wp,-6.41196409236768E-3_wp,&
+      &-8.82996388817125E-2_wp,-1.65518095011688E-2_wp,-1.35247354235483E-1_wp,&
+      &-2.61342733605818E-1_wp,-6.17705247109865E-2_wp, 4.23216561956390E-1_wp]
+
+    real(wp), parameter :: qpat(*) = [&
+    & 4.51357475089842E-2_wp,-4.17318742479749E-2_wp,-1.36136078209980E-2_wp,&
+      & 9.12863796761614E-2_wp, 7.51195530423392E-2_wp,-3.15221396879885E-2_wp,&
+      &-9.80963767772843E-2_wp, 1.45280277246739E-1_wp,-5.11292962085315E-1_wp,&
+      &-1.16185111757740E-2_wp,-2.61668573633159E-1_wp, 6.09389338862585E-1_wp,&
+      & 6.52037683652264E-3_wp, 3.69171710073827E-2_wp,-1.39436488066209E-2_wp,&
+      &-2.83004471610422E-2_wp, 3.62439775801960E-2_wp, 7.42327197009803E-3_wp,&
+      &-3.86296110845069E-2_wp,-1.21112119157970E-2_wp, 9.97808370410505E-3_wp,&
+      &-1.91278825077846E-2_wp, 6.47092359099180E-2_wp, 2.86515273804006E-2_wp,&
+      & 8.56200033892328E-1_wp, 9.74235458476180E-1_wp, 1.18086922059802E-1_wp,&
+      &-8.71949362470118E-1_wp, 2.97351048258474E-1_wp,-9.74286955952133E-1_wp,&
+      &-2.09879239083559E-1_wp, 9.31236036478151E-2_wp, 5.30742905878537E-2_wp,&
+      & 2.06227339580677E-2_wp,-7.56884351806246E-3_wp, 1.56804948495703E-1_wp,&
+      & 2.93163202989695E-2_wp, 1.59225627857236E-1_wp,-1.42600503718415E-1_wp,&
+      &-3.26169646892855E-2_wp, 6.57594862333770E-2_wp, 1.13284183419448E-1_wp,&
+      &-3.36105260187027E-1_wp,-6.53815224929778E-1_wp, 5.72904099232633E-2_wp,&
+      & 3.91795155531810E-1_wp, 1.49074708451067E-1_wp, 2.78814850263761E-1_wp,&
+      & 1.39849278576512E-1_wp, 1.62052454092380E-2_wp,-2.52552662853771E-1_wp,&
+      & 4.12583681109575E-3_wp,-1.03140151821042E-1_wp, 1.12703384277264E-1_wp,&
+      & 1.14113595393239E-1_wp, 7.38176190606366E-2_wp, 1.63093603236892E-1_wp,&
+      &-2.24757223472586E-1_wp, 1.63465059762335E-1_wp,-2.77207198630140E-1_wp,&
+      & 4.49629181418368E-1_wp, 4.25710033896662E-1_wp,-4.29670969707868E-1_wp,&
+      &-8.92661030885367E-1_wp,-1.88058091049599E-1_wp,-1.99582117104920E-2_wp,&
+      & 7.59715738599860E-1_wp, 8.23127259363381E-1_wp,-1.17603646025185E+0_wp,&
+      &-1.44601626881170E+0_wp, 6.22081607059793E-1_wp, 4.16320721651909E-1_wp,&
+      &-3.31955764455255E-1_wp, 1.15087423515139E+0_wp,-2.25645212472335E-1_wp,&
+      & 1.18140494652646E+0_wp,-7.02380712786817E-1_wp, 5.57600976927600E-1_wp,&
+      & 5.67085367397220E-2_wp, 1.13737943078387E-1_wp,-1.02296461455588E-2_wp,&
+      &-8.06936077116478E-2_wp, 5.38804500826868E-2_wp,-4.64788905941666E-2_wp,&
+      & 2.11496816821796E-2_wp,-3.21916493532053E-2_wp, 1.22390310502235E-1_wp,&
+      &-1.62481131000237E-1_wp,-4.62447548254617E-2_wp,-1.43539992184418E-1_wp,&
+      & 4.32313899320035E-1_wp,-2.95562991660850E-1_wp,-1.10104884940963E+0_wp,&
+      & 3.42643149336475E-1_wp,-6.71823237278679E-1_wp, 6.68734950089545E-1_wp]
+
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "07")
+
+   ! Without multipoles
    input = alpb_input(feps, kernel=born_kernel%still, alpb=.true., do_multipoles=.false.)
-   call test_g(error, mol, input, qat)
+   call test_g(error, mol, input, qat, dpat, qpat)
+
+   ! With multipoles
+   input = alpb_input(feps, kernel=born_kernel%still, alpb=.true., do_multipoles=.true.)
+   call test_g(error, mol, input, qat, dpat, qpat)
 
 end subroutine test_g_still
 
@@ -972,13 +1297,72 @@ subroutine test_g_gbsa(error)
       & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
       & 2.29058416549171E-1_wp]
 
+   real(wp), parameter :: dpat(*) = [&
+      &-1.02866383946914E-1_wp,-6.59701808627942E-2_wp, 1.67698043002308E-1_wp,&
+      &-6.23739039114127E-2_wp,-1.97051591839775E-1_wp,-1.22265382825162E-1_wp,&
+      &-1.64257857747057E-2_wp, 2.27490812781041E-2_wp,-1.84302388618745E-2_wp,&
+      &-8.56553766483229E-4_wp, 2.74842733013248E-3_wp, 2.55949906672251E-3_wp,&
+      &-1.61115426160772E-1_wp, 1.66196888766802E-1_wp,-1.20546783549511E-1_wp,&
+      & 9.88324537231105E-2_wp, 2.50428455703373E-3_wp,-2.88635579792292E-3_wp,&
+      & 8.34445890794251E-2_wp,-1.34421662914771E-1_wp, 3.99666225357878E-2_wp,&
+      &-4.83529798793855E-2_wp, 5.74113854317782E-3_wp, 5.87539955830004E-2_wp,&
+      &-2.97630886764780E-3_wp, 2.19742923198916E-1_wp, 6.43178710881168E-2_wp,&
+      & 9.28242957167868E-2_wp,-6.85043369046399E-2_wp, 2.00259137721060E-1_wp,&
+      & 7.09776971104250E-5_wp, 2.03464908299606E-2_wp, 1.45200228907336E-2_wp,&
+      &-2.15470436895541E-2_wp,-1.67828530829147E-2_wp,-3.81704914987720E-2_wp,&
+      &-6.92951149767597E-2_wp, 9.85295808358629E-2_wp,-4.67219521543993E-3_wp,&
+      &-1.41470268241085E-2_wp, 1.89740357101272E-2_wp,-6.41196409236768E-3_wp,&
+      &-8.82996388817125E-2_wp,-1.65518095011688E-2_wp,-1.35247354235483E-1_wp,&
+      &-2.61342733605818E-1_wp,-6.17705247109865E-2_wp, 4.23216561956390E-1_wp]
+
+    real(wp), parameter :: qpat(*) = [&
+    & 4.51357475089842E-2_wp,-4.17318742479749E-2_wp,-1.36136078209980E-2_wp,&
+      & 9.12863796761614E-2_wp, 7.51195530423392E-2_wp,-3.15221396879885E-2_wp,&
+      &-9.80963767772843E-2_wp, 1.45280277246739E-1_wp,-5.11292962085315E-1_wp,&
+      &-1.16185111757740E-2_wp,-2.61668573633159E-1_wp, 6.09389338862585E-1_wp,&
+      & 6.52037683652264E-3_wp, 3.69171710073827E-2_wp,-1.39436488066209E-2_wp,&
+      &-2.83004471610422E-2_wp, 3.62439775801960E-2_wp, 7.42327197009803E-3_wp,&
+      &-3.86296110845069E-2_wp,-1.21112119157970E-2_wp, 9.97808370410505E-3_wp,&
+      &-1.91278825077846E-2_wp, 6.47092359099180E-2_wp, 2.86515273804006E-2_wp,&
+      & 8.56200033892328E-1_wp, 9.74235458476180E-1_wp, 1.18086922059802E-1_wp,&
+      &-8.71949362470118E-1_wp, 2.97351048258474E-1_wp,-9.74286955952133E-1_wp,&
+      &-2.09879239083559E-1_wp, 9.31236036478151E-2_wp, 5.30742905878537E-2_wp,&
+      & 2.06227339580677E-2_wp,-7.56884351806246E-3_wp, 1.56804948495703E-1_wp,&
+      & 2.93163202989695E-2_wp, 1.59225627857236E-1_wp,-1.42600503718415E-1_wp,&
+      &-3.26169646892855E-2_wp, 6.57594862333770E-2_wp, 1.13284183419448E-1_wp,&
+      &-3.36105260187027E-1_wp,-6.53815224929778E-1_wp, 5.72904099232633E-2_wp,&
+      & 3.91795155531810E-1_wp, 1.49074708451067E-1_wp, 2.78814850263761E-1_wp,&
+      & 1.39849278576512E-1_wp, 1.62052454092380E-2_wp,-2.52552662853771E-1_wp,&
+      & 4.12583681109575E-3_wp,-1.03140151821042E-1_wp, 1.12703384277264E-1_wp,&
+      & 1.14113595393239E-1_wp, 7.38176190606366E-2_wp, 1.63093603236892E-1_wp,&
+      &-2.24757223472586E-1_wp, 1.63465059762335E-1_wp,-2.77207198630140E-1_wp,&
+      & 4.49629181418368E-1_wp, 4.25710033896662E-1_wp,-4.29670969707868E-1_wp,&
+      &-8.92661030885367E-1_wp,-1.88058091049599E-1_wp,-1.99582117104920E-2_wp,&
+      & 7.59715738599860E-1_wp, 8.23127259363381E-1_wp,-1.17603646025185E+0_wp,&
+      &-1.44601626881170E+0_wp, 6.22081607059793E-1_wp, 4.16320721651909E-1_wp,&
+      &-3.31955764455255E-1_wp, 1.15087423515139E+0_wp,-2.25645212472335E-1_wp,&
+      & 1.18140494652646E+0_wp,-7.02380712786817E-1_wp, 5.57600976927600E-1_wp,&
+      & 5.67085367397220E-2_wp, 1.13737943078387E-1_wp,-1.02296461455588E-2_wp,&
+      &-8.06936077116478E-2_wp, 5.38804500826868E-2_wp,-4.64788905941666E-2_wp,&
+      & 2.11496816821796E-2_wp,-3.21916493532053E-2_wp, 1.22390310502235E-1_wp,&
+      &-1.62481131000237E-1_wp,-4.62447548254617E-2_wp,-1.43539992184418E-1_wp,&
+      & 4.32313899320035E-1_wp,-2.95562991660850E-1_wp,-1.10104884940963E+0_wp,&
+      & 3.42643149336475E-1_wp,-6.71823237278679E-1_wp, 6.68734950089545E-1_wp]
+
       
 
    call get_structure(mol, "MB16-43", "07")
    solvent = get_solvent_data("water")
+
+   ! Without multipoles
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
       & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
-   call test_g(error, mol, input, qat, method='gfn2')
+   call test_g(error, mol, input, qat, dpat, qpat, method='gfn2')
+
+   ! With multipoles
+   input = alpb_input(solvent%eps, solvent=solvent%solvent, &
+      & kernel=born_kernel%still, alpb=.false., do_multipoles=.true.)
+   call test_g(error, mol, input, qat, dpat, qpat, method='gfn2')
 
 end subroutine test_g_gbsa
 

@@ -309,7 +309,6 @@ subroutine update(self, mol, cache)
          & ptr%amat_sd, ptr%amat_dd, ptr%amat_sq, ptr%amat_dq, ptr%amat_qq)
    end if
 
-
 end subroutine update
 
 
@@ -321,7 +320,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    type(wavefunction_type), intent(in) :: wfn
    real(wp), intent(inout) :: energies(:)
 
-   real(wp), allocatable :: vs(:), vd(:, :), vq(:, :)
+   real(wp), allocatable :: vd(:, :), vq(:, :)
    type(alpb_cache), pointer :: ptr
 
    call view(cache, ptr)
@@ -424,6 +423,12 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
 
    call self%kernel%add_kernel_deriv(mol%nat, mol%xyz, ptr%qscratch(:), &
       & ptr%rad, ptr%draddr, energy, gradient)
+
+
+   if (self%do_multipoles) then
+      call self%kernel%add_kernel_deriv_multipole_contributions(mol%nat, mol%xyz, ptr%qscratch(:), &
+         wfn%dpat(:,:,1), wfn%qpat(:,:,1), ptr%rad, ptr%draddr, gradient)
+   end if
 
    if (self%alpbet > 0.0_wp) then
       call get_adet_deriv(mol%nat, mol%xyz, self%gbobc%vdwr, self%keps*self%alpbet, &
@@ -687,8 +692,6 @@ subroutine get_multipole_matrices(self, mol, xyz, keps, brad, &
    integer, parameter :: pb(6) = [1, 2, 2, 3, 3, 3]
    !> Packing factors: 1 for diagonal elements, 2 for off-diagonal (accounts for symmetry)
    integer, parameter :: pf(6) = [1, 2, 1, 2, 2, 1]
-
-   print *, 'MULTIPOLES ARE COMPUTED IN ALPB!'
 
    nat = mol%nat
 
