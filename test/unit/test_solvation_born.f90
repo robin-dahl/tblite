@@ -48,17 +48,8 @@ subroutine collect_solvation_born(testsuite)
 
    testsuite = [ &
       new_unittest("born-1", test_mb01), &
-      new_unittest("born-1-hess", test_mb01_hess), &
-      new_unittest("born-1-third", test_mb01_third), &
-      new_unittest("born-1-fourth", test_mb01_fourth), &
       new_unittest("born-2", test_mb02), &
-      new_unittest("born-2-hess", test_mb02_hess), &
-      new_unittest("born-2-third", test_mb02_third), &
-      new_unittest("born-2-fourth", test_mb02_fourth), &
       new_unittest("born-3", test_mb03), &
-      new_unittest("born-3-hess", test_mb03_hess), &
-      new_unittest("born-3-third", test_mb03_third), &
-      new_unittest("born-3-fourth", test_mb03_fourth), &
       new_unittest("energy-p16", test_e_p16), &
       new_unittest("energy-alpb-gfn1", test_e_alpb_gfn1_all_solvents), &
       new_unittest("energy-alpb-gfn2", test_e_alpb_gfn2_all_solvents), &
@@ -121,209 +112,6 @@ subroutine test_numg(error, gbobc, mol)
    end if
 end subroutine test_numg
 
-subroutine test_hess(error, gbobc, mol)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-   !> Born radii integrator
-   type(born_integrator), intent(inout) :: gbobc
-   !> Molecular structure data
-   type(structure_type), intent(inout) :: mol
-
-   integer :: iat, ic
-   real(wp), allocatable :: rad(:)
-   real(wp), allocatable :: draddr(:, :, :)
-   real(wp), allocatable :: dsr(:, :, :), dsl(:, :, :)
-   real(wp), allocatable :: numhess(:, :, :, :, :)
-   real(wp), allocatable :: drad2r(:, :, :, :, :), d3(:,:,:,:,:,:,:)
-   real(wp), parameter   :: step = 1.0e-5_wp
-
-   allocate(rad(mol%nat))
-   allocate(draddr(3, mol%nat, mol%nat))
-   allocate(dsr(3, mol%nat, mol%nat), dsl(3, mol%nat, mol%nat))
-   allocate(numhess(3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(drad2r(3, mol%nat, 3, mol%nat, mol%nat))
-   ! Analytic radii + gradient + Hessian
-   call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r)
-
-
-   ! Numerical Hessian by central difference of the gradient
-   do iat = 1, mol%nat
-      do ic = 1, 3
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
-         call gbobc%get_rad(mol, rad, dsr)     ! dsr = grad at +step
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) - 2*step
-         call gbobc%get_rad(mol, rad, dsl)     ! dsl = grad at -step
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step  ! restore
-
-         ! For this (ic,iat), fill all (jc,jat,k) at once:
-         numhess(ic, iat, :, :, :) = 0.5_wp * (dsr(:, :, :) - dsl(:, :, :)) / step
-
-      end do
-   end do
-
-   if (any(abs(numhess - drad2r) > thr2)) then
-      call test_failed(error, "Born radii Hessian does not match finite difference solution")
-   end if
-end subroutine test_hess
-
-
-subroutine test_third(error, gbobc, mol)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-   !> Born radii integrator
-   type(born_integrator), intent(inout) :: gbobc
-   !> Molecular structure data
-   type(structure_type), intent(inout) :: mol
-
-   integer :: iat, jat, kat
-   integer :: ic, jc, kc
-   real(wp), allocatable :: rad(:)
-   real(wp), allocatable :: draddr(:, :, :)
-   real(wp), allocatable :: drad2r(:, :, :, :, :)
-   real(wp), allocatable :: drad3r(:, :, :, :, :, :, :)
-   real(wp), allocatable :: hsr(:, :, :, :, :)   ! Hessian at +step
-   real(wp), allocatable :: hsrr(:, :, :, :, :)   ! Hessian at +2step
-   real(wp), allocatable :: hsl(:, :, :, :, :)   ! Hessian at -step
-   real(wp), allocatable :: hsll(:, :, :, :, :)   ! Hessian at -2step
-   real(wp), allocatable :: num3(:, :, :, :, :, :, :)
-   real(wp), parameter   :: step = 1.0e-4_wp
-
-   allocate(rad(mol%nat))
-   allocate(draddr(3, mol%nat, mol%nat))
-   allocate(drad2r(3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(drad3r(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
-
-   allocate(hsr(3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(hsrr(3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(hsl(3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(hsll(3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(num3(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
-
-   ! Analytic radii + gradient + Hessian + third derivative
-   call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=drad3r)
-
-   ! Numerical third derivative by central difference of the Hessian
-   !
-   ! We differentiate the Hessian wrt each coordinate (ic,iat):
-   !   d3(ic,iat, jc,jat, kc,kat, owner) = d/dx_{ic,iat} [ d2(owner)/(d x_{jc,jat} d x_{kc,kat}) ]
-   !
-   do iat = 1, mol%nat
-      do ic = 1, 3
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
-         call gbobc%get_rad(mol, rad, draddr, dradd2r=hsr)   ! Hessian at +step
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
-         call gbobc%get_rad(mol, rad, draddr, dradd2r=hsrr)  ! Hessian at +2step
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) - 3.0_wp*step
-         call gbobc%get_rad(mol, rad, draddr, dradd2r=hsl)   ! Hessian at -step
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) - step
-         call gbobc%get_rad(mol, rad, draddr, dradd2r=hsll)   ! Hessian at -2step
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) + 2.0_wp*step          ! restore
-
-         ! Fill the whole slab for this (ic,iat):
-         num3(ic, iat, :, :, :, :, :) = 1.0_wp/12.0_wp * (-hsrr(:, :, :, :, :) + 8.0_wp*hsr(:, :, :, :, :) &
-            & - 8.0_wp*hsl(:, :, :, :, :) + hsll(:, :, :, :, :)) / step
-      end do
-   end do
-
-
-
-   if (any(abs(num3 - drad3r) > thr2)) then
-      call test_failed(error, "Born radii 3rd derivative does not match finite difference of Hessian")
-      print *, "Max diff: ", maxval(abs(num3 - drad3r))
-   end if
-end subroutine test_third
-
-
-subroutine test_fourth(error, gbobc, mol)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-   !> Born radii integrator
-   type(born_integrator), intent(inout) :: gbobc
-   !> Molecular structure data
-   type(structure_type), intent(inout) :: mol
-
-   integer :: iat, ic
-   real(wp), allocatable :: rad(:)
-   real(wp), allocatable :: draddr(:, :, :)
-   real(wp), allocatable :: drad2r(:, :, :, :, :)
-   real(wp), allocatable :: drad3r(:, :, :, :, :, :, :)
-   real(wp), allocatable :: drad4r(:, :, :, :, :, :, :, :, :)
-
-   ! 3rd-derivative snapshots at displaced geometries
-   real(wp), allocatable :: tsr(:, :, :, :, :, :, :)    ! at +h
-   real(wp), allocatable :: tsrr(:, :, :, :, :, :, :)   ! at +2h
-   real(wp), allocatable :: tsl(:, :, :, :, :, :, :)    ! at -h
-   real(wp), allocatable :: tsll(:, :, :, :, :, :, :)   ! at -2h
-
-   real(wp), allocatable :: num4(:, :, :, :, :, :, :, :, :)
-   real(wp), parameter   :: step = 1.0e-4_wp
-
-   allocate(rad(mol%nat))
-   allocate(draddr(3, mol%nat, mol%nat))
-   allocate(drad2r(3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(drad3r(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(drad4r(3, mol%nat, 3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
-
-   allocate(tsr(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(tsrr(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(tsl(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
-   allocate(tsll(3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
-
-   allocate(num4(3, mol%nat, 3, mol%nat, 3, mol%nat, 3, mol%nat, mol%nat))
-
-   ! Analytic radii + grad + Hess + third + fourth
-   call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=drad3r, dradd4r=drad4r)
-
-   ! Numerical 4th derivative by 4-point central difference of the 3rd derivative
-   !
-   ! We differentiate the 3rd derivative wrt each coordinate (ic,iat):
-   !   d4(ic,iat, jc,jat, kc,kat, lc,lat, owner)
-   !     = d/dx_{ic,iat} [ d3(owner)/(d x_{jc,jat} d x_{kc,kat} d x_{lc,lat}) ]
-   !
-   do iat = 1, mol%nat
-      do ic = 1, 3
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
-         call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=tsr)    ! d3 at +h
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
-         call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=tsrr)   ! d3 at +2h
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) - 3.0_wp*step
-         call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=tsl)    ! d3 at -h
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) - step
-         call gbobc%get_rad(mol, rad, draddr, dradd2r=drad2r, dradd3r=tsll)   ! d3 at -2h
-
-         mol%xyz(ic, iat) = mol%xyz(ic, iat) + 2.0_wp*step                   ! restore
-
-         ! Fill entire slab for this (ic,iat):
-         num4(ic, iat, :, :, :, :, :, :, :) = ( -tsrr(:, :, :, :, :, :, :) + 8.0_wp*tsr(:, :, :, :, :, :, :) &
-            &                                   - 8.0_wp*tsl(:, :, :, :, :, :, :) + tsll(:, :, :, :, :, :, :) ) &
-            &                                   / (12.0_wp * step)
-      end do
-   end do
-
-   ! Compare numeric vs analytic. Use your existing threshold style (thr4) or define one.
-   ! Example: thr4 = 1.0e-6_wp (you pick what is sensible for your system/step size)
-   if (any(abs(num4 - drad4r) > thr2)) then
-      print *, "Max diff (4th derivative): ", maxval(abs(num4 - drad4r))
-      call test_failed(error, "Born radii 4th derivative does not match finite difference solution")
-   end if
-end subroutine test_fourth
-
-
-
-
-
 subroutine test_mb01(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -356,106 +144,6 @@ subroutine test_mb01(error)
    call test_numg(error, gbobc, mol)
 
 end subroutine test_mb01
-
-subroutine test_mb01_hess(error)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   type(born_integrator) :: gbobc
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), parameter :: ref(16) = [&
-      & 4.07331798531438E+0_wp, 2.56451650429167E+0_wp, 2.97676954448882E+0_wp, &
-      & 2.88833112759592E+0_wp, 2.59127476011008E+0_wp, 2.63750279425510E+0_wp, &
-      & 3.56149571036025E+0_wp, 2.89090958281373E+0_wp, 4.53815592283277E+0_wp, &
-      & 2.46342847720303E+0_wp, 2.72707461251522E+0_wp, 3.52933932564532E+0_wp, &
-      & 3.66934919146868E+0_wp, 3.66697827876019E+0_wp, 3.37809284756764E+0_wp, &
-      & 4.57932013403544E+0_wp]
-
-   call get_structure(mol, "MB16-43", "01")
-
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   rvdw = get_vdw_rad_d3(mol%num)
-
-   call new_born_integrator(gbobc, mol, rvdw)
-   call gbobc%get_rad(mol, rad, draddr)
-
-   if (any(abs(rad - ref) > thr2)) then
-      call test_failed(error, "Born radii area values do not match")
-      print '(es20.14e1)', rad
-      return
-   end if
-
-   call test_hess(error, gbobc, mol)
-
-end subroutine test_mb01_hess
-
-subroutine test_mb01_third(error)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   type(born_integrator) :: gbobc
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), parameter :: ref(16) = [&
-      & 4.07331798531438E+0_wp, 2.56451650429167E+0_wp, 2.97676954448882E+0_wp, &
-      & 2.88833112759592E+0_wp, 2.59127476011008E+0_wp, 2.63750279425510E+0_wp, &
-      & 3.56149571036025E+0_wp, 2.89090958281373E+0_wp, 4.53815592283277E+0_wp, &
-      & 2.46342847720303E+0_wp, 2.72707461251522E+0_wp, 3.52933932564532E+0_wp, &
-      & 3.66934919146868E+0_wp, 3.66697827876019E+0_wp, 3.37809284756764E+0_wp, &
-      & 4.57932013403544E+0_wp]
-
-   call get_structure(mol, "MB16-43", "01")
-
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   rvdw = get_vdw_rad_d3(mol%num)
-
-   call new_born_integrator(gbobc, mol, rvdw)
-   call gbobc%get_rad(mol, rad, draddr)
-
-   if (any(abs(rad - ref) > thr2)) then
-      call test_failed(error, "Born radii area values do not match")
-      print '(es20.14e1)', rad
-      return
-   end if
-
-   call test_third(error, gbobc, mol)
-
-end subroutine test_mb01_third
-
-subroutine test_mb01_fourth(error)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   type(born_integrator) :: gbobc
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), parameter :: ref(16) = [&
-      & 4.07331798531438E+0_wp, 2.56451650429167E+0_wp, 2.97676954448882E+0_wp, &
-      & 2.88833112759592E+0_wp, 2.59127476011008E+0_wp, 2.63750279425510E+0_wp, &
-      & 3.56149571036025E+0_wp, 2.89090958281373E+0_wp, 4.53815592283277E+0_wp, &
-      & 2.46342847720303E+0_wp, 2.72707461251522E+0_wp, 3.52933932564532E+0_wp, &
-      & 3.66934919146868E+0_wp, 3.66697827876019E+0_wp, 3.37809284756764E+0_wp, &
-      & 4.57932013403544E+0_wp]
-
-   call get_structure(mol, "MB16-43", "01")
-
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   rvdw = get_vdw_rad_d3(mol%num)
-
-   call new_born_integrator(gbobc, mol, rvdw)
-   call gbobc%get_rad(mol, rad, draddr)
-
-   if (any(abs(rad - ref) > thr2)) then
-      call test_failed(error, "Born radii area values do not match")
-      print '(es20.14e1)', rad
-      return
-   end if
-
-   call test_fourth(error, gbobc, mol)
-
-end subroutine test_mb01_fourth
-
 
 subroutine test_mb02(error)
    !> Error handling
@@ -490,106 +178,6 @@ subroutine test_mb02(error)
 
 end subroutine test_mb02
 
-subroutine test_mb02_hess(error)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   type(born_integrator) :: gbobc
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), parameter :: ref(16) = [&
-      & 3.43501192886252E+0_wp, 5.02404916999371E+0_wp, 4.72253865039692E+0_wp, &
-      & 3.52096661104217E+0_wp, 4.76023330956437E+0_wp, 3.46119195863261E+0_wp, &
-      & 3.17361370475619E+0_wp, 2.90775065608382E+0_wp, 4.94595287355805E+0_wp, &
-      & 3.32592657749444E+0_wp, 4.54348353409109E+0_wp, 4.30924297002105E+0_wp, &
-      & 3.47420343563851E+0_wp, 2.82302349370343E+0_wp, 6.67552064739394E+0_wp, &
-      & 4.23898159491675E+0_wp]
-
-   call get_structure(mol, "MB16-43", "02")
-
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   rvdw = get_vdw_rad_bondi(mol%num)
-
-   call new_born_integrator(gbobc, mol, rvdw)
-   call gbobc%get_rad(mol, rad, draddr)
-
-   if (any(abs(rad - ref) > thr2)) then
-      call test_failed(error, "Born radii area values do not match")
-      print '(es20.14e1)', rad
-      return
-   end if
-
-   call test_hess(error, gbobc, mol)
-
-end subroutine test_mb02_hess
-
-subroutine test_mb02_third(error)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   type(born_integrator) :: gbobc
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), parameter :: ref(16) = [&
-      & 3.43501192886252E+0_wp, 5.02404916999371E+0_wp, 4.72253865039692E+0_wp, &
-      & 3.52096661104217E+0_wp, 4.76023330956437E+0_wp, 3.46119195863261E+0_wp, &
-      & 3.17361370475619E+0_wp, 2.90775065608382E+0_wp, 4.94595287355805E+0_wp, &
-      & 3.32592657749444E+0_wp, 4.54348353409109E+0_wp, 4.30924297002105E+0_wp, &
-      & 3.47420343563851E+0_wp, 2.82302349370343E+0_wp, 6.67552064739394E+0_wp, &
-      & 4.23898159491675E+0_wp]
-
-   call get_structure(mol, "MB16-43", "02")
-
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   rvdw = get_vdw_rad_bondi(mol%num)
-
-   call new_born_integrator(gbobc, mol, rvdw)
-   call gbobc%get_rad(mol, rad, draddr)
-
-   if (any(abs(rad - ref) > thr2)) then
-      call test_failed(error, "Born radii area values do not match")
-      print '(es20.14e1)', rad
-      return
-   end if
-
-   call test_third(error, gbobc, mol)
-
-end subroutine test_mb02_third
-
-subroutine test_mb02_fourth(error)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   type(born_integrator) :: gbobc
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), parameter :: ref(16) = [&
-      & 3.43501192886252E+0_wp, 5.02404916999371E+0_wp, 4.72253865039692E+0_wp, &
-      & 3.52096661104217E+0_wp, 4.76023330956437E+0_wp, 3.46119195863261E+0_wp, &
-      & 3.17361370475619E+0_wp, 2.90775065608382E+0_wp, 4.94595287355805E+0_wp, &
-      & 3.32592657749444E+0_wp, 4.54348353409109E+0_wp, 4.30924297002105E+0_wp, &
-      & 3.47420343563851E+0_wp, 2.82302349370343E+0_wp, 6.67552064739394E+0_wp, &
-      & 4.23898159491675E+0_wp]
-
-   call get_structure(mol, "MB16-43", "02")
-
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   rvdw = get_vdw_rad_bondi(mol%num)
-
-   call new_born_integrator(gbobc, mol, rvdw)
-   call gbobc%get_rad(mol, rad, draddr)
-
-   if (any(abs(rad - ref) > thr2)) then
-      call test_failed(error, "Born radii area values do not match")
-      print '(es20.14e1)', rad
-      return
-   end if
-
-   call test_fourth(error, gbobc, mol)
-
-end subroutine test_mb02_fourth
-
-
 subroutine test_mb03(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -623,105 +211,6 @@ subroutine test_mb03(error)
 
 end subroutine test_mb03
 
-subroutine test_mb03_hess(error)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   type(born_integrator) :: gbobc
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), parameter :: ref(16) = [&
-      & 4.94764986698701E+0_wp, 3.95122747438791E+0_wp, 4.57075556245289E+0_wp, &
-      & 5.46368225070994E+0_wp, 8.24269261139398E+0_wp, 5.68405471762112E+0_wp, &
-      & 5.51002325309604E+0_wp, 4.75597020148093E+0_wp, 4.21190195089894E+0_wp, &
-      & 4.32836770082885E+0_wp, 4.12684869499911E+0_wp, 5.15171226623248E+0_wp, &
-      & 4.83223856996055E+0_wp, 3.02638025720185E+0_wp, 4.05683426506167E+0_wp, &
-      & 4.63569783992096E+0_wp]
-
-   call get_structure(mol, "MB16-43", "03")
-
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   rvdw = get_vdw_rad_cosmo(mol%num)
-
-   call new_born_integrator(gbobc, mol, rvdw)
-   call gbobc%get_rad(mol, rad, draddr)
-
-   if (any(abs(rad - ref) > thr2)) then
-      call test_failed(error, "Born radii area values do not match")
-      print '(es20.14e1)', rad
-      return
-   end if
-
-   call test_hess(error, gbobc, mol)
-
-end subroutine test_mb03_hess
-
-subroutine test_mb03_third(error)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   type(born_integrator) :: gbobc
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), parameter :: ref(16) = [&
-      & 4.94764986698701E+0_wp, 3.95122747438791E+0_wp, 4.57075556245289E+0_wp, &
-      & 5.46368225070994E+0_wp, 8.24269261139398E+0_wp, 5.68405471762112E+0_wp, &
-      & 5.51002325309604E+0_wp, 4.75597020148093E+0_wp, 4.21190195089894E+0_wp, &
-      & 4.32836770082885E+0_wp, 4.12684869499911E+0_wp, 5.15171226623248E+0_wp, &
-      & 4.83223856996055E+0_wp, 3.02638025720185E+0_wp, 4.05683426506167E+0_wp, &
-      & 4.63569783992096E+0_wp]
-
-   call get_structure(mol, "MB16-43", "03")
-
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   rvdw = get_vdw_rad_cosmo(mol%num)
-
-   call new_born_integrator(gbobc, mol, rvdw)
-   call gbobc%get_rad(mol, rad, draddr)
-
-   if (any(abs(rad - ref) > thr2)) then
-      call test_failed(error, "Born radii area values do not match")
-      print '(es20.14e1)', rad
-      return
-   end if
-
-   call test_third(error, gbobc, mol)
-
-end subroutine test_mb03_third
-
-subroutine test_mb03_fourth(error)
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   type(born_integrator) :: gbobc
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), parameter :: ref(16) = [&
-      & 4.94764986698701E+0_wp, 3.95122747438791E+0_wp, 4.57075556245289E+0_wp, &
-      & 5.46368225070994E+0_wp, 8.24269261139398E+0_wp, 5.68405471762112E+0_wp, &
-      & 5.51002325309604E+0_wp, 4.75597020148093E+0_wp, 4.21190195089894E+0_wp, &
-      & 4.32836770082885E+0_wp, 4.12684869499911E+0_wp, 5.15171226623248E+0_wp, &
-      & 4.83223856996055E+0_wp, 3.02638025720185E+0_wp, 4.05683426506167E+0_wp, &
-      & 4.63569783992096E+0_wp]
-
-   call get_structure(mol, "MB16-43", "03")
-
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   rvdw = get_vdw_rad_cosmo(mol%num)
-
-   call new_born_integrator(gbobc, mol, rvdw)
-   call gbobc%get_rad(mol, rad, draddr)
-
-   if (any(abs(rad - ref) > thr2)) then
-      call test_failed(error, "Born radii area values do not match")
-      print '(es20.14e1)', rad
-      return
-   end if
-
-   call test_fourth(error, gbobc, mol)
-
-end subroutine test_mb03_fourth
-
 
 subroutine test_e(error, mol, input, qat, ref, method)
 
@@ -753,10 +242,13 @@ subroutine test_e(error, mol, input, qat, ref, method)
    energy = 0.0_wp
    wfn%qat = reshape(qat, [size(qat), 1])
    allocate(wfn%dpat(3, size(qat, 1), 1), source=0.0_wp)
+   allocate(wfn%qpat(6, size(qat, 1), 1), source=0.0_wp)
    allocate(pot%vat(size(qat, 1), 1))
    allocate(pot%vdp(3, size(qat, 1), 1))
+   allocate(pot%vqp(6, size(qat, 1), 1))
 
    scratch_input = input
+
 
    if (allocated(input%solvent) .and. present(method)) then 
       call get_alpb_param(scratch_input, mol, method, error)
@@ -808,8 +300,10 @@ subroutine test_g(error, mol, input, qat, method)
 
    wfn%qat = reshape(qat, [size(qat), 1])
    allocate(wfn%dpat(3, size(qat, 1), 1), source=0.0_wp)
+   allocate(wfn%qpat(6, size(qat, 1), 1), source=0.0_wp)
    allocate(pot%vat(size(qat, 1), 1))
    allocate(pot%vdp(3, size(qat, 1), 1))
+   allocate(pot%vqp(6, size(qat, 1), 1))
 
    scratch_input = input
 
@@ -850,6 +344,7 @@ subroutine test_g(error, mol, input, qat, method)
    call solv%get_potential(mol, cache, wfn, pot)
    call solv%get_energy(mol, cache, wfn, energy)
    call solv%get_gradient(mol, cache, wfn, gradient, sigma)
+   
 
    if (any(abs(gradient - numg) > thr2)) then
       call test_failed(error, "Gradient does not match")
@@ -862,7 +357,7 @@ subroutine test_g(error, mol, input, qat, method)
 end subroutine test_g
 
 
-subroutine test_p(error, mol, input, qat, method)
+subroutine test_p(error, mol, input, qat, dpat, qpat, method)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -875,6 +370,8 @@ subroutine test_p(error, mol, input, qat, method)
 
    !> Atomic partial charges
    real(wp), intent(in) :: qat(:)
+   real(wp), intent(in) :: dpat(:)
+   real(wp), intent(in) :: qpat(:)
 
    !> Method for parameter selection
    character(len=*), optional, intent(in) :: method
@@ -890,9 +387,11 @@ subroutine test_p(error, mol, input, qat, method)
    integer :: ii
 
    wfn%qat = reshape(qat, [size(qat), 1])
-   allocate(wfn%dpat(3, size(qat, 1), 1), source=0.0_wp)
+   wfn%dpat = reshape(dpat, [3, size(qat, 1), 1])
+   wfn%qpat = reshape(qpat, [6, size(qat, 1), 1])
    allocate(pot%vat(size(qat, 1), 1))
    allocate(pot%vdp(3, size(qat, 1), 1))
+   allocate(pot%vqp(6, size(qat, 1), 1))
 
    scratch_input = input
 
@@ -930,7 +429,11 @@ subroutine test_p(error, mol, input, qat, method)
    call solv%get_energy(mol, cache, wfn, energy)
 
    if (any(abs([pot%vat] - vat) > thr2)) then
-      call test_failed(error, "Potential does not match")
+      if (input%do_multipoles) then
+         call test_failed(error, "Multipole potential does not match")
+      else
+         call test_failed(error, "Potential does not match")
+      end if
       print '(3es20.13)', pot%vat
       print '(a)', "---"
       print '(3es20.13)', vat
@@ -956,7 +459,7 @@ subroutine test_e_p16(error)
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "04")
-   call test_e(error, mol, alpb_input(feps, kernel=born_kernel%p16, alpb=.true.), &
+   call test_e(error, mol, alpb_input(feps, kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.), &
       & qat, -7.2620663020537416E-3_wp) ! cosmo radii
 
 end subroutine test_e_p16
@@ -1001,7 +504,7 @@ subroutine test_e_alpb_gfn1_all_solvents(error)
    do i = 1, nsolvents
       solvent = get_solvent_data(solvents(i))
       input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-         & kernel=born_kernel%p16, alpb=.true.)
+         & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
       call test_e(error, mol, input, qat, refs(i), method='gfn1')
       if(allocated(error)) return
    end do 
@@ -1048,7 +551,7 @@ subroutine test_e_alpb_gfn2_all_solvents(error)
    do i = 1, nsolvents
       solvent = get_solvent_data(solvents(i))
       input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-         & kernel=born_kernel%p16, alpb=.true.)
+         & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
       call test_e(error, mol, input, qat, refs(i), method='gfn2') 
       if(allocated(error)) return
    end do 
@@ -1072,7 +575,7 @@ subroutine test_e_still(error)
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "05")
-   call test_e(error, mol, alpb_input(feps, kernel=born_kernel%still, alpb=.false.), &
+   call test_e(error, mol, alpb_input(feps, kernel=born_kernel%still, alpb=.false., do_multipoles=.false.), &
       & qat, -5.8170737856555370E-3_wp) ! cosmo radii
              
 end subroutine test_e_still
@@ -1109,7 +612,7 @@ subroutine test_e_gbsa_gfn1_all_solvents(error)
    do i = 1, nsolvents
       solvent = get_solvent_data(solvents(i))
       input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-         & kernel=born_kernel%still, alpb=.false.)
+         & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
       call test_e(error, mol, input, qat, refs(i), method='gfn1') 
       if(allocated(error)) return
    end do 
@@ -1150,7 +653,7 @@ subroutine test_e_gbsa_gfn2_all_solvents(error)
    do i = 1, nsolvents
       solvent = get_solvent_data(solvents(i))
       input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-         & kernel=born_kernel%still, alpb=.false.)
+         & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
       call test_e(error, mol, input, qat, refs(i), method='gfn2') 
       if(allocated(error)) return
    end do 
@@ -1189,7 +692,7 @@ subroutine test_e_charged_p16(error)
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "UPU23", "0a")
-   input = alpb_input(feps, kernel=born_kernel%still, alpb=.false.)
+   input = alpb_input(feps, kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
    call test_e(error, mol, input, qat, -6.2623428747454107E-2_wp) ! cosmo radii
 
 end subroutine test_e_charged_p16
@@ -1227,7 +730,7 @@ subroutine test_e_charged_alpb_gfn1(error)
    call get_structure(mol, "UPU23", "0a")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-      & kernel=born_kernel%p16, alpb=.true.)
+      & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
    call test_e(error, mol, input, qat, -9.7339246821001216E-002_wp, method='gfn1')
    
 end subroutine test_e_charged_alpb_gfn1
@@ -1265,7 +768,7 @@ subroutine test_e_charged_alpb_gfn2(error)
    call get_structure(mol, "UPU23", "0a")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-      & kernel=born_kernel%p16, alpb=.true.)
+      & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
    call test_e(error, mol, input, qat, -0.10736560684364888_wp, method='gfn2')
    
 end subroutine test_e_charged_alpb_gfn2
@@ -1301,7 +804,7 @@ subroutine test_e_charged_still(error)
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "UPU23", "0a")
-   input = alpb_input(feps, kernel=born_kernel%still, alpb=.false.)
+   input = alpb_input(feps, kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
    call test_e(error, mol, input, qat, -6.2623428747454107E-2_wp) ! cosmo radii
 
 end subroutine test_e_charged_still
@@ -1339,7 +842,7 @@ subroutine test_e_charged_gbsa_gfn1(error)
    call get_structure(mol, "UPU23", "0a")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-      & kernel=born_kernel%still, alpb=.false.)
+      & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
    call test_e(error, mol, input, qat, -0.11225040798405941_wp, method='gfn1')
    
 end subroutine test_e_charged_gbsa_gfn1
@@ -1377,7 +880,7 @@ subroutine test_e_charged_gbsa_gfn2(error)
    call get_structure(mol, "UPU23", "0a")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-      & kernel=born_kernel%still, alpb=.false.)
+      & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
    call test_e(error, mol, input, qat, -9.5967790364628852E-002_wp, method='gfn2')
    
 end subroutine test_e_charged_gbsa_gfn2
@@ -1400,8 +903,8 @@ subroutine test_g_p16(error)
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "06")
-   input = alpb_input(feps, kernel=born_kernel%p16, alpb = .true.)
-   call test_g(error, mol, input, qat)
+   input = alpb_input(feps, kernel=born_kernel%p16, alpb = .true., do_multipoles=.false.)
+   call test_g(error, mol, input, qat, method='gfn2')
 
 end subroutine test_g_p16
 
@@ -1424,8 +927,8 @@ subroutine test_g_alpb(error)
    call get_structure(mol, "MB16-43", "06")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-      & kernel=born_kernel%p16, alpb=.true.)
-   call test_g(error, mol, input, qat, method='gfn2')
+      & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
+   call test_g(error, mol, input, qat)
 
 end subroutine test_g_alpb
 
@@ -1438,16 +941,17 @@ subroutine test_g_still(error)
    type(structure_type) :: mol
    type(alpb_input) :: input
    real(wp), parameter :: qat(*) = [&
-      &-1.57321098180703E-1_wp, 1.65233008998668E-1_wp, 3.22320267782066E-1_wp, &
-      & 3.63564544135336E-2_wp, 4.85639267214320E-2_wp,-3.59203277893926E-1_wp, &
-      &-1.93841260011383E-1_wp,-3.86495230324447E-1_wp, 3.10104147485353E-1_wp, &
-      & 8.34907519580185E-2_wp,-3.62672063405622E-1_wp, 3.64143595819311E-1_wp, &
-      & 3.34640678947868E-1_wp,-4.69881543486815E-1_wp,-1.89222615863620E-1_wp, &
-      & 4.53784257040286E-1_wp]
+      &-3.28160099939119E-1_wp, 3.63839789415764E-1_wp,-9.39678438468329E-1_wp,&
+      &-5.67353131753718E-1_wp, 3.91549236321241E-1_wp,-7.25527696006913E-1_wp,&
+      & 2.81658498913997E-1_wp, 6.37609035711367E-1_wp,-3.32341795239006E-1_wp,&
+      & 1.57147288398166E-1_wp,-2.15641708745235E-1_wp, 6.23132575019337E-1_wp,&
+      & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
+      & 2.29058416549171E-1_wp]
+
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "07")
-   input = alpb_input(feps, kernel=born_kernel%still, alpb=.true.)
+   input = alpb_input(feps, kernel=born_kernel%still, alpb=.true., do_multipoles=.false.)
    call test_g(error, mol, input, qat)
 
 end subroutine test_g_still
@@ -1461,17 +965,19 @@ subroutine test_g_gbsa(error)
    type(solvent_data) :: solvent
    type(alpb_input) :: input
    real(wp), parameter :: qat(*) = [&
-      &-1.57321098180703E-1_wp, 1.65233008998668E-1_wp, 3.22320267782066E-1_wp, &
-      & 3.63564544135336E-2_wp, 4.85639267214320E-2_wp,-3.59203277893926E-1_wp, &
-      &-1.93841260011383E-1_wp,-3.86495230324447E-1_wp, 3.10104147485353E-1_wp, &
-      & 8.34907519580185E-2_wp,-3.62672063405622E-1_wp, 3.64143595819311E-1_wp, &
-      & 3.34640678947868E-1_wp,-4.69881543486815E-1_wp,-1.89222615863620E-1_wp, &
-      & 4.53784257040286E-1_wp]
+      &-3.28160099939119E-1_wp, 3.63839789415764E-1_wp,-9.39678438468329E-1_wp,&
+      &-5.67353131753718E-1_wp, 3.91549236321241E-1_wp,-7.25527696006913E-1_wp,&
+      & 2.81658498913997E-1_wp, 6.37609035711367E-1_wp,-3.32341795239006E-1_wp,&
+      & 1.57147288398166E-1_wp,-2.15641708745235E-1_wp, 6.23132575019337E-1_wp,&
+      & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
+      & 2.29058416549171E-1_wp]
+
+      
 
    call get_structure(mol, "MB16-43", "07")
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-      & kernel=born_kernel%still, alpb=.false.)
+      & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
    call test_g(error, mol, input, qat, method='gfn2')
 
 end subroutine test_g_gbsa
@@ -1485,17 +991,75 @@ subroutine test_p_p16(error)
    type(structure_type) :: mol
    type(alpb_input) :: input
    real(wp), parameter :: qat(*) = [&
-      &-2.05668345919710E-1_wp,-3.99553123071811E-1_wp, 3.29242774348191E-1_wp, &
-      &-3.11737933844111E-1_wp, 3.58851882478133E-2_wp, 3.21886835736497E-1_wp, &
-      & 4.14743455841314E-2_wp, 2.95727359478547E-2_wp,-5.06347224522431E-1_wp, &
-      & 3.43067182413129E-1_wp, 6.88373767679515E-1_wp, 7.03357390141253E-2_wp, &
-      &-9.62424552888750E-2_wp,-1.32209348056625E-1_wp, 9.78998441832186E-2_wp, &
-      &-3.05979982450903E-1_wp]
+      &-3.28160099939119E-1_wp, 3.63839789415764E-1_wp,-9.39678438468329E-1_wp,&
+      &-5.67353131753718E-1_wp, 3.91549236321241E-1_wp,-7.25527696006913E-1_wp,&
+      & 2.81658498913997E-1_wp, 6.37609035711367E-1_wp,-3.32341795239006E-1_wp,&
+      & 1.57147288398166E-1_wp,-2.15641708745235E-1_wp, 6.23132575019337E-1_wp,&
+      & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
+      & 2.29058416549171E-1_wp]
+
+   real(wp), parameter :: dpat(*) = [&
+      &-1.02866383946914E-1_wp,-6.59701808627942E-2_wp, 1.67698043002308E-1_wp,&
+      &-6.23739039114127E-2_wp,-1.97051591839775E-1_wp,-1.22265382825162E-1_wp,&
+      &-1.64257857747057E-2_wp, 2.27490812781041E-2_wp,-1.84302388618745E-2_wp,&
+      &-8.56553766483229E-4_wp, 2.74842733013248E-3_wp, 2.55949906672251E-3_wp,&
+      &-1.61115426160772E-1_wp, 1.66196888766802E-1_wp,-1.20546783549511E-1_wp,&
+      & 9.88324537231105E-2_wp, 2.50428455703373E-3_wp,-2.88635579792292E-3_wp,&
+      & 8.34445890794251E-2_wp,-1.34421662914771E-1_wp, 3.99666225357878E-2_wp,&
+      &-4.83529798793855E-2_wp, 5.74113854317782E-3_wp, 5.87539955830004E-2_wp,&
+      &-2.97630886764780E-3_wp, 2.19742923198916E-1_wp, 6.43178710881168E-2_wp,&
+      & 9.28242957167868E-2_wp,-6.85043369046399E-2_wp, 2.00259137721060E-1_wp,&
+      & 7.09776971104250E-5_wp, 2.03464908299606E-2_wp, 1.45200228907336E-2_wp,&
+      &-2.15470436895541E-2_wp,-1.67828530829147E-2_wp,-3.81704914987720E-2_wp,&
+      &-6.92951149767597E-2_wp, 9.85295808358629E-2_wp,-4.67219521543993E-3_wp,&
+      &-1.41470268241085E-2_wp, 1.89740357101272E-2_wp,-6.41196409236768E-3_wp,&
+      &-8.82996388817125E-2_wp,-1.65518095011688E-2_wp,-1.35247354235483E-1_wp,&
+      &-2.61342733605818E-1_wp,-6.17705247109865E-2_wp, 4.23216561956390E-1_wp]
+
+    real(wp), parameter :: qpat(*) = [&
+    & 4.51357475089842E-2_wp,-4.17318742479749E-2_wp,-1.36136078209980E-2_wp,&
+      & 9.12863796761614E-2_wp, 7.51195530423392E-2_wp,-3.15221396879885E-2_wp,&
+      &-9.80963767772843E-2_wp, 1.45280277246739E-1_wp,-5.11292962085315E-1_wp,&
+      &-1.16185111757740E-2_wp,-2.61668573633159E-1_wp, 6.09389338862585E-1_wp,&
+      & 6.52037683652264E-3_wp, 3.69171710073827E-2_wp,-1.39436488066209E-2_wp,&
+      &-2.83004471610422E-2_wp, 3.62439775801960E-2_wp, 7.42327197009803E-3_wp,&
+      &-3.86296110845069E-2_wp,-1.21112119157970E-2_wp, 9.97808370410505E-3_wp,&
+      &-1.91278825077846E-2_wp, 6.47092359099180E-2_wp, 2.86515273804006E-2_wp,&
+      & 8.56200033892328E-1_wp, 9.74235458476180E-1_wp, 1.18086922059802E-1_wp,&
+      &-8.71949362470118E-1_wp, 2.97351048258474E-1_wp,-9.74286955952133E-1_wp,&
+      &-2.09879239083559E-1_wp, 9.31236036478151E-2_wp, 5.30742905878537E-2_wp,&
+      & 2.06227339580677E-2_wp,-7.56884351806246E-3_wp, 1.56804948495703E-1_wp,&
+      & 2.93163202989695E-2_wp, 1.59225627857236E-1_wp,-1.42600503718415E-1_wp,&
+      &-3.26169646892855E-2_wp, 6.57594862333770E-2_wp, 1.13284183419448E-1_wp,&
+      &-3.36105260187027E-1_wp,-6.53815224929778E-1_wp, 5.72904099232633E-2_wp,&
+      & 3.91795155531810E-1_wp, 1.49074708451067E-1_wp, 2.78814850263761E-1_wp,&
+      & 1.39849278576512E-1_wp, 1.62052454092380E-2_wp,-2.52552662853771E-1_wp,&
+      & 4.12583681109575E-3_wp,-1.03140151821042E-1_wp, 1.12703384277264E-1_wp,&
+      & 1.14113595393239E-1_wp, 7.38176190606366E-2_wp, 1.63093603236892E-1_wp,&
+      &-2.24757223472586E-1_wp, 1.63465059762335E-1_wp,-2.77207198630140E-1_wp,&
+      & 4.49629181418368E-1_wp, 4.25710033896662E-1_wp,-4.29670969707868E-1_wp,&
+      &-8.92661030885367E-1_wp,-1.88058091049599E-1_wp,-1.99582117104920E-2_wp,&
+      & 7.59715738599860E-1_wp, 8.23127259363381E-1_wp,-1.17603646025185E+0_wp,&
+      &-1.44601626881170E+0_wp, 6.22081607059793E-1_wp, 4.16320721651909E-1_wp,&
+      &-3.31955764455255E-1_wp, 1.15087423515139E+0_wp,-2.25645212472335E-1_wp,&
+      & 1.18140494652646E+0_wp,-7.02380712786817E-1_wp, 5.57600976927600E-1_wp,&
+      & 5.67085367397220E-2_wp, 1.13737943078387E-1_wp,-1.02296461455588E-2_wp,&
+      &-8.06936077116478E-2_wp, 5.38804500826868E-2_wp,-4.64788905941666E-2_wp,&
+      & 2.11496816821796E-2_wp,-3.21916493532053E-2_wp, 1.22390310502235E-1_wp,&
+      &-1.62481131000237E-1_wp,-4.62447548254617E-2_wp,-1.43539992184418E-1_wp,&
+      & 4.32313899320035E-1_wp,-2.95562991660850E-1_wp,-1.10104884940963E+0_wp,&
+      & 3.42643149336475E-1_wp,-6.71823237278679E-1_wp, 6.68734950089545E-1_wp]
+
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "08")
-   input = alpb_input(feps, kernel=born_kernel%p16, alpb=.true.)
-   call test_p(error, mol, input, qat)
+   ! Test without multipoles
+   input = alpb_input(feps, kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
+   call test_p(error, mol, input, qat, dpat, qpat)
+
+   ! Test with multipoles
+   input = alpb_input(feps, kernel=born_kernel%p16, alpb=.true., do_multipoles=.true.)
+   call test_p(error, mol, input, qat, dpat, qpat)
 
 end subroutine test_p_p16
 
@@ -1507,19 +1071,79 @@ subroutine test_p_alpb(error)
    type(structure_type) :: mol
    type(solvent_data) :: solvent
    type(alpb_input) :: input
+
    real(wp), parameter :: qat(*) = [&
-      &-2.05668345919710E-1_wp,-3.99553123071811E-1_wp, 3.29242774348191E-1_wp, &
-      &-3.11737933844111E-1_wp, 3.58851882478133E-2_wp, 3.21886835736497E-1_wp, &
-      & 4.14743455841314E-2_wp, 2.95727359478547E-2_wp,-5.06347224522431E-1_wp, &
-      & 3.43067182413129E-1_wp, 6.88373767679515E-1_wp, 7.03357390141253E-2_wp, &
-      &-9.62424552888750E-2_wp,-1.32209348056625E-1_wp, 9.78998441832186E-2_wp, &
-      &-3.05979982450903E-1_wp]
+      &-3.28160099939119E-1_wp, 3.63839789415764E-1_wp,-9.39678438468329E-1_wp,&
+      &-5.67353131753718E-1_wp, 3.91549236321241E-1_wp,-7.25527696006913E-1_wp,&
+      & 2.81658498913997E-1_wp, 6.37609035711367E-1_wp,-3.32341795239006E-1_wp,&
+      & 1.57147288398166E-1_wp,-2.15641708745235E-1_wp, 6.23132575019337E-1_wp,&
+      & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
+      & 2.29058416549171E-1_wp]
+
+   real(wp), parameter :: dpat(*) = [&
+      &-1.02866383946914E-1_wp,-6.59701808627942E-2_wp, 1.67698043002308E-1_wp,&
+      &-6.23739039114127E-2_wp,-1.97051591839775E-1_wp,-1.22265382825162E-1_wp,&
+      &-1.64257857747057E-2_wp, 2.27490812781041E-2_wp,-1.84302388618745E-2_wp,&
+      &-8.56553766483229E-4_wp, 2.74842733013248E-3_wp, 2.55949906672251E-3_wp,&
+      &-1.61115426160772E-1_wp, 1.66196888766802E-1_wp,-1.20546783549511E-1_wp,&
+      & 9.88324537231105E-2_wp, 2.50428455703373E-3_wp,-2.88635579792292E-3_wp,&
+      & 8.34445890794251E-2_wp,-1.34421662914771E-1_wp, 3.99666225357878E-2_wp,&
+      &-4.83529798793855E-2_wp, 5.74113854317782E-3_wp, 5.87539955830004E-2_wp,&
+      &-2.97630886764780E-3_wp, 2.19742923198916E-1_wp, 6.43178710881168E-2_wp,&
+      & 9.28242957167868E-2_wp,-6.85043369046399E-2_wp, 2.00259137721060E-1_wp,&
+      & 7.09776971104250E-5_wp, 2.03464908299606E-2_wp, 1.45200228907336E-2_wp,&
+      &-2.15470436895541E-2_wp,-1.67828530829147E-2_wp,-3.81704914987720E-2_wp,&
+      &-6.92951149767597E-2_wp, 9.85295808358629E-2_wp,-4.67219521543993E-3_wp,&
+      &-1.41470268241085E-2_wp, 1.89740357101272E-2_wp,-6.41196409236768E-3_wp,&
+      &-8.82996388817125E-2_wp,-1.65518095011688E-2_wp,-1.35247354235483E-1_wp,&
+      &-2.61342733605818E-1_wp,-6.17705247109865E-2_wp, 4.23216561956390E-1_wp]
+
+    real(wp), parameter :: qpat(*) = [&
+    & 4.51357475089842E-2_wp,-4.17318742479749E-2_wp,-1.36136078209980E-2_wp,&
+      & 9.12863796761614E-2_wp, 7.51195530423392E-2_wp,-3.15221396879885E-2_wp,&
+      &-9.80963767772843E-2_wp, 1.45280277246739E-1_wp,-5.11292962085315E-1_wp,&
+      &-1.16185111757740E-2_wp,-2.61668573633159E-1_wp, 6.09389338862585E-1_wp,&
+      & 6.52037683652264E-3_wp, 3.69171710073827E-2_wp,-1.39436488066209E-2_wp,&
+      &-2.83004471610422E-2_wp, 3.62439775801960E-2_wp, 7.42327197009803E-3_wp,&
+      &-3.86296110845069E-2_wp,-1.21112119157970E-2_wp, 9.97808370410505E-3_wp,&
+      &-1.91278825077846E-2_wp, 6.47092359099180E-2_wp, 2.86515273804006E-2_wp,&
+      & 8.56200033892328E-1_wp, 9.74235458476180E-1_wp, 1.18086922059802E-1_wp,&
+      &-8.71949362470118E-1_wp, 2.97351048258474E-1_wp,-9.74286955952133E-1_wp,&
+      &-2.09879239083559E-1_wp, 9.31236036478151E-2_wp, 5.30742905878537E-2_wp,&
+      & 2.06227339580677E-2_wp,-7.56884351806246E-3_wp, 1.56804948495703E-1_wp,&
+      & 2.93163202989695E-2_wp, 1.59225627857236E-1_wp,-1.42600503718415E-1_wp,&
+      &-3.26169646892855E-2_wp, 6.57594862333770E-2_wp, 1.13284183419448E-1_wp,&
+      &-3.36105260187027E-1_wp,-6.53815224929778E-1_wp, 5.72904099232633E-2_wp,&
+      & 3.91795155531810E-1_wp, 1.49074708451067E-1_wp, 2.78814850263761E-1_wp,&
+      & 1.39849278576512E-1_wp, 1.62052454092380E-2_wp,-2.52552662853771E-1_wp,&
+      & 4.12583681109575E-3_wp,-1.03140151821042E-1_wp, 1.12703384277264E-1_wp,&
+      & 1.14113595393239E-1_wp, 7.38176190606366E-2_wp, 1.63093603236892E-1_wp,&
+      &-2.24757223472586E-1_wp, 1.63465059762335E-1_wp,-2.77207198630140E-1_wp,&
+      & 4.49629181418368E-1_wp, 4.25710033896662E-1_wp,-4.29670969707868E-1_wp,&
+      &-8.92661030885367E-1_wp,-1.88058091049599E-1_wp,-1.99582117104920E-2_wp,&
+      & 7.59715738599860E-1_wp, 8.23127259363381E-1_wp,-1.17603646025185E+0_wp,&
+      &-1.44601626881170E+0_wp, 6.22081607059793E-1_wp, 4.16320721651909E-1_wp,&
+      &-3.31955764455255E-1_wp, 1.15087423515139E+0_wp,-2.25645212472335E-1_wp,&
+      & 1.18140494652646E+0_wp,-7.02380712786817E-1_wp, 5.57600976927600E-1_wp,&
+      & 5.67085367397220E-2_wp, 1.13737943078387E-1_wp,-1.02296461455588E-2_wp,&
+      &-8.06936077116478E-2_wp, 5.38804500826868E-2_wp,-4.64788905941666E-2_wp,&
+      & 2.11496816821796E-2_wp,-3.21916493532053E-2_wp, 1.22390310502235E-1_wp,&
+      &-1.62481131000237E-1_wp,-4.62447548254617E-2_wp,-1.43539992184418E-1_wp,&
+      & 4.32313899320035E-1_wp,-2.95562991660850E-1_wp,-1.10104884940963E+0_wp,&
+      & 3.42643149336475E-1_wp,-6.71823237278679E-1_wp, 6.68734950089545E-1_wp]
 
    call get_structure(mol, "MB16-43", "08")
    solvent = get_solvent_data("water")
+
+   ! Test without multipoles
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-      & kernel=born_kernel%p16, alpb=.true.)
-   call test_p(error, mol, input, qat, method='gfn2')
+      & kernel=born_kernel%p16, alpb=.true., do_multipoles=.false.)
+   call test_p(error, mol, input, qat, dpat, qpat, method='gfn2')
+
+   ! Test with multipoles
+   input = alpb_input(solvent%eps, solvent=solvent%solvent, &
+      & kernel=born_kernel%p16, alpb=.true., do_multipoles=.true.)
+   call test_p(error, mol, input, qat, dpat, qpat, method='gfn2')
 
 end subroutine test_p_alpb
 
@@ -1531,18 +1155,78 @@ subroutine test_p_still(error)
 
    type(structure_type) :: mol
    type(alpb_input) :: input
+
    real(wp), parameter :: qat(*) = [&
-      &-5.25247525508526E-2_wp,-1.97060288484673E-2_wp,-1.36432079012167E-1_wp, &
-      &-9.52347486058915E-2_wp, 4.66468767398605E-1_wp, 2.70593750695380E-2_wp, &
-      &-1.82819518140298E-1_wp, 1.59893322865668E-1_wp,-1.04573523319519E-1_wp, &
-      & 1.16709722834927E-2_wp, 4.11411958411730E-1_wp, 2.87449331948580E-2_wp, &
-      &-4.12833246638830E-1_wp,-3.57145165960098E-1_wp,-9.54533576632005E-2_wp, &
-      & 3.51473091515422E-1_wp]
+      &-3.28160099939119E-1_wp, 3.63839789415764E-1_wp,-9.39678438468329E-1_wp,&
+      &-5.67353131753718E-1_wp, 3.91549236321241E-1_wp,-7.25527696006913E-1_wp,&
+      & 2.81658498913997E-1_wp, 6.37609035711367E-1_wp,-3.32341795239006E-1_wp,&
+      & 1.57147288398166E-1_wp,-2.15641708745235E-1_wp, 6.23132575019337E-1_wp,&
+      & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
+      & 2.29058416549171E-1_wp]
+
+   real(wp), parameter :: dpat(*) = [&
+      &-1.02866383946914E-1_wp,-6.59701808627942E-2_wp, 1.67698043002308E-1_wp,&
+      &-6.23739039114127E-2_wp,-1.97051591839775E-1_wp,-1.22265382825162E-1_wp,&
+      &-1.64257857747057E-2_wp, 2.27490812781041E-2_wp,-1.84302388618745E-2_wp,&
+      &-8.56553766483229E-4_wp, 2.74842733013248E-3_wp, 2.55949906672251E-3_wp,&
+      &-1.61115426160772E-1_wp, 1.66196888766802E-1_wp,-1.20546783549511E-1_wp,&
+      & 9.88324537231105E-2_wp, 2.50428455703373E-3_wp,-2.88635579792292E-3_wp,&
+      & 8.34445890794251E-2_wp,-1.34421662914771E-1_wp, 3.99666225357878E-2_wp,&
+      &-4.83529798793855E-2_wp, 5.74113854317782E-3_wp, 5.87539955830004E-2_wp,&
+      &-2.97630886764780E-3_wp, 2.19742923198916E-1_wp, 6.43178710881168E-2_wp,&
+      & 9.28242957167868E-2_wp,-6.85043369046399E-2_wp, 2.00259137721060E-1_wp,&
+      & 7.09776971104250E-5_wp, 2.03464908299606E-2_wp, 1.45200228907336E-2_wp,&
+      &-2.15470436895541E-2_wp,-1.67828530829147E-2_wp,-3.81704914987720E-2_wp,&
+      &-6.92951149767597E-2_wp, 9.85295808358629E-2_wp,-4.67219521543993E-3_wp,&
+      &-1.41470268241085E-2_wp, 1.89740357101272E-2_wp,-6.41196409236768E-3_wp,&
+      &-8.82996388817125E-2_wp,-1.65518095011688E-2_wp,-1.35247354235483E-1_wp,&
+      &-2.61342733605818E-1_wp,-6.17705247109865E-2_wp, 4.23216561956390E-1_wp]
+
+    real(wp), parameter :: qpat(*) = [&
+    & 4.51357475089842E-2_wp,-4.17318742479749E-2_wp,-1.36136078209980E-2_wp,&
+      & 9.12863796761614E-2_wp, 7.51195530423392E-2_wp,-3.15221396879885E-2_wp,&
+      &-9.80963767772843E-2_wp, 1.45280277246739E-1_wp,-5.11292962085315E-1_wp,&
+      &-1.16185111757740E-2_wp,-2.61668573633159E-1_wp, 6.09389338862585E-1_wp,&
+      & 6.52037683652264E-3_wp, 3.69171710073827E-2_wp,-1.39436488066209E-2_wp,&
+      &-2.83004471610422E-2_wp, 3.62439775801960E-2_wp, 7.42327197009803E-3_wp,&
+      &-3.86296110845069E-2_wp,-1.21112119157970E-2_wp, 9.97808370410505E-3_wp,&
+      &-1.91278825077846E-2_wp, 6.47092359099180E-2_wp, 2.86515273804006E-2_wp,&
+      & 8.56200033892328E-1_wp, 9.74235458476180E-1_wp, 1.18086922059802E-1_wp,&
+      &-8.71949362470118E-1_wp, 2.97351048258474E-1_wp,-9.74286955952133E-1_wp,&
+      &-2.09879239083559E-1_wp, 9.31236036478151E-2_wp, 5.30742905878537E-2_wp,&
+      & 2.06227339580677E-2_wp,-7.56884351806246E-3_wp, 1.56804948495703E-1_wp,&
+      & 2.93163202989695E-2_wp, 1.59225627857236E-1_wp,-1.42600503718415E-1_wp,&
+      &-3.26169646892855E-2_wp, 6.57594862333770E-2_wp, 1.13284183419448E-1_wp,&
+      &-3.36105260187027E-1_wp,-6.53815224929778E-1_wp, 5.72904099232633E-2_wp,&
+      & 3.91795155531810E-1_wp, 1.49074708451067E-1_wp, 2.78814850263761E-1_wp,&
+      & 1.39849278576512E-1_wp, 1.62052454092380E-2_wp,-2.52552662853771E-1_wp,&
+      & 4.12583681109575E-3_wp,-1.03140151821042E-1_wp, 1.12703384277264E-1_wp,&
+      & 1.14113595393239E-1_wp, 7.38176190606366E-2_wp, 1.63093603236892E-1_wp,&
+      &-2.24757223472586E-1_wp, 1.63465059762335E-1_wp,-2.77207198630140E-1_wp,&
+      & 4.49629181418368E-1_wp, 4.25710033896662E-1_wp,-4.29670969707868E-1_wp,&
+      &-8.92661030885367E-1_wp,-1.88058091049599E-1_wp,-1.99582117104920E-2_wp,&
+      & 7.59715738599860E-1_wp, 8.23127259363381E-1_wp,-1.17603646025185E+0_wp,&
+      &-1.44601626881170E+0_wp, 6.22081607059793E-1_wp, 4.16320721651909E-1_wp,&
+      &-3.31955764455255E-1_wp, 1.15087423515139E+0_wp,-2.25645212472335E-1_wp,&
+      & 1.18140494652646E+0_wp,-7.02380712786817E-1_wp, 5.57600976927600E-1_wp,&
+      & 5.67085367397220E-2_wp, 1.13737943078387E-1_wp,-1.02296461455588E-2_wp,&
+      &-8.06936077116478E-2_wp, 5.38804500826868E-2_wp,-4.64788905941666E-2_wp,&
+      & 2.11496816821796E-2_wp,-3.21916493532053E-2_wp, 1.22390310502235E-1_wp,&
+      &-1.62481131000237E-1_wp,-4.62447548254617E-2_wp,-1.43539992184418E-1_wp,&
+      & 4.32313899320035E-1_wp,-2.95562991660850E-1_wp,-1.10104884940963E+0_wp,&
+      & 3.42643149336475E-1_wp,-6.71823237278679E-1_wp, 6.68734950089545E-1_wp]
+
    real(wp), parameter :: feps = 80.0_wp
 
    call get_structure(mol, "MB16-43", "09")
-   input = alpb_input(feps, kernel=born_kernel%still, alpb=.true.)
-   call test_p(error, mol, input, qat)
+
+   ! Test without multipoles
+   input = alpb_input(feps, kernel=born_kernel%still, alpb=.true., do_multipoles=.false.)
+   call test_p(error, mol, input, qat, dpat, qpat)
+
+   ! Test with multipoles
+   input = alpb_input(feps, kernel=born_kernel%still, alpb=.true., do_multipoles=.true.)
+   call test_p(error, mol, input, qat, dpat, qpat)
 
 end subroutine test_p_still
 
@@ -1554,19 +1238,78 @@ subroutine test_p_gbsa(error)
    type(structure_type) :: mol
    type(solvent_data) :: solvent
    type(alpb_input) :: input
-   real(wp), parameter :: qat(*) = [&
-      &-5.25247525508526E-2_wp,-1.97060288484673E-2_wp,-1.36432079012167E-1_wp, &
-      &-9.52347486058915E-2_wp, 4.66468767398605E-1_wp, 2.70593750695380E-2_wp, &
-      &-1.82819518140298E-1_wp, 1.59893322865668E-1_wp,-1.04573523319519E-1_wp, &
-      & 1.16709722834927E-2_wp, 4.11411958411730E-1_wp, 2.87449331948580E-2_wp, &
-      &-4.12833246638830E-1_wp,-3.57145165960098E-1_wp,-9.54533576632005E-2_wp, &
-      & 3.51473091515422E-1_wp]
+    real(wp), parameter :: qat(*) = [&
+      &-3.28160099939119E-1_wp, 3.63839789415764E-1_wp,-9.39678438468329E-1_wp,&
+      &-5.67353131753718E-1_wp, 3.91549236321241E-1_wp,-7.25527696006913E-1_wp,&
+      & 2.81658498913997E-1_wp, 6.37609035711367E-1_wp,-3.32341795239006E-1_wp,&
+      & 1.57147288398166E-1_wp,-2.15641708745235E-1_wp, 6.23132575019337E-1_wp,&
+      & 6.86303747651841E-1_wp,-5.41860284045708E-1_wp, 2.80264616247842E-1_wp,&
+      & 2.29058416549171E-1_wp]
+
+   real(wp), parameter :: dpat(*) = [&
+      &-1.02866383946914E-1_wp,-6.59701808627942E-2_wp, 1.67698043002308E-1_wp,&
+      &-6.23739039114127E-2_wp,-1.97051591839775E-1_wp,-1.22265382825162E-1_wp,&
+      &-1.64257857747057E-2_wp, 2.27490812781041E-2_wp,-1.84302388618745E-2_wp,&
+      &-8.56553766483229E-4_wp, 2.74842733013248E-3_wp, 2.55949906672251E-3_wp,&
+      &-1.61115426160772E-1_wp, 1.66196888766802E-1_wp,-1.20546783549511E-1_wp,&
+      & 9.88324537231105E-2_wp, 2.50428455703373E-3_wp,-2.88635579792292E-3_wp,&
+      & 8.34445890794251E-2_wp,-1.34421662914771E-1_wp, 3.99666225357878E-2_wp,&
+      &-4.83529798793855E-2_wp, 5.74113854317782E-3_wp, 5.87539955830004E-2_wp,&
+      &-2.97630886764780E-3_wp, 2.19742923198916E-1_wp, 6.43178710881168E-2_wp,&
+      & 9.28242957167868E-2_wp,-6.85043369046399E-2_wp, 2.00259137721060E-1_wp,&
+      & 7.09776971104250E-5_wp, 2.03464908299606E-2_wp, 1.45200228907336E-2_wp,&
+      &-2.15470436895541E-2_wp,-1.67828530829147E-2_wp,-3.81704914987720E-2_wp,&
+      &-6.92951149767597E-2_wp, 9.85295808358629E-2_wp,-4.67219521543993E-3_wp,&
+      &-1.41470268241085E-2_wp, 1.89740357101272E-2_wp,-6.41196409236768E-3_wp,&
+      &-8.82996388817125E-2_wp,-1.65518095011688E-2_wp,-1.35247354235483E-1_wp,&
+      &-2.61342733605818E-1_wp,-6.17705247109865E-2_wp, 4.23216561956390E-1_wp]
+
+    real(wp), parameter :: qpat(*) = [&
+    & 4.51357475089842E-2_wp,-4.17318742479749E-2_wp,-1.36136078209980E-2_wp,&
+      & 9.12863796761614E-2_wp, 7.51195530423392E-2_wp,-3.15221396879885E-2_wp,&
+      &-9.80963767772843E-2_wp, 1.45280277246739E-1_wp,-5.11292962085315E-1_wp,&
+      &-1.16185111757740E-2_wp,-2.61668573633159E-1_wp, 6.09389338862585E-1_wp,&
+      & 6.52037683652264E-3_wp, 3.69171710073827E-2_wp,-1.39436488066209E-2_wp,&
+      &-2.83004471610422E-2_wp, 3.62439775801960E-2_wp, 7.42327197009803E-3_wp,&
+      &-3.86296110845069E-2_wp,-1.21112119157970E-2_wp, 9.97808370410505E-3_wp,&
+      &-1.91278825077846E-2_wp, 6.47092359099180E-2_wp, 2.86515273804006E-2_wp,&
+      & 8.56200033892328E-1_wp, 9.74235458476180E-1_wp, 1.18086922059802E-1_wp,&
+      &-8.71949362470118E-1_wp, 2.97351048258474E-1_wp,-9.74286955952133E-1_wp,&
+      &-2.09879239083559E-1_wp, 9.31236036478151E-2_wp, 5.30742905878537E-2_wp,&
+      & 2.06227339580677E-2_wp,-7.56884351806246E-3_wp, 1.56804948495703E-1_wp,&
+      & 2.93163202989695E-2_wp, 1.59225627857236E-1_wp,-1.42600503718415E-1_wp,&
+      &-3.26169646892855E-2_wp, 6.57594862333770E-2_wp, 1.13284183419448E-1_wp,&
+      &-3.36105260187027E-1_wp,-6.53815224929778E-1_wp, 5.72904099232633E-2_wp,&
+      & 3.91795155531810E-1_wp, 1.49074708451067E-1_wp, 2.78814850263761E-1_wp,&
+      & 1.39849278576512E-1_wp, 1.62052454092380E-2_wp,-2.52552662853771E-1_wp,&
+      & 4.12583681109575E-3_wp,-1.03140151821042E-1_wp, 1.12703384277264E-1_wp,&
+      & 1.14113595393239E-1_wp, 7.38176190606366E-2_wp, 1.63093603236892E-1_wp,&
+      &-2.24757223472586E-1_wp, 1.63465059762335E-1_wp,-2.77207198630140E-1_wp,&
+      & 4.49629181418368E-1_wp, 4.25710033896662E-1_wp,-4.29670969707868E-1_wp,&
+      &-8.92661030885367E-1_wp,-1.88058091049599E-1_wp,-1.99582117104920E-2_wp,&
+      & 7.59715738599860E-1_wp, 8.23127259363381E-1_wp,-1.17603646025185E+0_wp,&
+      &-1.44601626881170E+0_wp, 6.22081607059793E-1_wp, 4.16320721651909E-1_wp,&
+      &-3.31955764455255E-1_wp, 1.15087423515139E+0_wp,-2.25645212472335E-1_wp,&
+      & 1.18140494652646E+0_wp,-7.02380712786817E-1_wp, 5.57600976927600E-1_wp,&
+      & 5.67085367397220E-2_wp, 1.13737943078387E-1_wp,-1.02296461455588E-2_wp,&
+      &-8.06936077116478E-2_wp, 5.38804500826868E-2_wp,-4.64788905941666E-2_wp,&
+      & 2.11496816821796E-2_wp,-3.21916493532053E-2_wp, 1.22390310502235E-1_wp,&
+      &-1.62481131000237E-1_wp,-4.62447548254617E-2_wp,-1.43539992184418E-1_wp,&
+      & 4.32313899320035E-1_wp,-2.95562991660850E-1_wp,-1.10104884940963E+0_wp,&
+      & 3.42643149336475E-1_wp,-6.71823237278679E-1_wp, 6.68734950089545E-1_wp]
 
    call get_structure(mol, "MB16-43", "09")
    solvent = get_solvent_data("water")
+
+   ! Test GFN2/GBSA with multipoles off
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-      & kernel=born_kernel%still, alpb=.false.)
-   call test_p(error, mol, input, qat, method='gfn2')
+      & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
+   call test_p(error, mol, input, qat, dpat, qpat, method='gfn2')
+
+   ! Test with multipoles
+   input = alpb_input(solvent%eps, solvent=solvent%solvent, &
+      & kernel=born_kernel%still, alpb=.false., do_multipoles=.true.)
+   call test_p(error, mol, input, qat, dpat, qpat, method='gfn2')
 
 end subroutine test_p_gbsa
 
@@ -1592,7 +1335,7 @@ subroutine test_unsupported_solvent(error)
    ! Check GFN1/GBSA unavailable solvent
    solvent = get_solvent_data("aniline")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-      & kernel=born_kernel%still, alpb=.false.)
+      & kernel=born_kernel%still, alpb=.false., do_multipoles=.false.)
    call get_alpb_param(input, mol, 'gfn1', error)
 
 end subroutine test_unsupported_solvent

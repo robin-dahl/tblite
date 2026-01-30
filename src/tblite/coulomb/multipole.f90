@@ -544,51 +544,55 @@ end subroutine get_multipole_matrix
 !    end do
 ! end subroutine get_multipole_matrix_0d
 
-!> Calculate the multipole interaction matrix for finite systems (Coulomb kernel)
+!> Calculate the multipole interaction matrix for finite systems 
 subroutine get_multipole_matrix_0d(mol, rad, kdmp3, kdmp5, amat_sd, amat_dd, amat_sq, amat_dq, amat_qq)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
    !> Multipole damping radii for all atoms
    real(wp), intent(in) :: rad(:)
-   !> Damping function for inverse quadratic contributions
+   !> Damping function exponent for inverse-quadratic-like contributions (sd)
    real(wp), intent(in) :: kdmp3
-   !> Damping function for inverse cubic contributions
+   !> Damping function exponent for inverse-cubic-like contributions (dd/sq/dq/qq)
    real(wp), intent(in) :: kdmp5
-   !> Interaction matrix for charges and dipoles
-   real(wp), intent(inout) :: amat_sd(:, :, :)          ! (3,nat,nat)
-   !> Interaction matrix for dipoles and dipoles
-   real(wp), intent(inout) :: amat_dd(:, :, :, :)       ! (3,nat,3,nat)
-   !> Interaction matrix for charges and quadrupoles (packed 6)
-   real(wp), intent(inout) :: amat_sq(:, :, :)          ! (6,nat,nat)
-   !> Interaction matrix for dipoles and quadrupoles (3 x packed6)
-   real(wp), intent(inout) :: amat_dq(:, :, :, :)       ! (3,nat,6,nat)
-   !> Interaction matrix for quadrupoles and quadrupoles (packed6 x packed6)
-   real(wp), intent(inout) :: amat_qq(:, :, :, :)       ! (6,nat,6,nat)
+
+   !> Interaction matrix for charges and dipoles          (3,nat,nat)
+   real(wp), intent(inout) :: amat_sd(:, :, :)
+   !> Interaction matrix for dipoles and dipoles          (3,nat,3,nat)
+   real(wp), intent(inout) :: amat_dd(:, :, :, :)
+   !> Interaction matrix for charges and quadrupoles      (6,nat,nat) packed symmetric (xx,xy,yy,xz,yz,zz)
+   real(wp), intent(inout) :: amat_sq(:, :, :)
+   !> Interaction matrix for dipoles and quadrupoles      (3,nat,6,nat) 3 x packed6
+   real(wp), intent(inout) :: amat_dq(:, :, :, :)
+   !> Interaction matrix for quadrupoles and quadrupoles  (6,nat,6,nat) packed6 x packed6
+   real(wp), intent(inout) :: amat_qq(:, :, :, :)
 
    integer :: iat, jat
-   integer :: a, b, c, d, p, q
-   integer :: fab, fcd
+   integer :: alpha, beta, gamma, epsilon, p, q
+   integer :: fab, fge
+
    real(wp) :: r1, r2, r4
-   real(wp) :: vec(3)
-   real(wp) :: g1, g3, g5, g7, g9
+   real(wp) :: vec(3)               ! displacement vector R_ij = r_i - r_j
+   real(wp) :: g1, g3, g5, g7, g9   ! powers of 1/R: g1=1/R, g3=1/R^3, ...
    real(wp) :: fdmp3, fdmp5, rr
    real(wp) :: tc(6)
 
-   real(wp) :: I3(3,3)
-   real(wp) :: U(3,3,3)        ! dipole-quadrupole tensor U_{a,bc}
-   real(wp) :: sym1, sym2
-   real(wp) :: Wabcd           ! quadrupole-quadrupole kernel tensor element
+   real(wp) :: I3(3,3)              ! identity / Kronecker delta
+   real(wp) :: d3Kij_drj3(3,3,3)    ! third derivative tensor of Coulomb kernel (w.r.t. r_j)
+   real(wp) :: sym_dRR, sym_dd
+   real(wp) :: w_abge               ! effective traceless (Theta) QQ coupling tensor element
 
-   integer, parameter :: pa(6) = [1, 1, 2, 1, 2, 3]  ! mapping p -> a-index
-   integer, parameter :: pb(6) = [1, 2, 2, 3, 3, 3]  ! mapping p -> b-index
-   integer, parameter :: pf(6) = [1, 2, 1, 2, 2, 1]  ! factor: 1 diag, 2 offdiag
+   ! Packing arrays: map between symmetric 3x3 (alpha,beta) and packed 6-vector index p
+   ! See also alpb implementation 
+   integer, parameter :: pa(6) = [1, 1, 2, 1, 2, 3]  
+   integer, parameter :: pb(6) = [1, 2, 2, 3, 3, 3]  
+   integer, parameter :: pf(6) = [1, 2, 1, 2, 2, 1]  
 
    I3 = 0.0_wp
    I3(1,1)=1.0_wp; I3(2,2)=1.0_wp; I3(3,3)=1.0_wp
 
    !$omp parallel do default(none) schedule(runtime) collapse(2) &
    !$omp shared(amat_sd, amat_dd, amat_sq, amat_dq, amat_qq, mol, rad, kdmp3, kdmp5, I3) &
-   !$omp private(iat, jat, vec, r1, r2, r4, g1, g3, g5, g7, g9, rr, fdmp3, fdmp5, tc, U, a,b,c,d,p,q,fab,fcd,sym1,sym2,Wabcd)
+   !$omp private(iat, jat, vec, r1, r2, r4, g1, g3, g5, g7, g9, rr, fdmp3, fdmp5, tc, d3Kij_drj3, alpha, beta, gamma, epsilon, p, q, fab, fge, sym_dRR, sym_dd, w_abge)
    do iat = 1, mol%nat
       do jat = 1, mol%nat
          if (iat == jat) cycle
@@ -600,95 +604,116 @@ subroutine get_multipole_matrix_0d(mol, rad, kdmp3, kdmp5, amat_sd, amat_dd, ama
          r2 = r1*r1
          r4 = r2*r2
 
-         g3 = g1 * g1 * g1
-         g5 = g3 * g1 * g1
-         g7 = g5 * g1 * g1
-         g9 = g7 * g1 * g1
+         g3 = g1*g1*g1               ! 1/R^3
+         g5 = g3*g1*g1               ! 1/R^5
+         g7 = g5*g1*g1               ! 1/R^7
+         g9 = g7*g1*g1               ! 1/R^9
 
          rr = 0.5_wp * (rad(jat) + rad(iat)) * g1
          fdmp3 = 1.0_wp / (1.0_wp + 6.0_wp * rr**kdmp3)
          fdmp5 = 1.0_wp / (1.0_wp + 6.0_wp * rr**kdmp5)
 
-         ! ------------------------------------------------------------
-         ! SD: charge–dipole  (amat_sd(:, jat, iat) += R / R^3)
-         ! ------------------------------------------------------------
-         amat_sd(:, jat, iat) = amat_sd(:, jat, iat) + vec * g3 * fdmp3
+         ! -----------------------------------------------------------------------------
+         ! Index pattern (..., jat, ..., iat) throughout:
+         !    response on site j (jat) due to a source multipole on site i (iat)
+         ! -----------------------------------------------------------------------------
 
          ! ------------------------------------------------------------
-         ! DD: dipole–dipole  (amat_dd(:, jat, :, iat) += I/R^3 - 3 RR^T/R^5)
+         ! 1) SD: charge–dipole block from first derivative (gradient)
+         !    dK/dr_{j,α} = +R_{ij,α} / R_{ij}^3
+         ! ------------------------------------------------------------
+         amat_sd(:, jat, iat) = amat_sd(:, jat, iat) + vec * (g3*fdmp3)
+
+         ! ------------------------------------------------------------
+         ! 2a) DD: dipole–dipole block from second derivative (Hessian)
+         !    amat_dd stores -H, where H_{αβ} = d^2K/(dr_{j,α} dr_{j,β})
          ! ------------------------------------------------------------
          amat_dd(:, jat, :, iat) = amat_dd(:, jat, :, iat) &
             & + I3 * (g3*fdmp5) - spread(vec, 1, 3) * spread(vec, 2, 3) * (3.0_wp*g5*fdmp5)
 
          ! ------------------------------------------------------------
-         ! SQ: charge–quadrupole (packed): tc ~ (R_a R_b)/R^5  with offdiagonals doubled
+         ! 2b) SQ: charge–quadrupole block (packed6)
+         !    Radial form: Q_{βγ} ~ R_{ij,β} R_{ij,γ} / R_{ij}^5  (off-diagonals doubled in storage)
+         !    packed order: (11,12,22,13,23,33) = (xx,xy,yy,xz,yz,zz)
          ! ------------------------------------------------------------
-         tc(1) = vec(1)*vec(1) * g5*fdmp5
-         tc(2) = 2.0_wp*vec(1)*vec(2) * g5*fdmp5
-         tc(3) = vec(2)*vec(2) * g5*fdmp5
-         tc(4) = 2.0_wp*vec(1)*vec(3) * g5*fdmp5
-         tc(5) = 2.0_wp*vec(2)*vec(3) * g5*fdmp5
-         tc(6) = vec(3)*vec(3) * g5*fdmp5
+         tc(1) = vec(1)*vec(1) * (g5*fdmp5)
+         tc(2) = 2.0_wp*vec(1)*vec(2) * (g5*fdmp5)
+         tc(3) = vec(2)*vec(2) * (g5*fdmp5)
+         tc(4) = 2.0_wp*vec(1)*vec(3) * (g5*fdmp5)
+         tc(5) = 2.0_wp*vec(2)*vec(3) * (g5*fdmp5)
+         tc(6) = vec(3)*vec(3) * (g5*fdmp5)
          amat_sq(:, jat, iat) = amat_sq(:, jat, iat) + tc
 
          ! ------------------------------------------------------------
-         ! DQ: dipole–quadrupole (3 x packed6)
-         ! Use U_{a,bc} = -5 R_a R_b R_c / R^7 + (δ_ab R_c + δ_ac R_b + δ_bc R_a)/R^5
-         ! (this is the traceless-Theta-consistent Coulomb coupling form)
+         ! 3) DQ: dipole–quadrupole block (3 x packed6)
+         !
+         !    Here we build the third derivative tensor:
+         !      d3Kij_drj3(α,β,γ) = d^3 K / (dr_{j,α} dr_{j,β} dr_{j,γ})
+         !
+         !    For K = 1/R and R_ij = r_i - r_j:
+         !      d^3K = -5 R_{ij,α} R_{ij,β} R_{ij,γ} / R_{ij}^7
+         !             + (δ_{αβ} R_{ij,γ} + δ_{αγ} R_{ij,β} + δ_{βγ} R_{ij,α})/R_{ij}^5
+         !
+         !    Then we pack the (β,γ) pair into the quadrupole index with the same
+         !    double off-diagonal convention used in SQ/QQ.
          ! ------------------------------------------------------------
-         U(:,:,:) = 0.0_wp
-         do a = 1,3
-            do b = 1,3
-               do c = 1,3
-                  U(a,b,c) = -5.0_wp * vec(a)*vec(b)*vec(c) * g7 &
-                           + ( I3(a,b)*vec(c) + I3(a,c)*vec(b) + I3(b,c)*vec(a) ) * g5
+         d3Kij_drj3(:,:,:) = 0.0_wp
+         do alpha = 1,3
+            do beta = 1,3
+               do gamma = 1,3
+                  d3Kij_drj3(alpha,beta,gamma) = -5.0_wp * vec(alpha)*vec(beta)*vec(gamma) * g7 &
+                                               + ( I3(alpha,beta)*vec(gamma) + I3(alpha,gamma)*vec(beta) + I3(beta,gamma)*vec(alpha) ) * g5
                end do
             end do
          end do
 
-         ! pack bc -> p with the same convention as tc
-         do a = 1,3
-            amat_dq(a, jat, 1, iat) = amat_dq(a, jat, 1, iat) + U(a,1,1) * fdmp5
-            amat_dq(a, jat, 2, iat) = amat_dq(a, jat, 2, iat) + 2.0_wp*U(a,1,2) * fdmp5
-            amat_dq(a, jat, 3, iat) = amat_dq(a, jat, 3, iat) + U(a,2,2) * fdmp5
-            amat_dq(a, jat, 4, iat) = amat_dq(a, jat, 4, iat) + 2.0_wp*U(a,1,3) * fdmp5
-            amat_dq(a, jat, 5, iat) = amat_dq(a, jat, 5, iat) + 2.0_wp*U(a,2,3) * fdmp5
-            amat_dq(a, jat, 6, iat) = amat_dq(a, jat, 6, iat) + U(a,3,3) * fdmp5
+         ! pack (β,γ) -> p = (11,12,22,13,23,33); off-diagonal components doubled
+         do alpha = 1,3
+            amat_dq(alpha, jat, 1, iat) = amat_dq(alpha, jat, 1, iat) + d3Kij_drj3(alpha,1,1) * fdmp5
+            amat_dq(alpha, jat, 2, iat) = amat_dq(alpha, jat, 2, iat) + 2.0_wp*d3Kij_drj3(alpha,1,2) * fdmp5
+            amat_dq(alpha, jat, 3, iat) = amat_dq(alpha, jat, 3, iat) + d3Kij_drj3(alpha,2,2) * fdmp5
+            amat_dq(alpha, jat, 4, iat) = amat_dq(alpha, jat, 4, iat) + 2.0_wp*d3Kij_drj3(alpha,1,3) * fdmp5
+            amat_dq(alpha, jat, 5, iat) = amat_dq(alpha, jat, 5, iat) + 2.0_wp*d3Kij_drj3(alpha,2,3) * fdmp5
+            amat_dq(alpha, jat, 6, iat) = amat_dq(alpha, jat, 6, iat) + d3Kij_drj3(alpha,3,3) * fdmp5
          end do
 
          ! ------------------------------------------------------------
-         ! QQ: quadrupole–quadrupole (packed6 x packed6)
+         ! 4) QQ: quadrupole–quadrupole block (packed6 x packed6)
          !
-         ! For traceless quadrupoles (Theta convention), the effective Coulomb coupling tensor is:
-         !   W_abcd = [ 35 R_a R_b R_c R_d
-         !            - 5 R^2 * sym(δ R R)
-         !            + (3/2) R^4 * sym(δδ) ] / R^9
+         !    This is the effective Coulomb QQ coupling for traceless
+         !    quadrupoles in the Theta convention, not simply the raw 4th derivative.
          !
-         ! where
-         !   sym(δ R R) = δ_ab R_c R_d + δ_ac R_b R_d + δ_ad R_b R_c
-         !             + δ_bc R_a R_d + δ_bd R_a R_c + δ_cd R_a R_b
-         !   sym(δδ)    = δ_ab δ_cd + δ_ac δ_bd + δ_ad δ_bc
+         !    W_{αβγε} = [ 35 R_{ij,α} R_{ij,β} R_{ij,γ} R_{ij,ε}
+         !              -  5 R_{ij}^2 * sym(δ R R)
+         !              + (3/2) R_{ij}^4 * sym(δδ) ] / R_{ij}^9
+         !
+         !    sym(δ R R) = δ_{αβ} R_{ij,γ} R_{ij,ε} + δ_{αγ} R_{ij,β} R_{ij,ε} + δ_{αε} R_{ij,β} R_{ij,γ}
+         !               + δ_{βγ} R_{ij,α} R_{ij,ε} + δ_{βε} R_{ij,α} R_{ij,γ} + δ_{γε} R_{ij,α} R_{ij,β}
+         !    sym(δδ)    = δ_{αβ} δ_{γε} + δ_{αγ} δ_{βε} + δ_{αε} δ_{βγ}
+         !
+         !    We then map (α,β) and (γ,ε) to packed indices (p,q) and multiply by
+         !    (fab*fge) to account for the doubled off-diagonal storage convention.
          ! ------------------------------------------------------------
          do p = 1, 6
-            a   = pa(p)
-            b   = pb(p)
-            fab = pf(p)
+            alpha = pa(p)
+            beta  = pb(p)
+            fab   = pf(p)
 
             do q = 1, 6
-               c   = pa(q)
-               d   = pb(q)
-               fcd = pf(q)
+               gamma   = pa(q)
+               epsilon = pb(q)
+               fge     = pf(q)
 
-               sym1 = I3(a,b)*vec(c)*vec(d) + I3(a,c)*vec(b)*vec(d) + I3(a,d)*vec(b)*vec(c) &
-                    + I3(b,c)*vec(a)*vec(d) + I3(b,d)*vec(a)*vec(c) + I3(c,d)*vec(a)*vec(b)
+               sym_dRR = I3(alpha,beta)*vec(gamma)*vec(epsilon) + I3(alpha,gamma)*vec(beta)*vec(epsilon) + I3(alpha,epsilon)*vec(beta)*vec(gamma) &
+                       + I3(beta,gamma)*vec(alpha)*vec(epsilon) + I3(beta,epsilon)*vec(alpha)*vec(gamma) + I3(gamma,epsilon)*vec(alpha)*vec(beta)
 
-               sym2 = I3(a,b)*I3(c,d) + I3(a,c)*I3(b,d) + I3(a,d)*I3(b,c)
+               sym_dd  = I3(alpha,beta)*I3(gamma,epsilon) + I3(alpha,gamma)*I3(beta,epsilon) + I3(alpha,epsilon)*I3(beta,gamma)
 
-               Wabcd = ( 35.0_wp * vec(a)*vec(b)*vec(c)*vec(d) &
-                       -  5.0_wp * r2 * sym1 &
-                       +  1.5_wp * r4 * sym2 ) * g9
+               w_abge = ( 35.0_wp * vec(alpha)*vec(beta)*vec(gamma)*vec(epsilon) &
+                        -  5.0_wp * r2 * sym_dRR &
+                        +  1.5_wp * r4 * sym_dd ) * g9
 
-               amat_qq(p, jat, q, iat) = amat_qq(p, jat, q, iat) + real(fab*fcd,wp) * Wabcd * fdmp5
+               amat_qq(p, jat, q, iat) = amat_qq(p, jat, q, iat) + real(fab*fge,wp) * w_abge * fdmp5
             end do
          end do
 
@@ -697,6 +722,8 @@ subroutine get_multipole_matrix_0d(mol, rad, kdmp3, kdmp5, amat_sd, amat_dd, ama
    !$omp end parallel do
 
 end subroutine get_multipole_matrix_0d
+
+
 
 
 !> Evaluate multipole interaction matrix under 3D periodic boundary conditions

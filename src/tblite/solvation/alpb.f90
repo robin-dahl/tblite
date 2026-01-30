@@ -35,13 +35,12 @@ module tblite_solvation_alpb
    use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
    use tblite_solvation_cm5, only : get_cm5_charges
-   use tblite_solvation_kernel, only : kernel_type, new_kernel, kernel_enum, kernel_enum_type, compute_coulomb_dKdr
+   use tblite_solvation_kernel, only : kernel_type, new_kernel, kernel_enum, kernel_enum_type
    implicit none
    private
 
    public :: new_alpb
    public :: born_kernel
-   public :: get_multipole_matrices
 
    ! Alias for backward compatibility
    type(kernel_enum_type), parameter :: born_kernel = kernel_enum
@@ -65,6 +64,8 @@ module tblite_solvation_alpb
       logical :: alpb = .false.
       !> Solvent for parameter selection
       character(len=:), allocatable :: solvent
+      !> Whether or not to use multipoles
+      logical :: do_multipoles = .false.
    end type alpb_input
 
    !> Provide constructor for ALPB input
@@ -84,6 +85,8 @@ module tblite_solvation_alpb
       class(kernel_type), allocatable :: kernel
       !> Use CM5 charges (GFN1-xTB compatibility)
       logical :: useCM5 = .false.
+      !> Whether or not to use multipoles
+      logical :: do_multipoles
    contains
       !> Update cache from container
       procedure :: update
@@ -137,7 +140,7 @@ module tblite_solvation_alpb
 
    !> Identifier for container
    character(len=*), parameter :: label = "alpb/gbsa reaction field model"
-
+   character(len=*), parameter :: multipole_label = "alpb/gbsa reaction field model with atomic multipole interactions"
    real(wp), parameter :: alpha_alpb = 0.571412_wp
 
 
@@ -145,7 +148,7 @@ contains
 
 
 !> Consturctor for ALPB input to properly assign allocatable strings
-function create_alpb_input(dielectric_const, solvent, alpb, kernel) result(self)
+function create_alpb_input(dielectric_const, solvent, alpb, kernel, do_multipoles) result(self)
    !> Dielectric constant
    real(wp), intent(in) :: dielectric_const
    !> Solvent for parameter selection
@@ -154,6 +157,8 @@ function create_alpb_input(dielectric_const, solvent, alpb, kernel) result(self)
    logical, intent(in), optional :: alpb
    !> Interaction kernel
    integer, intent(in), optional :: kernel
+   !> Whether or not to use multipoles
+   logical, intent(in), optional :: do_multipoles
 
    type(alpb_input) :: self
 
@@ -169,6 +174,12 @@ function create_alpb_input(dielectric_const, solvent, alpb, kernel) result(self)
 
    if (present(kernel)) then 
       self%kernel = kernel
+   end if
+
+   if (do_multipoles) then 
+      self%do_multipoles = .true.
+   else 
+      self%do_multipoles = .false.
    end if
 
 end function create_alpb_input
@@ -187,15 +198,18 @@ subroutine new_alpb(self, mol, input, method)
 
    real(wp), allocatable :: rvdw(:)
 
-   self%label = label
+   self%do_multipoles = input%do_multipoles
+   if (self%do_multipoles) then
+      self%label = multipole_label
+   else
+      self%label = label
+   end if
    self%alpbet = merge(alpha_alpb / input%dielectric_const, 0.0_wp, input%alpb)
    self%keps = (1.0_wp/input%dielectric_const - 1.0_wp) / (1.0_wp + self%alpbet)
    self%kernel = new_kernel(input%kernel, self%keps)
    if (allocated(input%solvent) .and. present(method)) then
       self%useCM5 = trim(method) == 'gfn1'
    endif
-
-   print *, "kernel: ", input%kernel
 
    if (allocated(input%rvdw)) then
       rvdw = input%rvdw
@@ -238,50 +252,33 @@ subroutine update(self, mol, cache)
    call taint(cache, ptr)
 
    if (.not.allocated(ptr%jmat)) then
-      allocate(ptr%jmat(mol%nat, mol%nat))
+      allocate(ptr%jmat(mol%nat, mol%nat), source=0.0_wp)
    end if
    if (.not.allocated(ptr%vat)) then
-      allocate(ptr%vat(mol%nat))
+      allocate(ptr%vat(mol%nat), source=0.0_wp)
    end if
    if (.not.allocated(ptr%rad)) then
-      allocate(ptr%rad(mol%nat))
+      allocate(ptr%rad(mol%nat), source=0.0_wp)
    end if
    if (.not.allocated(ptr%draddr)) then
-      allocate(ptr%draddr(3, mol%nat, mol%nat))
+      allocate(ptr%draddr(3, mol%nat, mol%nat), source=0.0_wp)
    end if
    if (.not.allocated(ptr%qscratch))then
-      allocate(ptr%qscratch(mol%nat))
+      allocate(ptr%qscratch(mol%nat), source=0.0_wp)
    endif 
    if (self%useCM5)then
       if (.not.allocated(ptr%cm5))then
-         allocate(ptr%cm5(mol%nat)) 
+         allocate(ptr%cm5(mol%nat), source=0.0_wp) 
       endif
       if (.not.allocated(ptr%dcm5dr))then
-         allocate(ptr%dcm5dr(3, mol%nat, mol%nat))
+         allocate(ptr%dcm5dr(3, mol%nat, mol%nat), source=0.0_wp)
       endif
       call get_cm5_charges(mol, ptr%cm5, ptr%dcm5dr)
    endif
    if (self%useCM5.and..not.allocated(ptr%scratch))then
       allocate(ptr%scratch(mol%nat))
    endif
-   if (.not.allocated(ptr%amat_sd)) then
-      allocate(ptr%amat_sd(3, mol%nat, mol%nat))
-   end if
-   if (.not.allocated(ptr%amat_dd)) then
-      allocate(ptr%amat_dd(3, mol%nat, 3, mol%nat))
-   end if
-   if (.not.allocated(ptr%amat_sq)) then
-      allocate(ptr%amat_sq(6, mol%nat, mol%nat))
-   end if
-   if (.not.allocated(ptr%amat_dq)) then
-      allocate(ptr%amat_dq(3, mol%nat, 6, mol%nat))
-   end if
-   if (.not.allocated(ptr%amat_qq)) then
-      allocate(ptr%amat_qq(6, mol%nat, 6, mol%nat))
-   end if
-   
    call self%gbobc%get_rad(mol, ptr%rad, ptr%draddr)
-   ptr%jmat(:, :) = 0.0_wp
    call self%kernel%add_kernel_mat(mol%nat, mol%xyz, ptr%rad, ptr%jmat)
 
    if (self%alpbet > 0.0_wp) then
@@ -291,11 +288,26 @@ subroutine update(self, mol, cache)
          & + self%keps * self%alpbet / adet
    end if
 
-   ! Compute multipole interaction matrix
-   ! call get_multipole_matrix(self, mol, mol%xyz, self%keps, ptr%rad, ptr%draddr, &
-   !    & ptr%amat_sd, ptr%amat_dd, ptr%amat_sq, ptr%amat_dq, ptr%amat_qq)
-   call get_multipole_matrices(self, mol, mol%xyz, self%keps, ptr%rad, ptr%draddr, &
-      & ptr%amat_sd, ptr%amat_dd, ptr%amat_sq, ptr%amat_dq, ptr%amat_qq)
+   if (self%do_multipoles) then
+      if (.not.allocated(ptr%amat_sd)) then
+         allocate(ptr%amat_sd(3, mol%nat, mol%nat), source=0.0_wp)
+      end if
+      if (.not.allocated(ptr%amat_dd)) then
+         allocate(ptr%amat_dd(3, mol%nat, 3, mol%nat), source=0.0_wp)
+      end if
+      if (.not.allocated(ptr%amat_sq)) then
+         allocate(ptr%amat_sq(6, mol%nat, mol%nat), source=0.0_wp)
+      end if
+      if (.not.allocated(ptr%amat_dq)) then
+         allocate(ptr%amat_dq(3, mol%nat, 6, mol%nat), source=0.0_wp)
+      end if
+      if (.not.allocated(ptr%amat_qq)) then
+         allocate(ptr%amat_qq(6, mol%nat, 6, mol%nat), source=0.0_wp)
+      end if
+
+      call get_multipole_matrices(self, mol, mol%xyz, self%keps, ptr%rad, &
+         & ptr%amat_sd, ptr%amat_dd, ptr%amat_sq, ptr%amat_dq, ptr%amat_qq)
+   end if
 
 
 end subroutine update
@@ -320,24 +332,26 @@ subroutine get_energy(self, mol, cache, wfn, energies)
       ptr%qscratch(:) = wfn%qat(:, 1)
    end if
 
-   allocate(vs(mol%nat), vd(3, mol%nat), vq(6, mol%nat))
-   vd(:,:) = 0.0_wp
-   vq(:,:) = 0.0_wp
-
    ! charge-charge
    call symv(ptr%jmat, ptr%qscratch(:), ptr%vat, alpha=0.5_wp)
+   energies(:) = energies + ptr%vat * ptr%qscratch(:) 
 
-   call gemv(ptr%amat_sd, wfn%qat(:, 1), vd)                                  ! SD * q
-   call gemv(ptr%amat_dd, wfn%dpat(:, :, 1), vd, beta=1.0_wp, alpha=0.5_wp)   ! + 1/2 DD * mu
-   call gemv(ptr%amat_dq, wfn%qpat(:, :, 1), vd, beta=1.0_wp, alpha=1.0_wp)   ! + DQ * Q   (NO 1/2)
+   if (self%do_multipoles) then
+      allocate(vd(3, mol%nat), vq(6, mol%nat), source=0.0_wp)
 
-   call gemv(ptr%amat_sq, wfn%qat(:, 1), vq)                                  ! SQ * q
-   call gemv(ptr%amat_qq, wfn%qpat(:, :, 1), vq, beta=1.0_wp, alpha=0.5_wp)   ! + 1/2 QQ * Q
-
-   energies(:) = energies &
-      + ptr%vat * ptr%qscratch(:) &
-      + sum(wfn%dpat(:, :, 1) * vd, 1) &
-      + sum(wfn%qpat(:, :, 1) * vq, 1)
+      ! charge-dipole 
+      call gemv(ptr%amat_sd, wfn%qat(:, 1), vd)                                  ! SD * q
+      ! dipole-dipole
+      call gemv(ptr%amat_dd, wfn%dpat(:, :, 1), vd, beta=1.0_wp, alpha=0.5_wp)   ! + 1/2 DD * mu
+      ! dipole-quadrupole
+      call gemv(ptr%amat_dq, wfn%qpat(:, :, 1), vd, beta=1.0_wp, alpha=1.0_wp)   ! + DQ * Q   (NO 1/2)
+      ! charge-quadrupole
+      call gemv(ptr%amat_sq, wfn%qat(:, 1), vq)                                  ! SQ * q
+      ! quadrupole-quadrupole
+      call gemv(ptr%amat_qq, wfn%qpat(:, :, 1), vq, beta=1.0_wp, alpha=0.5_wp)   ! + 1/2 QQ * Q
+   
+      energies(:) = energies + sum(wfn%dpat(:, :, 1) * vd, 1) + sum(wfn%qpat(:, :, 1) * vq, 1)
+   end if
 
 end subroutine get_energy
 
@@ -363,21 +377,22 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    call symv(ptr%jmat, ptr%qscratch(:), pot%vat(:, 1), beta=1.0_wp)
 
-   call gemv(ptr%amat_sd, wfn%qat(:, 1), pot%vdp(:, :, 1), beta=1.0_wp)
-   call gemv(ptr%amat_sd, wfn%dpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
+   if (self%do_multipoles) then
+      call gemv(ptr%amat_sd, wfn%qat(:, 1), pot%vdp(:, :, 1), beta=1.0_wp)
+      call gemv(ptr%amat_sd, wfn%dpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
 
-   call gemv(ptr%amat_dd, wfn%dpat(:, :, 1), pot%vdp(:, :, 1), beta=1.0_wp)
+      call gemv(ptr%amat_dd, wfn%dpat(:, :, 1), pot%vdp(:, :, 1), beta=1.0_wp)
 
-   call gemv(ptr%amat_sq, wfn%qat(:, 1), pot%vqp(:, :, 1), beta=1.0_wp)
-   call gemv(ptr%amat_sq, wfn%qpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
+      call gemv(ptr%amat_sq, wfn%qat(:, 1), pot%vqp(:, :, 1), beta=1.0_wp)
+      call gemv(ptr%amat_sq, wfn%qpat(:, :, 1), pot%vat(:, 1), beta=1.0_wp, trans="T")
 
-   call gemv(ptr%amat_dq, wfn%qpat(:, :, 1), pot%vdp(:, :, 1), beta=1.0_wp)           
-   call gemv(ptr%amat_dq, wfn%dpat(:, :, 1), pot%vqp(:, :, 1), beta=1.0_wp, trans="T")
+      call gemv(ptr%amat_dq, wfn%qpat(:, :, 1), pot%vdp(:, :, 1), beta=1.0_wp)           
+      call gemv(ptr%amat_dq, wfn%dpat(:, :, 1), pot%vqp(:, :, 1), beta=1.0_wp, trans="T")
 
-   call gemv(ptr%amat_qq, wfn%qpat(:, :, 1), pot%vqp(:, :, 1), beta=1.0_wp)
+      call gemv(ptr%amat_qq, wfn%qpat(:, :, 1), pot%vqp(:, :, 1), beta=1.0_wp)
+   end if
 
 end subroutine get_potential
-
 
 
 !> Get solvation gradient
@@ -411,7 +426,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
       & ptr%rad, ptr%draddr, energy, gradient)
 
    if (self%alpbet > 0.0_wp) then
-      call get_adet_deriv(mol%nat, mol%xyz, self%gbobc%vdwr, self%kEps*self%alpbet, &
+      call get_adet_deriv(mol%nat, mol%xyz, self%gbobc%vdwr, self%keps*self%alpbet, &
          & ptr%qscratch(:), gradient)
    end if
 
@@ -571,173 +586,256 @@ subroutine get_adet_deriv(nAtom, xyz, rad, kEps, qvec, gradient)
 
 end subroutine get_adet_deriv
 
+!> Build multipole interaction matrices
+!>
+!> Computes the interaction matrices for atomic multipoles (dipoles and quadrupoles)
+!> based on derivatives of the solvation kernel K_ij between atom pairs.
+!> These matrices encode how multipoles on atom i induce potentials/fields at atom j.
+subroutine get_multipole_matrices(self, mol, xyz, keps, brad, &
+      amat_sd, amat_dd, amat_sq, amat_dq, amat_qq)
 
-subroutine get_multipole_matrices(self, mol, xyz, keps, brad, brdr, amat_sd, amat_dd, amat_sq, amat_dq, amat_qq)
-   ! Convention-consistent multipole interaction matrices built purely from kernel derivatives.
-   !
-   ! Element-by-element build: no global derivative tensors are stored; we only accumulate into amat_*.
-   !
-   ! SD, DD, DQ use direct coordinate-derivative definitions (w.r.t. coordinates of atom j).
-   ! SQ is kept in the same legacy radial form:
-   !    Q_bc = coef * u_b u_c,  coef = (kpp + gpar/r) / 3
-   !
-   ! QQ matches the explicit Coulomb W_abcd convention for any kernel:
-   !    W_abcd = (1/3) * d4K_abcd  +  (1/2) * (δ_ab δ_cd + δ_ac δ_bd + δ_ad δ_bc) * s5
-   ! with s5 = coef / r^2.
-   !
-   ! Packing convention for symmetric pairs:
-   !   p = 1..6 corresponds to (11,12,22,13,23,33) and off-diagonals are doubled in storage.
-
+   !> Instance of ALPB solvation model
    class(alpb_solvation), intent(in) :: self
+   !> Molecular structure data
    type(structure_type), intent(in)  :: mol
+   !> Cartesian coordinates
    real(wp), intent(in)              :: xyz(:, :)
+   !> Dielectric screening factor
    real(wp), intent(in)              :: keps
+   !> Born radii 
    real(wp), intent(in)              :: brad(:)
-   real(wp), contiguous, intent(in)  :: brdr(:, :, :)
+   !> Charge-dipole interaction matrix (3, nat, nat)
+   real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)
+   !> Dipole-dipole interaction matrix (3, nat, 3, nat)
+   real(wp), contiguous, intent(inout) :: amat_dd(:, :, :, :)
+   !> Charge-quadrupole interaction matrix (6, nat, nat)
+   real(wp), contiguous, intent(inout) :: amat_sq(:, :, :)
+   !> Dipole-quadrupole interaction matrix (3, nat, 6, nat)
+   real(wp), contiguous, intent(inout) :: amat_dq(:, :, :, :)
+   !> Quadrupole-quadrupole interaction matrix (6, nat, 6, nat)
+   real(wp), contiguous, intent(inout) :: amat_qq(:, :, :, :)
 
-   real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)        ! (3,nat,nat)
-   real(wp), intent(inout)             :: amat_dd(:, :, :, :)      ! (3,nat,3,nat)
-   real(wp), intent(inout)             :: amat_sq(:, :, :)         ! (6,nat,nat)
-   real(wp), intent(inout)             :: amat_dq(:, :, :, :)      ! (3,nat,6,nat)
-   real(wp), intent(inout)             :: amat_qq(:, :, :, :)      ! (6,nat,6,nat)
+   !> Number of atoms
+   integer :: nat
+   !> Loop indices for atom pairs
+   integer :: i, j
+   !> Cartesian indices for tensor components
+   integer :: alpha, beta, gamma, epsilon
+   !> Packed indices for quadrupole components
+   integer :: p, q
+   !> Packing factors for symmetric tensor storage
+   integer :: fab, fge
 
-   integer :: i, j, nat
-   integer :: a, b, c, d, p, q
-   integer :: fab, fcd
-
-   real(wp), parameter :: tiny_r = 1.0e-14_wp
-   real(wp) :: R(3), rij, invr, invr2
+   !> Distance vector between atoms i and j
+   real(wp) :: r(3)
+   !> Interatomic distance
+   real(wp) :: rij
+   !> Inverse distance (1/r)
+   real(wp) :: invr
+   !> Inverse squared distance (1/r²)
+   real(wp) :: invr2
+   !> Unit vector along r_ij
    real(wp) :: uvec(3)
-   real(wp) :: g(3), H(3,3), Hu(3)
-   real(wp) :: gpar, kpp, coef, s5
-   real(wp) :: Q11, Q22, Q33, Q12, Q13, Q23
+
+   !> First derivative of kernel: ∂K_ij/∂r_j
+   real(wp) :: dKij_drj(3)
+   !> Second derivative of kernel: ∂²K_ij/∂r_j²
+   real(wp) :: d2Kij_drj2(3,3)
+   !> Third derivative of kernel: ∂³K_ij/∂r_j³
+   real(wp) :: d3Kij_drj3(3,3,3)
+   !> Fourth derivative of kernel: ∂⁴K_ij/∂r_j⁴
+   real(wp) :: d4Kij_drj4(3,3,3,3)
+
+   !> Hessian times unit vector (for radial derivatives)
+   real(wp) :: hu(3)
+   !> Radial gradient component: ∇K · u
+   real(wp) :: gpar
+   !> Radial second derivative: u^T ∇∇K u
+   real(wp) :: kpp
+   !> Coefficient for quadrupole construction: (kpp + gpar/r) / 3
+   real(wp) :: coef
+   !> Isotropic correction term for quadrupole-quadrupole: coef/r²
+   real(wp) :: s5
+
+   !> Quadrupole tensor diagonal components
+   real(wp) :: q11, q22, q33
+   !> Quadrupole tensor off-diagonal components
+   real(wp) :: q12, q13, q23
+   !> Packed quadrupole tensor (6 components: xx, xy, yy, xz, yz, zz)
    real(wp) :: tc(6)
 
-   real(wp) :: dK_elem, d2K_elem, d3K_elem, d4K_elem
-   real(wp) :: U_dq(3,3,3)
+   !> 3×3 identity matrix
+   real(wp) :: i3(3,3)
+   !> Symmetry factor for fourth derivative terms
+   real(wp) :: sym2
+   !> Quadrupole-quadrupole interaction element
+   real(wp) :: wabge
 
-   real(wp) :: I3(3,3)
-   real(wp) :: sym2, Wabcd
+   !> Coordinates of atom i (source)
+   real(wp) :: ri(3)
+   !> Coordinates of atom j (response)
+   real(wp) :: rj(3)
+   !> Born radius of atom i
+   real(wp) :: borni
+   !> Born radius of atom j
+   real(wp) :: bornj
 
+   !> Packing arrays: map symmetric 3×3 matrix indices to 6-vector
+   !> pa(p), pb(p) give (row, col) for packed index p
+   !> Order: (1,1), (1,2), (2,2), (1,3), (2,3), (3,3) = (xx, xy, yy, xz, yz, zz)
    integer, parameter :: pa(6) = [1, 1, 2, 1, 2, 3]
    integer, parameter :: pb(6) = [1, 2, 2, 3, 3, 3]
+   !> Packing factors: 1 for diagonal elements, 2 for off-diagonal (accounts for symmetry)
    integer, parameter :: pf(6) = [1, 2, 1, 2, 2, 1]
+
+   print *, 'MULTIPOLES ARE COMPUTED IN ALPB!'
 
    nat = mol%nat
 
-   I3 = 0.0_wp
-   I3(1,1)=1.0_wp; I3(2,2)=1.0_wp; I3(3,3)=1.0_wp
+   ! Zero out the arrays before accumulating
+   amat_sd = 0.0_wp
+   amat_dd = 0.0_wp
+   amat_sq = 0.0_wp
+   amat_dq = 0.0_wp
+   amat_qq = 0.0_wp
+
+   ! Identity matrix
+   i3 = 0.0_wp
+   i3(1,1) = 1.0_wp
+   i3(2,2) = 1.0_wp
+   i3(3,3) = 1.0_wp
 
    do i = 1, nat
       do j = 1, nat
          if (i == j) cycle
 
-         R(:) = xyz(:, i) - xyz(:, j)
-         rij  = sqrt(dot_product(R, R))
-         if (rij <= tiny_r) cycle
+         r(:) = xyz(:, i) - xyz(:, j)
+         rij  = sqrt(dot_product(r, r))
 
          invr  = 1.0_wp / rij
          invr2 = invr * invr
-         uvec(:) = R(:) * invr
+         uvec(:) = r(:) * invr ! Unit vector along r_ij
 
-         ! ============================================================
-         ! 1) First derivatives: g_a = dK_ij / d r_{j,a}    (SD)
-         ! ============================================================
-         do a = 1, 3
-            call self%kernel%compute_kernel_dkdr(nat, xyz, brad, i, j, j, a, dK_elem)
-            g(a) = dK_elem
-         end do
+         ! ------------------------------------------------------------
+         ! all derivatives in this routine are defined w.r.t. atom j
+         ! ------------------------------------------------------------
+         rj(:) = xyz(:, j)
+         ri(:) = xyz(:, i)
+         bornj   = brad(j)
+         borni   = brad(i)
 
-         amat_sd(:, j, i) = amat_sd(:, j, i) + g(:)
+         ! =================================================================================
+         ! 1) Get charge-dipole interaction from first derivative of the interaction kernel
+         ! =================================================================================
+         call self%kernel%kernel_d1_pair(rj, ri, bornj, borni, dKij_drj)
 
-         ! ============================================================
-         ! 2) Second derivatives: H_ab = d^2K_ij / (d r_{j,a} d r_{j,b}) (DD + coef + SQ)
-         ! ============================================================
-         do a = 1, 3
-            do b = 1, 3
-               call self%kernel%compute_kernel_d2kdr2(nat, xyz, brad, i, j, j, a, j, b, d2K_elem) 
-               H(a,b) = d2K_elem
+         ! Index pattern (..., j, ..., i) here and in the following:
+         ! Response on j due to source on i
+         amat_sd(:, j, i) = amat_sd(:, j, i) + dKij_drj(:)
+
+         ! ==================================================================================
+         ! 2a) Get dipole-dipole interaction from second derivative of the interaction kernel
+         !    \sum_{alpha,beta} - d2Kij / (d_rj,alpha d_rj,beta)
+         !   = \sum_{alpha,beta} - dKij/(d_rj,alpha) dKij/(d_rj,beta)
+         !                                |                       |
+         !                         (x,y,z) dipole          (x,y,z) dipole
+         ! ==================================================================================
+         call self%kernel%kernel_d2_pair(rj, ri, bornj, borni, d2Kij_drj2)
+
+         do alpha = 1, 3
+            do beta = 1, 3
+               ! Mapping dipole at i to a dipole-type interaction at j
+               amat_dd(alpha, j, beta, i) = amat_dd(alpha, j, beta, i) - d2Kij_drj2(alpha,beta)
             end do
          end do
 
-         ! DD: A_dd(:,j,:,i) -= H
-         do a = 1, 3
-            do b = 1, 3
-               amat_dd(a, j, b, i) = amat_dd(a, j, b, i) - H(a,b)
-            end do
-         end do
+         ! ==================================================================================
+         ! 2b) Get charge-quadrupole interaction from second derivative of the interaction kernel
+         !    \sum_{alpha,beta} - d2Kij / (d_rj,alpha d_rj,beta)
+         !                                       |
+         !                        (xx,xy,xz,yy,yz,zz) quadrupole
+         ! ==================================================================================
 
-         ! gpar = g · u,  kpp = u^T H u
-         gpar  = dot_product(g, uvec)
-         Hu(:) = matmul(H, uvec)
-         kpp   = dot_product(uvec, Hu)
-
+         ! gpar = grad · u,  kpp = u^t hess u
+         gpar  = dot_product(dKij_drj, uvec)   ! Radial component of the gradient
+         hu(:) = matmul(d2Kij_drj2, uvec)        
+         kpp   = dot_product(uvec, hu)  ! Second derivative along the radial direction
          coef = (kpp + gpar * invr) / 3.0_wp
+         ! -> For Coulomb this produces coef = 1/r^3 
 
-         ! SQ (legacy radial form): Q = coef * u u^T, then pack with doubled off-diagonals
-         Q11 = coef * uvec(1) * uvec(1)
-         Q22 = coef * uvec(2) * uvec(2)
-         Q33 = coef * uvec(3) * uvec(3)
-         Q12 = coef * uvec(1) * uvec(2)
-         Q13 = coef * uvec(1) * uvec(3)
-         Q23 = coef * uvec(2) * uvec(3)
+         ! q = coef * u u^t, pack with doubled off-diagonals
+         q11 = coef * uvec(1) * uvec(1)
+         q22 = coef * uvec(2) * uvec(2)
+         q33 = coef * uvec(3) * uvec(3)
+         q12 = coef * uvec(1) * uvec(2)
+         q13 = coef * uvec(1) * uvec(3)
+         q23 = coef * uvec(2) * uvec(3)
+         ! -> For Coulomb this produces vec_beta vec_gamma / r^5, as in the multipole.f90 implementation
 
-         tc(1) = Q11
-         tc(2) = 2.0_wp * Q12
-         tc(3) = Q22
-         tc(4) = 2.0_wp * Q13
-         tc(5) = 2.0_wp * Q23
-         tc(6) = Q33
+         ! Convention: double the off-diagonal elements
+         tc(1) = q11
+         tc(2) = 2.0_wp * q12
+         tc(3) = q22
+         tc(4) = 2.0_wp * q13
+         tc(5) = 2.0_wp * q23
+         tc(6) = q33
 
+         ! Mapping charge at i to a quadrupole-type interaction at j
          amat_sq(:, j, i) = amat_sq(:, j, i) + tc(:)
 
-         ! ============================================================
-         ! 3) Third derivatives: U_{a,bc} = -(1/3) d^3K / (dj,a dj,b dj,c)  (DQ)
-         !    We compute all (a,b,c) explicitly (27 scalars).
-         ! ============================================================
-         do a = 1, 3
-            do b = 1, 3
-               do c = 1, 3
-                  call self%kernel%compute_kernel_d3kdr3(nat, xyz, brad, i, j, j, a, j, b, j, c, d3K_elem) 
-                  U_dq(a,b,c) = - (1.0_wp/3.0_wp) * d3K_elem
-               end do
-            end do
+         ! ==================================================================================
+         ! 3) Get dipole-quadrupole interaction from third derivative of the interaction kernel
+         !    \sum_{alpha,beta,gamma} - d3Kij / (d_rj,alpha d_rj,beta drj,gamma)
+         !   = \sum_{alpha,beta,gamma} - dKij/(d_rj,alpha) d2Kij/(d_rj,beta drj,gamma)
+         !                                    |                           |
+         !                             (x,y,z) dipole        (xx,xy,xz,yy,yz,zz) quadrupole
+         ! ==================================================================================
+         call self%kernel%kernel_d3_pair(rj, ri, bornj, borni, d3Kij_drj3)
+
+         ! quadrupole cotribution in lower triangular order: 11, 12, 22, 13, 23, 33
+         ! Off-diagonal terms are doubled, factor 1/3 from isotropic correction (trace removal)
+         do alpha = 1, 3
+            amat_dq(alpha, j, 1, i) = amat_dq(alpha, j, 1, i) + (-(1.0_wp/3.0_wp)) * d3Kij_drj3(alpha,1,1)
+            amat_dq(alpha, j, 2, i) = amat_dq(alpha, j, 2, i) + (-(1.0_wp/3.0_wp)) * 2.0_wp * d3Kij_drj3(alpha,1,2)
+            amat_dq(alpha, j, 3, i) = amat_dq(alpha, j, 3, i) + (-(1.0_wp/3.0_wp)) * d3Kij_drj3(alpha,2,2)
+            amat_dq(alpha, j, 4, i) = amat_dq(alpha, j, 4, i) + (-(1.0_wp/3.0_wp)) * 2.0_wp * d3Kij_drj3(alpha,1,3)
+            amat_dq(alpha, j, 5, i) = amat_dq(alpha, j, 5, i) + (-(1.0_wp/3.0_wp)) * 2.0_wp * d3Kij_drj3(alpha,2,3)
+            amat_dq(alpha, j, 6, i) = amat_dq(alpha, j, 6, i) + (-(1.0_wp/3.0_wp)) * d3Kij_drj3(alpha,3,3)
          end do
 
-         ! Pack (bc) -> p in (11,12,22,13,23,33) with off-diagonals doubled
-         do a = 1, 3
-            amat_dq(a, j, 1, i) = amat_dq(a, j, 1, i) + U_dq(a,1,1)
-            amat_dq(a, j, 2, i) = amat_dq(a, j, 2, i) + 2.0_wp * U_dq(a,1,2)
-            amat_dq(a, j, 3, i) = amat_dq(a, j, 3, i) + U_dq(a,2,2)
-            amat_dq(a, j, 4, i) = amat_dq(a, j, 4, i) + 2.0_wp * U_dq(a,1,3)
-            amat_dq(a, j, 5, i) = amat_dq(a, j, 5, i) + 2.0_wp * U_dq(a,2,3)
-            amat_dq(a, j, 6, i) = amat_dq(a, j, 6, i) + U_dq(a,3,3)
-         end do
+         ! ==================================================================================
+         ! 4) Get quadrupole-quadrupole interaction from fourth derivative of the interaction kernel
+         !    \sum_{alpha,beta,gamma, epsilon} - d4Kij / (d_rj,alpha d_rj,beta drj,gamma, drj,epsilon)
+         !   = \sum_{alpha,beta,gamma,epsilon} - d2Kij/(d_rj,alpha d_rj,beta) d2Kij/(drj,gamma, drj,epsilon)
+         !                                                    |                           |
+         !                                     (xx,xy,xz,yy,yz,zz) quadrupole   (xx,xy,xz,yy,yz,zz) quadrupole
+         ! ==================================================================================
+         call self%kernel%kernel_d4_pair(rj, ri, bornj, borni, d4Kij_drj4)
 
-         ! ============================================================
-         ! 4) Fourth derivatives: QQ
-         !    W_abcd = (1/3) d4K_abcd + (1/2) sym(δδ)_abcd * s5
-         ! ============================================================
-         s5 = coef * invr2   ! for Coulomb: coef=1/r^3 => s5=1/r^5
+         ! Isotropic correction coefficient
+         s5 = coef * invr2
 
+         ! pa(p) and pb(p) give the Cartesian for (alpha, beta) to match lower-triangular packing  
+         ! pf(p) gives the factor to account for doubled off-diagonals in the packed representation
          do p = 1, 6
-            a   = pa(p)
-            b   = pb(p)
+            alpha   = pa(p)
+            beta   = pb(p)
             fab = pf(p)
 
             do q = 1, 6
-               c   = pa(q)
-               d   = pb(q)
-               fcd = pf(q)
+               gamma   = pa(q)
+               epsilon = pb(q)
+               fge = pf(q)
 
-               ! sym2 = δ_ab δ_cd + δ_ac δ_bd + δ_ad δ_bc
-               sym2 = I3(a,b)*I3(c,d) + I3(a,c)*I3(b,d) + I3(a,d)*I3(b,c)
+               ! δab​δcd ​+ δac​δbd ​+ δad​δbc (via the identity)
+               sym2 = i3(alpha,beta)*i3(gamma,epsilon) + i3(alpha,gamma)*i3(beta,epsilon) + i3(alpha,epsilon)*i3(beta,gamma)
 
-               call self%kernel%compute_kernel_d4kdr4(nat, xyz, brad, i, j, j, a, j, b, j, c, j, d, d4K_elem) 
+               ! wabge ​= 1/3 ∂_abge​ Kij + 1/2​ (δab​δcd ​+ δac​δbd ​+ δad​δbc)*s5
+               wabge = (1.0_wp/3.0_wp) * d4Kij_drj4(alpha,beta,gamma,epsilon) + 0.5_wp * sym2 * s5
 
-               Wabcd = (1.0_wp/3.0_wp) * d4K_elem + 0.5_wp * sym2 * s5
-
-               amat_qq(p, j, q, i) = amat_qq(p, j, q, i) + real(fab*fcd, wp) * Wabcd
+               ! Mapping quadrupole at i to a quadrupole-type interaction at j
+               ! Multiply by (fab * fcd) to account for the double off-diagonal packing of the quadrupole components
+               amat_qq(p, j, q, i) = amat_qq(p, j, q, i) + real(fab*fge, wp) * wabge
             end do
          end do
 
@@ -745,70 +843,6 @@ subroutine get_multipole_matrices(self, mol, xyz, keps, brad, brdr, amat_sd, ama
    end do
 
 end subroutine get_multipole_matrices
-
-
-! subroutine get_multipole_matrices(self, mol, xyz, keps, brad, brdr, amat_sd)
-!    ! Element-wise construction of the SD matrix:
-!    !   amat_sd(:, j, i) += dK_ij / dr_j
-!    !
-!    ! Uses the *element-wise* kernel derivative provider:
-!    !   compute_kernel_dkdr(..., i, j, k, alpha, dKdr_elem)
-!    ! which returns: dK_ij / d r_{k,alpha}
-
-!    class(alpb_solvation), intent(in) :: self
-!    type(structure_type), intent(in)  :: mol
-!    real(wp), intent(in)              :: xyz(:, :)
-!    real(wp), intent(in)              :: keps
-!    real(wp), intent(in)              :: brad(:)
-!    real(wp), contiguous, intent(in)  :: brdr(:, :, :)
-
-!    real(wp), contiguous, intent(inout) :: amat_sd(:, :, :)   ! (3,nat,nat)
-
-!    integer :: i, j, nat, a
-!    real(wp), parameter :: tiny_r = 1.0e-14_wp
-!    real(wp) :: R(3), rij
-!    real(wp) :: dKdr_elem
-
-!    nat = mol%nat
-
-!    ! This routine only computes SD, so we can safely overwrite.
-!    amat_sd(:, :, :) = 0.0_wp
-
-!    do i = 1, nat
-!       do j = 1, nat
-!          if (i == j) cycle
-
-!          ! Optional safety against coincident atoms (also avoids 1/r^3 blowups downstream).
-!          R(:) = xyz(:, i) - xyz(:, j)
-!          rij  = sqrt(dot_product(R, R))
-!          if (rij <= tiny_r) cycle
-
-!          ! Build g = dK_ij / dr_j element-by-element and accumulate:
-!          do a = 1, 3
-!             call compute_coulomb_dKdr( &
-!                nat, xyz, brad, brdr, &
-!                i, j,            &  ! matrix element (i,j)
-!                j, a,            &  ! derivative w.r.t. atom k=j, component alpha=a
-!                dKdr_elem )
-
-!             amat_sd(a, j, i) = amat_sd(a, j, i) + dKdr_elem
-!          end do
-
-!       end do
-!    end do
-
-!    ! keps is not used here directly; it typically lives inside the kernel (self%kernel%...).
-!    ! It remains in the interface for consistency with the original routine.
-! end subroutine get_multipole_matrices
-
-
-
-
-
-
-
-
-
 
 
 

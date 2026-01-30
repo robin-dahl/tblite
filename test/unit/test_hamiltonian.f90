@@ -151,8 +151,8 @@ subroutine test_hamiltonian_mol(error, mol, ref)
    call get_hamiltonian(mol, lattr, list, bas, h0, selfenergy, overlap, dpint, qpint, &
       & hamiltonian)
 
-   !where(abs(hamiltonian) < thr) hamiltonian = 0.0_wp
-   !print '(*(6x,"&", 3(es20.14e1, "_wp":, ","), "&", /))', hamiltonian
+   ! where(abs(hamiltonian) < thr) hamiltonian = 0.0_wp
+   ! print '(*(6x,"&", 3(es20.14e1, "_wp":, ","), "&", /))', hamiltonian
 
    do ii = 1, size(hamiltonian, 2)
       do jj = 1, size(hamiltonian, 1)

@@ -257,6 +257,7 @@ subroutine get_run_arguments(config, list, start, error)
    logical :: solvent_not_found, parametrized_solvation
    logical, allocatable :: alpb
    integer, allocatable :: kernel, sol_state
+   logical :: do_born_multipoles = .false.
    type(solvent_data), allocatable :: solvent
 
    iarg = start
@@ -462,6 +463,9 @@ subroutine get_run_arguments(config, list, start, error)
          solvent = get_solvent_data(arg)
          if (allocated(error)) exit
 
+      case("--born-multipoles")
+         do_born_multipoles = .true.
+
       case("--param")
          if (allocated(config%param)) then
             call fatal_error(error, "Cannot specify parameter file if method is provided")
@@ -591,7 +595,7 @@ subroutine get_run_arguments(config, list, start, error)
          allocate(config%solvation)
          if (parametrized_solvation) then
             config%solvation%alpb = alpb_input(solvent%eps, solvent=solvent%solvent, &
-               & kernel=kernel, alpb=alpb)
+               & kernel=kernel, alpb=alpb, do_multipoles=do_born_multipoles)
             config%solvation%cds = cds_input(alpb=alpb, solvent=solvent%solvent)
             config%solvation%shift = shift_input(alpb=alpb, solvent=solvent%solvent, &
                & state=sol_state)

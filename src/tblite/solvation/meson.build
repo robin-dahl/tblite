@@ -17,6 +17,10 @@
 subdir('data')
 
 srcs += files(
+  'kernel/type.f90',
+  'kernel/still.f90',
+  'kernel/p16.f90',
+  'kernel/coulomb.f90',
   'kernel.f90',
   'alpb.f90',
   'born.f90',

@@ -22,17 +22,15 @@ module test_solvation_kernel
    use mstore, only : get_structure
    use tblite_solvation_born, only : born_integrator, new_born_integrator
    use tblite_solvation_data, only : get_vdw_rad_cosmo, get_vdw_rad_d3
-   use tblite_solvation_kernel, only : kernel_type, new_kernel, kernel_enum, compute_kernel_d3Kdr3_ij, &
-      & compute_coulomb_dKdr, compute_kernel_dKdr, compute_kernel_d2Kdr2, compute_kernel_d3Kdr3, compute_kernel_d4Kdr4
-   use tblite_solvation_alpb, only : alpb_solvation, alpb_input, get_multipole_matrices, alpb_cache
+   use tblite_solvation_kernel, only : kernel_type, new_kernel, kernel_enum
+   use tblite_solvation_alpb, only : alpb_solvation, alpb_input, alpb_cache
    use tblite_solvation_data_alpb, only : get_alpb_param
    use tblite_solvation_data, only : solvent_data, get_vdw_rad_d3, get_solvent_data
-
 
    use mctc_io_structure, only: new_structure
 
    use tblite_coulomb_cache, only : coulomb_cache
-   use tblite_coulomb_multipole, only : damped_multipole, new_damped_multipole, get_multipole_matrix_0d
+   use tblite_coulomb_multipole, only : damped_multipole, new_damped_multipole
    use tblite_container_cache, only : container_cache
    implicit none
    private
@@ -59,20 +57,32 @@ subroutine collect_solvation_kernel(testsuite)
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
    testsuite = [ &
+      new_unittest("amat-still", test_amat_still), &
+      new_unittest("amat-p16", test_amat_p16), &
       new_unittest("amat-coulomb", test_amat_coulomb), &
-      new_unittest("amat-higher-order-coulomb", test_amat_higher_order_coulomb), &
       new_unittest("kernel-gradient-still", test_kernel_gradient_still), &
+      new_unittest("kernel-gradient-bornrad-still", test_kernel_gradient_dborn_still), &
       new_unittest("kernel-hessian-still", test_kernel_hessian_still), &
+      new_unittest("kernel-hessian-bornrad-still", test_kernel_hessian_dborn_still), &
       new_unittest("kernel-third-still", test_kernel_third_still), &
-      ! new_unittest("kernel-fourth-still", test_kernel_fourth_still) &
+      new_unittest("kernel-third-bornrad-still", test_kernel_third_dborn_still), &
+      new_unittest("kernel-fourth-still", test_kernel_fourth_still), &
+      new_unittest("kernel-fourth-bornrad-still", test_kernel_fourth_dborn_still), &
+      new_unittest("kernel-fifth-still", test_kernel_fifth_still), &
       new_unittest("kernel-gradient-p16", test_kernel_gradient_p16), &
+      new_unittest("kernel-gradient-bornrad-p16", test_kernel_gradient_dborn_p16), &
       new_unittest("kernel-hessian-p16", test_kernel_hessian_p16), &
+      new_unittest("kernel-hessian-bornrad-p16", test_kernel_hessian_dborn_p16), &
       new_unittest("kernel-third-p16", test_kernel_third_p16), &
-      !  new_unittest("kernel-fourth-p16", test_kernel_fourth_p16) &
+      new_unittest("kernel-third-bornrad-p16", test_kernel_third_dborn_p16), &
+      new_unittest("kernel-fourth-p16", test_kernel_fourth_p16), &
+      new_unittest("kernel-fourth-bornrad-p16", test_kernel_fourth_dborn_p16), &
+      new_unittest("kernel-fifth-p16", test_kernel_fifth_p16), &
       new_unittest("kernel-gradient-coulomb", test_kernel_gradient_coulomb), &
       new_unittest("kernel-hessian-coulomb", test_kernel_hessian_coulomb), &
-      new_unittest("kernel-third-coulomb", test_kernel_third_coulomb) &
-      !  new_unittest("kernel-fourth-coulomb", test_kernel_fourth_coulomb) &
+      new_unittest("kernel-third-coulomb", test_kernel_third_coulomb), &
+      new_unittest("kernel-fourth-coulomb", test_kernel_fourth_coulomb), &
+      new_unittest("kernel-fifth-coulomb", test_kernel_fifth_coulomb) &
       ]
 
 end subroutine collect_solvation_kernel
@@ -87,18 +97,26 @@ subroutine test_kernel_gradient_still(error)
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
    real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
-
+   
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numg(error, mol, kernel_enum%still, keps, qat)
+   call test_numg(error, mol, kernel_enum%still, keps)
 
 end subroutine test_kernel_gradient_still
+
+!> Test gradient of Still kernel gradient wrt Born radii against numerical derivative
+subroutine test_kernel_gradient_dborn_still(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_numg_dborn(error, mol, kernel_enum%still, keps)
+
+end subroutine test_kernel_gradient_dborn_still
 
 !> Test Still kernel Hessian against numerical derivative
 subroutine test_kernel_hessian_still(error)
@@ -109,18 +127,26 @@ subroutine test_kernel_hessian_still(error)
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
    real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
-
+  
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numh(error, mol, kernel_enum%still, keps, qat)
+   call test_numh(error, mol, kernel_enum%still, keps)
 
 end subroutine test_kernel_hessian_still
+
+!> Test gradient of Still kernel Hessian wrt Born radii against numerical derivative
+subroutine test_kernel_hessian_dborn_still(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 0.5_wp
+   
+   call get_structure(mol, "MB16-43", "01")
+   call test_numh_dborn(error, mol, kernel_enum%still, keps)
+
+end subroutine test_kernel_hessian_dborn_still
 
 
 !> Test Still kernel third derivative against numerical derivative
@@ -132,23 +158,30 @@ subroutine test_kernel_third_still(error)
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
    real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numt(error, mol, kernel_enum%still, keps, qat)
+   call test_numt(error, mol, kernel_enum%still, keps)
 
 end subroutine test_kernel_third_still
 
 
+!> Test gradient of Still kernel third derivative wrt Born radii against numerical derivative
+subroutine test_kernel_third_dborn_still(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_numt_dborn(error, mol, kernel_enum%still, keps)
+
+end subroutine test_kernel_third_dborn_still
+
 
 !> Test Still kernel fourth derivative against numerical derivative
-!  Turned off due to long runtimes
 subroutine test_kernel_fourth_still(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -157,18 +190,41 @@ subroutine test_kernel_fourth_still(error)
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
    real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numq(error, mol, kernel_enum%still, keps, qat)
+   call test_numq(error, mol, kernel_enum%still, keps)
 
 end subroutine test_kernel_fourth_still
+
+!> Test gradient of Still kernel fourth derivative wrt Born radii against numerical derivative
+subroutine test_kernel_fourth_dborn_still(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_numq_dborn(error, mol, kernel_enum%still, keps)
+
+end subroutine test_kernel_fourth_dborn_still
+
+!> Test Still kernel fifth derivative against numerical derivative
+subroutine test_kernel_fifth_still(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_num5(error, mol, kernel_enum%still, keps)
+
+end subroutine test_kernel_fifth_still
 
 
 !> Test P16 kernel gradient against numerical derivative
@@ -178,18 +234,24 @@ subroutine test_kernel_gradient_p16(error)
 
    type(structure_type) :: mol
    real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numg(error, mol, kernel_enum%p16, keps, qat)
+   call test_numg(error, mol, kernel_enum%p16, keps)
 
 end subroutine test_kernel_gradient_p16
+
+!> Test gradient of P16 kernel wrt Born radii against numerical derivative
+subroutine test_kernel_gradient_dborn_p16(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_numg_dborn(error, mol, kernel_enum%p16, keps)
+
+end subroutine test_kernel_gradient_dborn_p16
 
 
 !> Test P16 kernel Hessian against numerical derivative
@@ -199,18 +261,24 @@ subroutine test_kernel_hessian_p16(error)
 
    type(structure_type) :: mol
    real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numh(error, mol, kernel_enum%p16, keps, qat)
+   call test_numh(error, mol, kernel_enum%p16, keps)
 
 end subroutine test_kernel_hessian_p16
+
+!> Test gradient of P16 kernel Hessian wrt Born radii against numerical derivative
+subroutine test_kernel_hessian_dborn_p16(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_numh_dborn(error, mol, kernel_enum%p16, keps)
+
+end subroutine test_kernel_hessian_dborn_p16
 
 
 !> Test P16 kernel third derivative against numerical derivative
@@ -220,40 +288,63 @@ subroutine test_kernel_third_p16(error)
 
    type(structure_type) :: mol
    real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numt(error, mol, kernel_enum%p16, keps, qat)
+   call test_numt(error, mol, kernel_enum%p16, keps)
 
 end subroutine test_kernel_third_p16
 
+!> Test gradient of P16 kernel third derivative wrt Born radii against numerical derivative
+subroutine test_kernel_third_dborn_p16(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_numt_dborn(error, mol, kernel_enum%p16, keps)
+
+end subroutine test_kernel_third_dborn_p16
+
 !> Test P16 kernel fourth derivative against numerical derivative
-!  Turned off due to long runtimes
 subroutine test_kernel_fourth_p16(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
    type(structure_type) :: mol
    real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numq(error, mol, kernel_enum%p16, keps, qat)
+   call test_numq(error, mol, kernel_enum%p16, keps)
 
 end subroutine test_kernel_fourth_p16
 
+!> Test gradient of P16 kernel fourth derivative wrt Born radii against numerical derivative
+subroutine test_kernel_fourth_dborn_p16(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_numq_dborn(error, mol, kernel_enum%p16, keps)
+
+end subroutine test_kernel_fourth_dborn_p16
+
+!> Test P16 kernel fifth derivative against numerical derivative
+subroutine test_kernel_fifth_p16(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_num5(error, mol, kernel_enum%p16, keps)
+
+end subroutine test_kernel_fifth_p16
 
 !> Test Coulomb kernel gradient against numerical derivative
 subroutine test_kernel_gradient_coulomb(error)
@@ -263,17 +354,10 @@ subroutine test_kernel_gradient_coulomb(error)
    type(structure_type) :: mol
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
-   real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
+   real(wp), parameter :: keps = 1.0_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numg(error, mol, kernel_enum%still, keps, qat)
+   call test_numg(error, mol, kernel_enum%coulomb, keps)
 
 end subroutine test_kernel_gradient_coulomb
 
@@ -285,20 +369,12 @@ subroutine test_kernel_hessian_coulomb(error)
    type(structure_type) :: mol
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
-   real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
+   real(wp), parameter :: keps = 1.0_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numh(error, mol, kernel_enum%coulomb, keps, qat)
+   call test_numh(error, mol, kernel_enum%coulomb, keps)
 
 end subroutine test_kernel_hessian_coulomb
-
 
 !> Test Coulomb kernel third derivative against numerical derivative
 subroutine test_kernel_third_coulomb(error)
@@ -308,22 +384,14 @@ subroutine test_kernel_third_coulomb(error)
    type(structure_type) :: mol
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
-   real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
+   real(wp), parameter :: keps = 1.0_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numt(error, mol, kernel_enum%coulomb, keps, qat)
+   call test_numt(error, mol, kernel_enum%coulomb, keps)
 
 end subroutine test_kernel_third_coulomb
 
 !> Test Coulomb kernel fourth derivative against numerical derivative
-!  Turned off due to long runtimes
 subroutine test_kernel_fourth_coulomb(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -331,23 +399,87 @@ subroutine test_kernel_fourth_coulomb(error)
    type(structure_type) :: mol
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
-   real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
+   real(wp), parameter :: keps = 1.0_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_kernel_numq(error, mol, kernel_enum%coulomb, keps, qat)
+   call test_numq(error, mol, kernel_enum%coulomb, keps)
 
 end subroutine test_kernel_fourth_coulomb
 
+!> Test Coulomb kernel fifth derivative against numerical derivative
+subroutine test_kernel_fifth_coulomb(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
 
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 1.0_wp
 
-!> Test if amat construction based on derivative routines works
+   call get_structure(mol, "MB16-43", "01")
+   call test_num5(error, mol, kernel_enum%coulomb, keps)
+
+end subroutine test_kernel_fifth_coulomb
+
+!> Test construction of multipole interaction matrices
+subroutine test_amat_still(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(solvent_data) :: solvent
+   type(alpb_input) :: input
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 0.5_wp
+
+   real(wp), allocatable :: rad(:), ds(:)
+
+   real(wp) :: amat_sd_ref(3,3,3), amat_dd_ref(3,3,3,3), &
+      & amat_sq_ref(6,3,3), amat_dq_ref(3,3,6,3), amat_qq_ref(6,3,6,3)
+
+   call get_amat_ref_still(amat_sd_ref, amat_dd_ref, &
+      & amat_sq_ref, amat_dq_ref, amat_qq_ref)
+
+   solvent = get_solvent_data("water")
+   input = alpb_input(solvent%eps, solvent=solvent%solvent, &
+         & kernel=1, alpb=.true., do_multipoles=.true.)
+   call get_structure(mol, "MB16-43", "BeH2")
+   call test_amat(error, mol, keps, input, &
+      & amat_sd_ref, amat_dd_ref, amat_sq_ref, amat_dq_ref, amat_qq_ref) 
+
+end subroutine test_amat_still
+
+!> Test construction of multipole interaction matrices
+subroutine test_amat_p16(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(solvent_data) :: solvent
+   type(alpb_input) :: input
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 0.5_wp
+
+   real(wp), allocatable :: rad(:), ds(:)
+
+   real(wp) :: amat_sd_ref(3,3,3), amat_dd_ref(3,3,3,3), &
+      & amat_sq_ref(6,3,3), amat_dq_ref(3,3,6,3), amat_qq_ref(6,3,6,3)
+
+   call get_amat_ref_p16(amat_sd_ref, amat_dd_ref, &
+      & amat_sq_ref, amat_dq_ref, amat_qq_ref)
+
+   solvent = get_solvent_data("water")
+   input = alpb_input(solvent%eps, solvent=solvent%solvent, &
+         & kernel=2, alpb=.true., do_multipoles=.true.)
+   call get_structure(mol, "MB16-43", "BeH2")
+   call test_amat(error, mol, keps, input, &
+      & amat_sd_ref, amat_dd_ref, amat_sq_ref, amat_dq_ref, amat_qq_ref) 
+
+end subroutine test_amat_p16
+
+!> Test construction of multipole interaction matrices
 subroutine test_amat_coulomb(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -358,1583 +490,1762 @@ subroutine test_amat_coulomb(error)
    type(born_integrator) :: gbobc
    class(kernel_type), allocatable :: kernel
    real(wp), parameter :: keps = 0.5_wp
-   real(wp), parameter :: qat(*) = [&
-      & -2.11018727757438E-1_wp, -6.04389222813257E-2_wp, -1.90601159250311E-1_wp, &
-      &  1.49237694872530E-1_wp,  1.35835820853652E-1_wp,  1.27732431639016E-1_wp, &
-      &  1.78559147201780E-1_wp,  1.42324484825195E-1_wp,  1.92106458233743E-1_wp, &
-      &  1.45841758574287E-1_wp,  1.56456166394024E-1_wp,  1.59746890863949E-1_wp, &
-      & -2.70765876809499E-1_wp, -3.27435355522312E-1_wp, -4.70046325670683E-2_wp, &
-      &  1.10838969762146E-1_wp]
 
    real(wp), allocatable :: rad(:), ds(:)
 
+   real(wp) :: amat_sd_ref(3,3,3), amat_dd_ref(3,3,3,3), &
+      & amat_sq_ref(6,3,3), amat_dq_ref(3,3,6,3), amat_qq_ref(6,3,6,3)
+
+   call get_amat_ref_coulomb(amat_sd_ref, amat_dd_ref, &
+      & amat_sq_ref, amat_dq_ref, amat_qq_ref)
+
    solvent = get_solvent_data("water")
    input = alpb_input(solvent%eps, solvent=solvent%solvent, &
-         & kernel=3, alpb=.true.)
-   call get_structure(mol, "MB16-43", "01")
-   call test_amat(error, mol, kernel_enum%coulomb, keps, qat, make_multipole2, input) 
+         & kernel=3, alpb=.true., do_multipoles=.true.)
+   call get_structure(mol, "MB16-43", "BeH2")
+   call test_amat(error, mol, keps, input, &
+      & amat_sd_ref, amat_dd_ref, amat_sq_ref, amat_dq_ref, amat_qq_ref) 
 
 end subroutine test_amat_coulomb
 
-subroutine test_amat_higher_order_coulomb(error)
+
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+!> Test the kernel gradient against numerical derivative
+subroutine test_numg(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
-
-   type(structure_type) :: mol
-   character(len=*), parameter :: sym(2) =  [ 'H', 'H' ]
-   integer, parameter :: num(2) =  [ 1, 1 ]
-   real(wp) :: xyz(3, 2)
-
-   xyz(:,1) = [0.0_wp, 0.0_wp, 0.0_wp]
-   xyz(:,2) = [0.0_wp, 0.0_wp, 0.74_wp]
-
-   call new_structure(mol, num, sym, xyz)
-
-   call test_amat_ho(error, mol)
-
-end subroutine test_amat_higher_order_coulomb
-
-
-
-!> Test kernel gradient against numerical one.
-! subroutine test_kernel_numg(error, mol, kernel_id, keps, qat)
-!    type(error_type), allocatable, intent(out) :: error
-!    type(structure_type), intent(inout) :: mol
-!    integer, intent(in) :: kernel_id
-!    real(wp), intent(in) :: keps
-!    real(wp), intent(in) :: qat(:)
-
-!    type(born_integrator) :: gbobc
-!    class(kernel_type), allocatable :: kernel
-!    real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-!    real(wp), allocatable :: amat_r(:, :), amat_l(:, :)
-!    real(wp), allocatable :: numg_kernel(:, :, :, :)
-!    real(wp), allocatable :: ana_ij(:, :)
-!    real(wp), parameter :: step = 1.0e-6_wp
-!    integer :: iat, jat, ic, jc
-!    real(wp) :: maxdiff
-
-!    rvdw = get_vdw_rad_d3(mol%num)
-!    call new_born_integrator(gbobc, mol, rvdw)
-!    kernel = new_kernel(kernel_id, keps)
-
-!    allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-!    allocate(amat_r(mol%nat, mol%nat), amat_l(mol%nat, mol%nat))
-!    allocate(numg_kernel(3, mol%nat, mol%nat, mol%nat))
-!    allocate(ana_ij(3, mol%nat))
-
-!    ! --- Numerical derivative: numg_kernel(alpha, k, m, n) = dK_mn / dr_k,alpha
-!    numg_kernel(:, :, :, :) = 0.0_wp
-
-!    do iat = 1, mol%nat
-!       do ic = 1, 3
-!          mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
-!          call gbobc%get_rad(mol, rad)
-!          amat_r(:, :) = 0.0_wp
-!          call kernel%add_kernel_mat(mol%nat, mol%xyz, rad, amat_r)
-
-!          mol%xyz(ic, iat) = mol%xyz(ic, iat) - 2*step
-!          call gbobc%get_rad(mol, rad)
-!          amat_l(:, :) = 0.0_wp
-!          call kernel%add_kernel_mat(mol%nat, mol%xyz, rad, amat_l)
-
-!          mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
-
-!          do jat = 1, mol%nat
-!             do jc = 1, mol%nat
-!                numg_kernel(ic, iat, jat, jc) = 0.5_wp * (amat_r(jat, jc) - amat_l(jat, jc)) / step
-!             end do
-!          end do
-!       end do
-!    end do
-
-!    ! --- Analytical: get brad + brdr once at reference geometry
-!    call gbobc%get_rad(mol, rad, draddr)
-
-!    ! Compare: for each (m,n), compute ana_ij(:,k)=dK_mn/dr_k and compare to numg_kernel(:,:,m,n)
-!    do jat = 1, mol%nat
-!       do jc = 1, mol%nat
-!          call compute_kernel_dkdr_ij(kernel_id, keps, mol%nat, mol%xyz, rad, draddr, jat, jc, ana_ij)
-
-!          maxdiff = maxval(abs(ana_ij(:, :) - numg_kernel(:, :, jat, jc)))
-!          if (maxdiff > thr2) then
-!             call test_failed(error, "Kernel gradient does not match finite difference solution")
-!             print '(a,2i6, a, es20.13)', "Mismatch at (m,n)=(", jat, jc, "), max|diff|=", maxdiff
-!             print '(a)', "Analytical dK_mn/dr_k (3,nat):"
-!             print '(3es20.13)', ana_ij
-!             print '(a)', "Numerical dK_mn/dr_k (3,nat):"
-!             print '(3es20.13)', numg_kernel(:, :, jat, jc)
-!             print '(a)', "Difference (ana - num):"
-!             print '(3es20.13)', ana_ij - numg_kernel(:, :, jat, jc)
-!             return
-!          end if
-!       end do
-!    end do
-! end subroutine test_kernel_numg
-
-subroutine test_kernel_numg(error, mol, kernel_id, keps, qat)
-   type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data (modified during finite difference)
    type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
    integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
    real(wp), intent(in) :: keps
-   real(wp), intent(in) :: qat(:)
 
+   !> Born radii integrator
    type(born_integrator) :: gbobc
+
+   !> Kernel instance
    class(kernel_type), allocatable :: kernel
-   real(wp), allocatable :: rvdw(:), rad(:), draddr(:, :, :)
-   real(wp), allocatable :: amat_r(:, :), amat_l(:, :)
+   !> Van der Waals radii for all atoms
+   real(wp), allocatable :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
+   !> Kernel matrix with positive displacement
+   real(wp), allocatable :: kernel_r(:, :)
+   !> Kernel matrix with negative displacement
+   real(wp), allocatable :: kernel_l(:, :)
+   !> Numerical gradient: ∂K_mn/∂R_k,α (3, nat, nat, nat)
    real(wp), allocatable :: numg_kernel(:, :, :, :)
-   real(wp), allocatable :: ana_ij(:, :)         ! (3,nat) from old "matrix-returning" routine (optional)
-   real(wp), allocatable :: ana_elem(:, :)       ! (3,nat) built element-by-element
+   !> Analytical gradient for a single pair (3, nat)
+   real(wp), allocatable :: anag_pair_kernel(:, :)
+
+   !> Finite difference step size
    real(wp), parameter :: step = 1.0e-6_wp
+   !> Loop indices for atoms and Cartesian directions
    integer :: iat, jat, ic, jc, k, alpha
-   real(wp) :: maxdiff, dKdr_elem
+   !> Maximum difference between analytical and numerical gradients
+   real(wp) :: maxdiff
+   !> Individual gradient element
+   real(wp) :: dKdr_elem
+   !> Location of maximum difference
    integer :: loc(2)
+
+   !> Gradient for atom pair interaction
+   real(wp) :: grad_m(3)
+
+   kernel = new_kernel(kernel_id, keps)
+   
+   allocate(rvdw(mol%nat), brad(mol%nat))
+   allocate(kernel_r(mol%nat, mol%nat), kernel_l(mol%nat, mol%nat))
+   allocate(numg_kernel(3, mol%nat, mol%nat, mol%nat))
+   allocate(anag_pair_kernel(3, mol%nat))
 
    rvdw = get_vdw_rad_d3(mol%num)
    call new_born_integrator(gbobc, mol, rvdw)
-   kernel = new_kernel(kernel_id, keps)
+   call gbobc%get_rad(mol, brad)
 
-   allocate(rad(mol%nat), draddr(3, mol%nat, mol%nat))
-   allocate(amat_r(mol%nat, mol%nat), amat_l(mol%nat, mol%nat))
-   allocate(numg_kernel(3, mol%nat, mol%nat, mol%nat))
-   allocate(ana_elem(3, mol%nat))
-   allocate(ana_ij(3, mol%nat))   ! keep if you still want to cross-check old routine too
-
-   ! --- Numerical derivative: numg_kernel(alpha, k, m, n) = dK_mn / dr_k,alpha
+   ! Numerical derivative
    numg_kernel(:, :, :, :) = 0.0_wp
-   call gbobc%get_rad(mol, rad)
+
    do iat = 1, mol%nat
       do ic = 1, 3
          mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
-         call gbobc%get_rad(mol, rad)
-         amat_r(:, :) = 0.0_wp
-         call kernel%add_kernel_mat(mol%nat, mol%xyz, rad, amat_r)
+         kernel_r(:, :) = 0.0_wp
+         call kernel%add_kernel_mat(mol%nat, mol%xyz, brad, kernel_r)
 
          mol%xyz(ic, iat) = mol%xyz(ic, iat) - 2*step
-         call gbobc%get_rad(mol, rad)
-         amat_l(:, :) = 0.0_wp
-         call kernel%add_kernel_mat(mol%nat, mol%xyz, rad, amat_l)
+         kernel_l(:, :) = 0.0_wp
+         call kernel%add_kernel_mat(mol%nat, mol%xyz, brad, kernel_l)
 
          mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
 
          do jat = 1, mol%nat
             do jc = 1, mol%nat
-               numg_kernel(ic, iat, jat, jc) = 0.5_wp * (amat_r(jat, jc) - amat_l(jat, jc)) / step
+               numg_kernel(ic, iat, jat, jc) = 0.5_wp * (kernel_r(jat, jc) - kernel_l(jat, jc)) / step
             end do
          end do
       end do
    end do
 
-   ! --- Analytical geometry-dependent quantities once at reference geometry
-   call gbobc%get_rad(mol, rad, draddr)
-
-   ! Compare for each (m,n): build analytical dK_mn/dr_k,alpha element-by-element
+   ! Compare for each (m,n): build analytical dK_mn/dR_k,alpha element-by-element
    do jat = 1, mol%nat
       do jc = 1, mol%nat
 
-         ! -------- element-by-element analytical gradient -----------
-         ana_elem(:, :) = 0.0_wp
+         anag_pair_kernel(:, :) = 0.0_wp
+
+         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_m)
+
          do k = 1, mol%nat
             do alpha = 1, 3
                dKdr_elem = 0.0_wp
 
-               ! Type-bound call on the kernel object.
-               ! Adjust the binding name/signature to whatever you standardized, e.g.:
-               !   call kernel%compute_dKdr_elem(nat, xyz, brad, i, j, k, alpha, dKdr_elem, brdr)
-               !
-               call compute_kernel_dKdr(kernel_id, keps, mol%nat, mol%xyz, rad,  &
-                  jat, jc, k, alpha, dKdr_elem, brdr=draddr )
+               if (jat /= jc) then
+                  if (k == jat) then
+                     dKdr_elem = grad_m(alpha)
+                  else if (k == jc) then
+                     dKdr_elem = -grad_m(alpha)
+                  end if
+               end if
 
-               ana_elem(alpha, k) = dKdr_elem
-                              
+               anag_pair_kernel(alpha, k) = dKdr_elem
             end do
          end do
 
-         maxdiff = maxval(abs(ana_elem(:, :) - numg_kernel(:, :, jat, jc)))
+         maxdiff = maxval(abs(anag_pair_kernel(:, :) - numg_kernel(:, :, jat, jc)))
          if (maxdiff > thr2) then
-            loc = maxloc(abs(ana_elem(:, :) - numg_kernel(:, :, jat, jc)))
-            call test_failed(error, "Kernel gradient (elem-by-elem) does not match finite difference solution")
+            loc = maxloc(abs(anag_pair_kernel(:, :) - numg_kernel(:, :, jat, jc)))
+            call test_failed(error, "Analytical gradient does not match finite difference solution")
             print '(a,2i6, a, es20.13)', "Mismatch at (m,n)=(", jat, jc, "), max|diff|=", maxdiff
             print '(a,i2,a,i6)', "Worst entry at alpha=", loc(1), " k=", loc(2)
-            print '(a,3es20.13)', "ana_elem(:,k)=", ana_elem(:, loc(2))
+            print '(a,3es20.13)', "anag_pair_kernel(:,k)=", anag_pair_kernel(:, loc(2))
             print '(a,3es20.13)', "numg   (:,k)=", numg_kernel(:, loc(2), jat, jc)
-            print '(a,3es20.13)', "diff   (:,k)=", ana_elem(:, loc(2)) - numg_kernel(:, loc(2), jat, jc)
+            print '(a,3es20.13)', "diff   (:,k)=", anag_pair_kernel(:, loc(2)) - numg_kernel(:, loc(2), jat, jc)
             return
          end if
 
       end do
    end do
 
-end subroutine test_kernel_numg
+end subroutine test_numg
 
 
-!> Test kernel 2nd derivative against numerical finite difference of the 
-!> analytical 1st derivative.
-! subroutine test_kernel_numh(error, mol, kernel_id, keps, qat)
-!    type(error_type), allocatable, intent(out) :: error
-!    type(structure_type), intent(inout) :: mol
-!    integer, intent(in) :: kernel_id
-!    real(wp), intent(in) :: keps
-!    real(wp), intent(in) :: qat(:)
-
-!    type(born_integrator) :: gbobc
-!    class(kernel_type), allocatable :: kernel
-
-!    real(wp), allocatable :: rvdw(:), rad(:)
-!    real(wp), allocatable :: draddr(:, :, :)
-!    real(wp), allocatable :: draddr2(:, :, :, :, :)
-
-!    real(wp), allocatable :: dkdr_p_ij(:, :)     ! (3,nat)
-!    real(wp), allocatable :: dkdr_m_ij(:, :)     ! (3,nat)
-!    real(wp), allocatable :: num2(:, :, :, :)    ! (3,nat,3,nat) for one (m,n)
-!    real(wp), allocatable :: ana2(:, :, :, :)    ! (3,nat,3,nat) for one (m,n)
-
-!    real(wp), parameter :: step = 1.0e-6_wp
-!    integer :: nat, m, n, l, beta, k, alpha
-!    real(wp) :: diff, maxdiff
-!    integer :: imax_alpha, imax_k, imax_beta, imax_l, imax_m, imax_n
-
-!    nat = mol%nat
-
-!    rvdw = get_vdw_rad_d3(mol%num)
-!    call new_born_integrator(gbobc, mol, rvdw)
-!    kernel = new_kernel(kernel_id, keps)
-
-!    allocate(rad(nat))
-!    allocate(draddr(3, nat, nat))
-!    allocate(draddr2(3, nat, 3, nat, nat))
-
-!    allocate(dkdr_p_ij(3, nat), dkdr_m_ij(3, nat))
-!    allocate(num2(3, nat, 3, nat))
-!    allocate(ana2(3, nat, 3, nat))
-
-!    ! Analytical Born radii derivatives at reference geometry (need brdr2!)
-!    call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
-
-!    maxdiff = 0.0_wp
-!    imax_alpha=1; imax_k=1; imax_beta=1; imax_l=1; imax_m=1; imax_n=1
-
-!    do m = 1, nat
-!       do n = 1, nat
-
-!          ! ---- Analytical slice for this (m,n)
-!          call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, m, n, ana2)
-
-!          ! ---- Numerical slice for this (m,n) by FD of dkdr_ij
-!          num2(:, :, :, :) = 0.0_wp
-
-!          do l = 1, nat
-!             do beta = 1, 3
-
-!                ! +step
-!                mol%xyz(beta, l) = mol%xyz(beta, l) + step
-!                call gbobc%get_rad(mol, rad, draddr)
-!                call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, m, n, dkdr_p_ij)
-
-!                ! -step
-!                mol%xyz(beta, l) = mol%xyz(beta, l) - 2.0_wp*step
-!                call gbobc%get_rad(mol, rad, draddr)
-!                call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, m, n, dkdr_m_ij)
-
-!                ! restore
-!                mol%xyz(beta, l) = mol%xyz(beta, l) + step
-
-!                do k = 1, nat
-!                   do alpha = 1, 3
-!                      num2(alpha, k, beta, l) = 0.5_wp * (dkdr_p_ij(alpha, k) - dkdr_m_ij(alpha, k)) / step
-!                   end do
-!                end do
-
-!             end do
-!          end do
-
-!          ! ---- Compare this slice
-!          do k = 1, nat
-!             do alpha = 1, 3
-!                do l = 1, nat
-!                   do beta = 1, 3
-!                      diff = abs(ana2(alpha, k, beta, l) - num2(alpha, k, beta, l))
-!                      if (diff > maxdiff) then
-!                         maxdiff = diff
-!                         imax_alpha = alpha
-!                         imax_k     = k
-!                         imax_beta  = beta
-!                         imax_l     = l
-!                         imax_m     = m
-!                         imax_n     = n
-!                      end if
-!                   end do
-!                end do
-!             end do
-!          end do
-
-!       end do
-!    end do
-
-!    if (maxdiff > thr2) then
-!       call test_failed(error, "Kernel second derivative does not match finite difference solution")
-!       print '(a,es20.13)', "Max |d2K/dr2| difference: ", maxdiff
-!       print '(a,6(i0,1x))', "At indices (alpha,k,beta,l,m,n) = ", imax_alpha, imax_k, imax_beta, imax_l, imax_m, imax_n
-!       ! Recompute the offending slice and report the single entry
-!       call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
-!       call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, imax_m, imax_n, ana2)
-
-!       mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) + step
-!       call gbobc%get_rad(mol, rad, draddr)
-!       call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, imax_m, imax_n, dkdr_p_ij)
-
-!       mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) - 2.0_wp*step
-!       call gbobc%get_rad(mol, rad, draddr)
-!       call compute_kernel_dkdr_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, imax_m, imax_n, dkdr_m_ij)
-
-!       mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) + step
-
-!       num2(imax_alpha, imax_k, imax_beta, imax_l) = 0.5_wp * (dkdr_p_ij(imax_alpha, imax_k) - dkdr_m_ij(imax_alpha, imax_k)) / step
-
-!       print '(a,es20.13)', "Analytical value: ", ana2(imax_alpha, imax_k, imax_beta, imax_l)
-!       print '(a,es20.13)', "Numerical  value: ", num2(imax_alpha, imax_k, imax_beta, imax_l)
-!       print '(a,es20.13)', "Difference       : ", ana2(imax_alpha, imax_k, imax_beta, imax_l) - num2(imax_alpha, imax_k, imax_beta, imax_l)
-!    end if
-
-! end subroutine test_kernel_numh
-
-
-
-subroutine test_kernel_numh(error, mol, kernel_id, keps, qat)
+!> Test kernel gradient Born radius derivative against numerical derivative
+subroutine test_numg_dborn(error, mol, kernel_id, keps)
+   !> Error handling
    type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data
    type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
    integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
    real(wp), intent(in) :: keps
-   real(wp), intent(in) :: qat(:)
 
+   !> Born radii integrator
    type(born_integrator) :: gbobc
+   !> Kernel instance
    class(kernel_type), allocatable :: kernel
 
-   integer :: nat
+   !> Van der Waals radii for all atoms
    real(wp), allocatable :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
 
-   ! --- Reference (unperturbed) Born data
-   real(wp), allocatable :: rad_ref(:)
-   real(wp), allocatable :: draddr_ref(:, :, :)
-   real(wp), allocatable :: draddr2_ref(:, :, :, :, :)
-
-   ! --- Work (perturbed) Born data for FD
-   real(wp), allocatable :: rad_w(:)
-   real(wp), allocatable :: draddr_w(:, :, :)
-
-   ! --- Numerical Hessian slice for one (m,n): (3,nat,3,nat)
-   real(wp), allocatable :: num2(:, :, :, :)
-
+   !> Finite difference step size
    real(wp), parameter :: step = 1.0e-6_wp
-   integer :: m, n, k, alpha, l, beta
-   real(wp) :: g_p, g_m
-   real(wp) :: ana_elem
-   real(wp) :: diff, maxdiff
+   !> Loop indices for atom pairs
+   integer :: jat, jc
+   !> Maximum difference for Born radius derivatives
+   real(wp) :: maxdiffA, maxdiffB
+   !> Location of maximum difference
+   integer :: locA(1), locB(1)
 
-   integer :: imax_m, imax_n, imax_k, imax_alpha, imax_l, imax_beta
+   !> Original Born radii before perturbation
+   real(wp) :: bornA0, bornB0
+   !> Gradient with positive/negative Born radius displacement
+   real(wp) :: grad_r(3), grad_l(3)
+   !> Numerical Born radius derivatives
+   real(wp) :: num_bA(3), num_bB(3)
 
-   nat = mol%nat
+   !> Analytical Born radius derivatives from kernel_d1_pair_dborn
+   real(wp) :: ana_bA(3), ana_bB(3)
 
-   rvdw = get_vdw_rad_d3(mol%num)
-   call new_born_integrator(gbobc, mol, rvdw)
    kernel = new_kernel(kernel_id, keps)
 
-   allocate(rad_ref(nat), rad_w(nat))
-   allocate(draddr_ref(3, nat, nat), draddr_w(3, nat, nat))
-   allocate(draddr2_ref(3, nat, 3, nat, nat))
-   allocate(num2(3, nat, 3, nat))
+   allocate(rvdw(mol%nat), brad(mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, brad)
 
-   ! --- Reference geometry Born data (need brdr2 for analytical Hessian)
-   call gbobc%get_rad(mol, rad_ref, draddr_ref, dradd2r=draddr2_ref)
+   ! Loop over all ordered pairs (jat, jc) like your original test.
+   do jat = 1, mol%nat
+      do jc = 1, mol%nat
 
-   maxdiff = 0.0_wp
-   imax_m=1; imax_n=1; imax_k=1; imax_alpha=1; imax_l=1; imax_beta=1
+         ! Self-pair has r=0 => d1_pair = 0 by construction; dborn should also be 0.
+         if (jat == jc) cycle
 
-   do m = 1, nat
-      do n = 1, nat
+         bornA0 = brad(jat)
+         bornB0 = brad(jc)
 
-         ! ============================================================
-         ! Numerical Hessian for this (m,n) by FD of element gradient:
-         !   num2(alpha,k,beta,l) = d/d r_{l,beta} ( dK_mn / d r_{k,alpha} )
-         ! ============================================================
-         num2(:, :, :, :) = 0.0_wp
+         ! ---------------------------
+         ! Numerical: d(d1_pair)/d(bornA)
+         ! ---------------------------
+         brad(jat) = bornA0 + step
+         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_r)
 
-         do l = 1, nat
-            do beta = 1, 3
+         brad(jat) = bornA0 - step
+         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_l)
 
-               ! +step state
-               mol%xyz(beta, l) = mol%xyz(beta, l) + step
-               call gbobc%get_rad(mol, rad_w, draddr_w)
+         brad(jat) = bornA0
+         num_bA(:) = 0.5_wp * (grad_r(:) - grad_l(:)) / step
 
-               do k = 1, nat
-                  do alpha = 1, 3
-                     g_p = 0.0_wp
-                     call compute_kernel_dKdr(kernel_id, keps, nat, mol%xyz, rad_w,  &
-                          m, n, k, alpha, g_p, brdr=draddr_w)
-                     num2(alpha, k, beta, l) = g_p   ! temporarily store g_p
-                  end do
-               end do
+         ! ---------------------------
+         ! Numerical: d(d1_pair)/d(bornB)
+         ! ---------------------------
+         brad(jc) = bornB0 + step
+         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_r)
 
-               ! -step state
-               mol%xyz(beta, l) = mol%xyz(beta, l) - 2.0_wp*step
-               call gbobc%get_rad(mol, rad_w, draddr_w)
+         brad(jc) = bornB0 - step
+         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_l)
 
-               do k = 1, nat
-                  do alpha = 1, 3
-                     g_m = 0.0_wp
-                     call compute_kernel_dKdr(kernel_id, keps, nat, mol%xyz, rad_w,  &
-                          m, n, k, alpha, g_m, brdr=draddr_w)
+         brad(jc) = bornB0
+         num_bB(:) = 0.5_wp * (grad_r(:) - grad_l(:)) / step
 
-                     ! central difference: (g_p - g_m) / (2*step)
-                     num2(alpha, k, beta, l) = 0.5_wp * (num2(alpha, k, beta, l) - g_m) / step
-                  end do
-               end do
+         ! ---------------------------
+         ! Analytical: kernel_d1_pair_dborn
+         ! ---------------------------
+         call kernel%kernel_d1_pair_dborn( mol%xyz(:, jat), mol%xyz(:, jc), bornA0, bornB0, &
+                                           ana_bA, ana_bB )
 
-               ! restore geometry
-               mol%xyz(beta, l) = mol%xyz(beta, l) + step
+         ! ---------------------------
+         ! Compare + diagnostics
+         ! ---------------------------
+         maxdiffA = maxval(abs(ana_bA(:) - num_bA(:)))
+         maxdiffB = maxval(abs(ana_bB(:) - num_bB(:)))
 
-            end do
-         end do
+         if (maxdiffA > thr2 .or. maxdiffB > thr2) then
+            call test_failed(error, "Analytical d1_pair Born-derivative does not match finite difference solution")
 
-         ! ============================================================
-         ! Compare against analytical element-wise Hessian at reference:
-         !   ana_elem = d^2 K_mn / ( d r_{k,alpha} d r_{l,beta} )
-         ! ============================================================
-         do k = 1, nat
-            do alpha = 1, 3
-               do l = 1, nat
-                  do beta = 1, 3
+            if (maxdiffA >= maxdiffB) then
+               locA = maxloc(abs(ana_bA(:) - num_bA(:)))
+               print '(a,2i6,a,es20.13)', "Mismatch d(d1)/d(bornA) at (A,B)=(", jat, jc, "), max|diff|=", maxdiffA
+               print '(a,i2)', "Worst component alpha=", locA(1)
+               print '(a,3es20.13)', "ana_bA =", ana_bA(:)
+               print '(a,3es20.13)', "num_bA =", num_bA(:)
+               print '(a,3es20.13)', "diff  =", ana_bA(:) - num_bA(:)
+            else
+               locB = maxloc(abs(ana_bB(:) - num_bB(:)))
+               print '(a,2i6,a,es20.13)', "Mismatch d(d1)/d(bornB) at (A,B)=(", jat, jc, "), max|diff|=", maxdiffB
+               print '(a,i2)', "Worst component alpha=", locB(1)
+               print '(a,3es20.13)', "ana_bB =", ana_bB(:)
+               print '(a,3es20.13)', "num_bB =", num_bB(:)
+               print '(a,3es20.13)', "diff  =", ana_bB(:) - num_bB(:)
+            end if
 
-                     ana_elem = 0.0_wp
-                     call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_ref,  &
-                          m, n, k, alpha, l, beta, ana_elem,  &
-                          brdr=draddr_ref, brdr2=draddr2_ref)
-
-                     diff = abs(ana_elem - num2(alpha, k, beta, l))
-                     if (diff > maxdiff) then
-                        maxdiff    = diff
-                        imax_m     = m
-                        imax_n     = n
-                        imax_k     = k
-                        imax_alpha = alpha
-                        imax_l     = l
-                        imax_beta  = beta
-                     end if
-
-                  end do
-               end do
-            end do
-         end do
+            return
+         end if
 
       end do
    end do
 
-   if (maxdiff > thr2) then
-      call test_failed(error, "Kernel Hessian (elem-by-elem) does not match finite difference solution")
-      print '(a,es20.13)', "Max |d2K/dr2| difference: ", maxdiff
-      print '(a,6(i0,1x))', "At indices (m,n,k,alpha,l,beta) = ", imax_m, imax_n, imax_k, imax_alpha, imax_l, imax_beta
-
-      ! Recompute analytical at reference
-      ! call gbobc%get_rad(mol, rad_ref, draddr_ref, dradd2r=draddr2_ref)
-      ana_elem = 0.0_wp
-      call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_ref,  &
-           imax_m, imax_n, imax_k, imax_alpha, imax_l, imax_beta, ana_elem) !, &
-         !   brdr=draddr_ref, brdr2=draddr2_ref)
-
-      ! Recompute numerical entry by FD of element gradient
-      mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) + step
-      ! call gbobc%get_rad(mol, rad_w, draddr_w)
-      g_p = 0.0_wp
-      call compute_kernel_dKdr(kernel_id, keps, nat, mol%xyz, rad_w,  &
-           imax_m, imax_n, imax_k, imax_alpha, g_p) !, brdr=draddr_w)
-
-      mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) - 2.0_wp*step
-      ! call gbobc%get_rad(mol, rad_w, draddr_w)
-      g_m = 0.0_wp
-      call compute_kernel_dKdr(kernel_id, keps, nat, mol%xyz, rad_w,  &
-           imax_m, imax_n, imax_k, imax_alpha, g_m) !, brdr=draddr_w)
-
-      mol%xyz(imax_beta, imax_l) = mol%xyz(imax_beta, imax_l) + step
-
-      print '(a,es20.13)', "Analytical value: ", ana_elem
-      print '(a,es20.13)', "Numerical  value: ", 0.5_wp * (g_p - g_m) / step
-      print '(a,es20.13)', "Difference       : ", ana_elem - (0.5_wp * (g_p - g_m) / step)
-   end if
-
-end subroutine test_kernel_numh
+end subroutine test_numg_dborn
 
 
-
-! > Test kernel 3rd derivative against numerical finite difference of the 
-! > analytical 2nd derivative.
-! subroutine test_kernel_numt(error, mol, kernel_id, keps, qat)
-!    type(error_type), allocatable, intent(out) :: error
-!    type(structure_type), intent(inout) :: mol
-!    integer, intent(in) :: kernel_id
-!    real(wp), intent(in) :: keps
-!    real(wp), intent(in) :: qat(:)
-
-!    type(born_integrator) :: gbobc
-!    class(kernel_type), allocatable :: kernel
-
-!    real(wp), allocatable :: rvdw(:), rad(:)
-!    real(wp), allocatable :: draddr(:, :, :)
-!    real(wp), allocatable :: draddr2(:, :, :, :, :)
-!    real(wp), allocatable :: draddr3(:, :, :, :, :, :, :)
-
-!    real(wp), allocatable :: d2p(:, :, :, :)      ! (3,nat,3,nat) for one (i,j)
-!    real(wp), allocatable :: d2m(:, :, :, :)      ! (3,nat,3,nat) for one (i,j)
-!    real(wp), allocatable :: num3(:, :, :, :, :, :) ! (3,nat,3,nat,3,nat) for one (i,j)
-!    real(wp), allocatable :: ana3(:, :, :, :, :, :) ! (3,nat,3,nat,3,nat) for one (i,j)
-
-!    real(wp), parameter :: step = 1.0e-6_wp
-!    integer :: nat, i, j, k, l, m, alpha, beta, gamma
-!    real(wp) :: diff, maxdiff
-!    integer :: ia, ik, ib, il, ig, im, ii, ij  ! index record for reporting
-
-!    nat = mol%nat
-!    rvdw = get_vdw_rad_d3(mol%num)
-!    call new_born_integrator(gbobc, mol, rvdw)
-!    kernel = new_kernel(kernel_id, keps)
-
-!    allocate(rad(nat))
-!    allocate(draddr(3,nat,nat))
-!    allocate(draddr2(3,nat,3,nat,nat))
-!    allocate(draddr3(3,nat,3,nat,3,nat,nat))
-
-!    allocate(d2p(3,nat,3,nat), d2m(3,nat,3,nat))
-!    allocate(num3(3,nat,3,nat,3,nat))
-!    allocate(ana3(3,nat,3,nat,3,nat))
-
-!    ! reference geometry: need up to brdr3 for analytical
-!    call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-
-!    maxdiff = 0.0_wp
-!    ia=1;ik=1;ib=1;il=1;ig=1;im=1;ii=1;ij=1
-
-!    do i = 1, nat
-!       do j = 1, nat
-
-!          ! ---- analytical 3rd-derivative slab for this (i,j)
-!          call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, ana3)
-
-!          ! ---- numerical slab via FD of the ij Hessian
-!          num3(:, :, :, :, :, :) = 0.0_wp
-
-!          do m = 1, nat
-!             do gamma = 1, 3
-
-!                mol%xyz(gamma, m) = mol%xyz(gamma, m) + step
-!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
-!                call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, i, j, d2p)
-
-!                mol%xyz(gamma, m) = mol%xyz(gamma, m) - 2.0_wp*step
-!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2)
-!                call compute_kernel_d2kdr2_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, i, j, d2m)
-
-!                mol%xyz(gamma, m) = mol%xyz(gamma, m) + step
-
-!                do k = 1, nat
-!                   do alpha = 1, 3
-!                      do l = 1, nat
-!                         do beta = 1, 3
-!                            num3(alpha,k,beta,l,gamma,m) = 0.5_wp * (d2p(alpha,k,beta,l) - d2m(alpha,k,beta,l)) / step
-!                         end do
-!                      end do
-!                   end do
-!                end do
-
-!             end do
-!          end do
-
-!          ! ---- compare this slab; track worst entry globally
-!          do k = 1, nat
-!             do alpha = 1, 3
-!                do l = 1, nat
-!                   do beta = 1, 3
-!                      do m = 1, nat
-!                         do gamma = 1, 3
-!                            diff = abs(ana3(alpha,k,beta,l,gamma,m) - num3(alpha,k,beta,l,gamma,m))
-!                            if (diff > maxdiff) then
-!                               maxdiff = diff
-!                               ia=alpha; ik=k; ib=beta; il=l; ig=gamma; im=m; ii=i; ij=j
-!                            end if
-!                         end do
-!                      end do
-!                   end do
-!                end do
-!             end do
-!          end do
-
-!       end do
-!    end do
-
-!    if (maxdiff > thr2) then
-!       call test_failed(error, "Kernel third derivative does not match finite difference solution")
-!       print '(a,es20.13)', "Max |d3K/dr3| difference: ", maxdiff
-!       print '(a,8(i0,1x))', "At indices (a,k,b,l,g,m,i,j) = ", ia,ik,ib,il,ig,im,ii,ij
-!    end if
-
-! end subroutine test_kernel_numt
-
-subroutine test_kernel_numt(error, mol, kernel_id, keps, qat)
+!> Test the kernel Hessian against numerical derivative
+subroutine test_numh(error, mol, kernel_id, keps)
+   !> Error handling
    type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data
    type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
    integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
    real(wp), intent(in) :: keps
-   real(wp), intent(in) :: qat(:)
 
-   type(born_integrator) :: gbobc
+   !> Kernel instance
    class(kernel_type), allocatable :: kernel
 
-   integer :: nat
-   real(wp), allocatable :: rvdw(:)
+   !> Born radii integrator
+   type(born_integrator) :: gbobc
 
-   ! --- Reference (unperturbed) Born data for analytical d3K
-   real(wp), allocatable :: rad_ref(:)
-   real(wp), allocatable :: draddr_ref(:, :, :)
-   real(wp), allocatable :: draddr2_ref(:, :, :, :, :)
-   real(wp), allocatable :: draddr3_ref(:, :, :, :, :, :, :)
-
-   ! --- Work (perturbed) Born data for FD of Hessian
-   real(wp), allocatable :: rad_w(:)
-   real(wp), allocatable :: draddr_w(:, :, :)
-   real(wp), allocatable :: draddr2_w(:, :, :, :, :)
-
-   ! --- Hessian work blocks (one (i,j) per perturbation)
-   real(wp), allocatable :: d2p(:, :, :, :)   ! (3,nat,3,nat)
-   real(wp), allocatable :: d2m(:, :, :, :)   ! (3,nat,3,nat)
-
+   !> Finite difference step size
    real(wp), parameter :: step = 1.0e-6_wp
-   integer :: i, j, k, l, m, alpha, beta, gamma
-   real(wp) :: ana3_elem, num3_elem, diff, maxdiff
-   integer :: ia, ik, ib, il, ig, im, ii, ij
 
-   nat = mol%nat
-   rvdw = get_vdw_rad_d3(mol%num)
-   call new_born_integrator(gbobc, mol, rvdw)
+   !> Loop indices for atom pairs and Cartesian directions
+   integer :: jat, jc, i, j
+   !> Van der Waals radii for all atoms
+   real(wp), allocatable  :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
+   !> Atomic coordinates and perturbed coordinates
+   real(wp) :: rA(3), rB(3), rA_r(3), rA_l(3)
+   !> Interatomic distance
+   real(wp) :: r
+   !> Gradient with positive/negative displacement
+   real(wp) :: dkernel_l(3), dkernel_r(3)
+   !> Analytical and numerical Hessian matrices
+   real(wp) :: anah_kernel(3,3), numh_kernel(3,3)
+   !> Maximum difference between analytical and numerical Hessian
+   real(wp) :: maxdiff
+   !> Location of maximum difference
+   integer :: loc(2)
+
    kernel = new_kernel(kernel_id, keps)
 
-   allocate(rad_ref(nat), rad_w(nat))
-   allocate(draddr_ref(3,nat,nat), draddr_w(3,nat,nat))
-   allocate(draddr2_ref(3,nat,3,nat,nat), draddr2_w(3,nat,3,nat,nat))
-   allocate(draddr3_ref(3,nat,3,nat,3,nat,nat))
+   allocate(rvdw(mol%nat), brad(mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, brad)
 
-   allocate(d2p(3,nat,3,nat), d2m(3,nat,3,nat))
+   do jat = 1, mol%nat
+      do jc = 1, mol%nat
+         if (jat == jc) cycle
 
-   ! --- Reference geometry: need up to brdr3 for analytical d3K
-   call gbobc%get_rad(mol, rad_ref, draddr_ref, dradd2r=draddr2_ref, dradd3r=draddr3_ref)
+         rA = mol%xyz(:, jat)
+         rB = mol%xyz(:, jc)
+         r  = norm2(rA - rB)
 
-   maxdiff = 0.0_wp
-   ia=1;ik=1;ib=1;il=1;ig=1;im=1;ii=1;ij=1
+         ! analytic Hessian
+         call kernel%kernel_d2_pair(rA, rB, brad(jat), brad(jc), anah_kernel)
 
-   do i = 1, nat
-      do j = 1, nat
+         ! numerical Hessian from analytic gradient:
+         ! n2(i,j) = d/dR_A,j [ d1(i) ]
+         numh_kernel(:,:) = 0.0_wp
+         do j = 1, 3
+            rA_r = rA; rA_r(j) = rA_r(j) + step
+            rA_l = rA; rA_l(j) = rA_l(j) - step
 
-         ! Numerical: FD of Hessian elements w.r.t. r_{m,gamma}
-         do m = 1, nat
-            do gamma = 1, 3
+            call kernel%kernel_d1_pair(rA_r, rB, brad(jat), brad(jc), dkernel_r)
+            call kernel%kernel_d1_pair(rA_l, rB, brad(jat), brad(jc), dkernel_l)
 
-               ! --------------------
-               ! +step: compute Hessian block d2p(alpha,k,beta,l)
-               ! --------------------
-               mol%xyz(gamma, m) = mol%xyz(gamma, m) + step
-               call gbobc%get_rad(mol, rad_w, draddr_w, dradd2r=draddr2_w)
-
-               d2p(:, :, :, :) = 0.0_wp
-               do k = 1, nat
-                  do alpha = 1, 3
-                     do l = 1, nat
-                        do beta = 1, 3
-                           call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_w, &
-                                i, j, k, alpha, l, beta, d2p(alpha,k,beta,l), &
-                                brdr=draddr_w, brdr2=draddr2_w)
-                        end do
-                     end do
-                  end do
-               end do
-
-               ! --------------------
-               ! -step: compute Hessian block d2m(alpha,k,beta,l)
-               ! --------------------
-               mol%xyz(gamma, m) = mol%xyz(gamma, m) - 2.0_wp*step
-               call gbobc%get_rad(mol, rad_w, draddr_w, dradd2r=draddr2_w)
-
-               d2m(:, :, :, :) = 0.0_wp
-               do k = 1, nat
-                  do alpha = 1, 3
-                     do l = 1, nat
-                        do beta = 1, 3
-                           call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_w, &
-                                i, j, k, alpha, l, beta, d2m(alpha,k,beta,l), &
-                                brdr=draddr_w, brdr2=draddr2_w)
-                        end do
-                     end do
-                  end do
-               end do
-
-               ! restore reference geometry
-               mol%xyz(gamma, m) = mol%xyz(gamma, m) + step
-
-               ! --------------------
-               ! Compare element-wise: ana3 vs FD(d2)
-               ! --------------------
-               do k = 1, nat
-                  do alpha = 1, 3
-                     do l = 1, nat
-                        do beta = 1, 3
-
-                           num3_elem = 0.5_wp * (d2p(alpha,k,beta,l) - d2m(alpha,k,beta,l)) / step
-
-                           ana3_elem = 0.0_wp
-                           call compute_kernel_d3Kdr3(kernel_id, keps, nat, mol%xyz, rad_ref, &
-                                i, j, k, alpha, l, beta, m, gamma, ana3_elem, &
-                                brdr=draddr_ref, brdr2=draddr2_ref, brdr3=draddr3_ref)
-
-                           diff = abs(ana3_elem - num3_elem)
-                           if (diff > maxdiff) then
-                              maxdiff = diff
-                              ia = alpha; ik = k
-                              ib = beta ; il = l
-                              ig = gamma; im = m
-                              ii = i    ; ij = j
-                           end if
-
-                        end do
-                     end do
-                  end do
-               end do
-
+            do i = 1, 3
+               numh_kernel(i,j) = 0.5_wp * (dkernel_r(i) - dkernel_l(i)) / step
             end do
          end do
 
+         maxdiff = maxval(abs(anah_kernel - numh_kernel))
+         if (maxdiff > thr2) then
+            loc = maxloc(abs(anah_kernel - numh_kernel))
+            call test_failed(error, "Analytical Hessian does not match finite difference solution")
+            print '(a,2i6,a,es20.13)', "Mismatch at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiff
+            print '(a,2i2)', "Worst entry (i,j)=", loc(1), loc(2)
+            print '(a,es20.13)', "anah_kernel(i,j)=", anah_kernel(loc(1),loc(2))
+            print '(a,es20.13)', "numh_kernel(i,j)=", numh_kernel(loc(1),loc(2))
+            print '(a,es20.13)', "diff        =", anah_kernel(loc(1),loc(2)) - numh_kernel(loc(1),loc(2))
+            return
+         end if
+
       end do
    end do
-
-   if (maxdiff > thr2) then
-      call test_failed(error, "Kernel third derivative (elem-by-elem) does not match finite difference solution")
-      print '(a,es20.13)', "Max |d3K/dr3| difference: ", maxdiff
-      print '(a,8(i0,1x))', "At indices (a,k,b,l,g,m,i,j) = ", ia,ik,ib,il,ig,im,ii,ij
-
-      ! Optional: print the offending values (recompute once, scalar only)
-      ana3_elem = 0.0_wp
-      call compute_kernel_d3Kdr3(kernel_id, keps, nat, mol%xyz, rad_ref, &
-           ii, ij, ik, ia, il, ib, im, ig, ana3_elem, &
-           brdr=draddr_ref, brdr2=draddr2_ref, brdr3=draddr3_ref)
-
-      mol%xyz(ig, im) = mol%xyz(ig, im) + step
-      call gbobc%get_rad(mol, rad_w, draddr_w, dradd2r=draddr2_w)
-      call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_w, &
-           ii, ij, ik, ia, il, ib, d2p(ia,ik,ib,il), brdr=draddr_w, brdr2=draddr2_w)
-
-      mol%xyz(ig, im) = mol%xyz(ig, im) - 2.0_wp*step
-      call gbobc%get_rad(mol, rad_w, draddr_w, dradd2r=draddr2_w)
-      call compute_kernel_d2Kdr2(kernel_id, keps, nat, mol%xyz, rad_w, &
-           ii, ij, ik, ia, il, ib, d2m(ia,ik,ib,il), brdr=draddr_w, brdr2=draddr2_w)
-
-      mol%xyz(ig, im) = mol%xyz(ig, im) + step
-
-      num3_elem = 0.5_wp * (d2p(ia,ik,ib,il) - d2m(ia,ik,ib,il)) / step
-
-      print '(a,es20.13)', "Analytical value: ", ana3_elem
-      print '(a,es20.13)', "Numerical  value: ", num3_elem
-      print '(a,es20.13)', "Difference       : ", ana3_elem - num3_elem
-   end if
-
-end subroutine test_kernel_numt
-
-
-
-
-! subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
-!    type(error_type), allocatable, intent(out) :: error
-!    type(structure_type), intent(inout) :: mol
-!    integer, intent(in) :: kernel_id
-!    real(wp), intent(in) :: keps
-!    real(wp), intent(in) :: qat(:)
-
-!    type(born_integrator) :: gbobc
-!    class(kernel_type), allocatable :: kernel
-
-!    real(wp), allocatable :: rvdw(:), rad(:)
-!    real(wp), allocatable :: draddr(:, :, :)
-!    real(wp), allocatable :: draddr2(:, :, :, :, :)
-!    real(wp), allocatable :: draddr3(:, :, :, :, :, :, :)
-!    real(wp), allocatable :: draddr4(:, :, :, :, :, :, :, :, :)
-
-!    real(wp), allocatable :: d3p(:, :, :, :, :, :)      ! (3,nat,3,nat,3,nat) for one (i,j)
-!    real(wp), allocatable :: d3m(:, :, :, :, :, :)      ! (3,nat,3,nat,3,nat) for one (i,j)
-!    real(wp), allocatable :: num4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat) for one (i,j)
-!    real(wp), allocatable :: ana4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat) for one (i,j)
-
-!    real(wp), parameter :: step = 1.0e-6_wp
-!    integer :: nat, i, j, k, l, m, n, a, b, c, d
-!    real(wp) :: diff, maxdiff
-!    integer :: ia, ik, ib, il, ic, im, id, in, ii, ij  ! index record for reporting
-
-!    nat = mol%nat
-!    rvdw = get_vdw_rad_d3(mol%num)
-!    call new_born_integrator(gbobc, mol, rvdw)
-!    kernel = new_kernel(kernel_id, keps)
-
-!    allocate(rad(nat))
-!    allocate(draddr(3,nat,nat))
-!    allocate(draddr2(3,nat,3,nat,nat))
-!    allocate(draddr3(3,nat,3,nat,3,nat,nat))
-!    allocate(draddr4(3,nat,3,nat,3,nat,3,nat,nat))
-
-!    allocate(d3p(3,nat,3,nat,3,nat), d3m(3,nat,3,nat,3,nat))
-!    allocate(num4(3,nat,3,nat,3,nat,3,nat))
-!    allocate(ana4(3,nat,3,nat,3,nat,3,nat))
-
-!    ! reference geometry: need up to brdr4 for analytical
-!    call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3, dradd4r=draddr4)
-
-!    maxdiff = 0.0_wp
-!    ia=1;ik=1;ib=1;il=1;ic=1;im=1;id=1;in=1;ii=1;ij=1
-
-!    do i = 1, nat
-!       do j = 1, nat
-
-!          ! ---- analytical 4th-derivative slab for this (i,j)
-!          call compute_kernel_d4kdr4_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, draddr4, i, j, ana4)
-
-!          ! ---- numerical slab via FD of the ij third derivative
-!          num4(:, :, :, :, :, :, :, :) = 0.0_wp
-
-!          do n = 1, nat
-!             do d = 1, 3
-
-!                mol%xyz(d, n) = mol%xyz(d, n) + step
-!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3p)
-
-!                mol%xyz(d, n) = mol%xyz(d, n) - 2.0_wp*step
-!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3m)
-
-!                mol%xyz(d, n) = mol%xyz(d, n) + step
-
-!                do k = 1, nat
-!                   do a = 1, 3
-!                      do l = 1, nat
-!                         do b = 1, 3
-!                            do m = 1, nat
-!                               do c = 1, 3
-!                                  num4(a,k,b,l,c,m,d,n) = 0.5_wp * (d3p(a,k,b,l,c,m) - d3m(a,k,b,l,c,m)) / step
-!                               end do
-!                            end do
-!                         end do
-!                      end do
-!                   end do
-!                end do
-
-!             end do
-!          end do
-
-!          ! ---- compare this slab; track worst entry globally
-!          do k = 1, nat
-!             do a = 1, 3
-!                do l = 1, nat
-!                   do b = 1, 3
-!                      do m = 1, nat
-!                         do c = 1, 3
-!                            do n = 1, nat
-!                               do d = 1, 3
-!                                  diff = abs(ana4(a,k,b,l,c,m,d,n) - num4(a,k,b,l,c,m,d,n))
-!                                  if (diff > maxdiff) then
-!                                     maxdiff = diff
-!                                     ia=a; ik=k; ib=b; il=l; ic=c; im=m; id=d; in=n; ii=i; ij=j
-!                                     print *, ana4(a,k,b,l,c,m,d,n), num4(a,k,b,l,c,m,d,n)
-!                                  end if
-!                               end do
-!                            end do
-!                         end do
-!                      end do
-!                   end do
-!                end do
-!             end do
-!          end do
-
-!       end do
-!    end do
-
-!    if (maxdiff > thr2) then
-!       call test_failed(error, "Kernel fourth derivative does not match finite difference solution")
-!       print '(a,es20.13)', "Max |d4K/dr4| difference: ", maxdiff
-!       print '(a,10(i0,1x))', "At indices (a,k,b,l,c,m,d,n,i,j) = ", ia,ik,ib,il,ic,im,id,in,ii,ij
-!    end if
-
-! end subroutine test_kernel_numq
-
-
-! subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
-!    type(error_type), allocatable, intent(out) :: error
-!    type(structure_type), intent(inout) :: mol
-!    integer, intent(in) :: kernel_id
-!    real(wp), intent(in) :: keps
-!    real(wp), intent(in) :: qat(:)
-
-!    type(born_integrator) :: gbobc
-!    class(kernel_type), allocatable :: kernel
-
-!    real(wp), allocatable :: rvdw(:), rad(:)
-!    real(wp), allocatable :: draddr(:, :, :)
-!    real(wp), allocatable :: draddr2(:, :, :, :, :)
-!    real(wp), allocatable :: draddr3(:, :, :, :, :, :, :)
-!    real(wp), allocatable :: draddr4(:, :, :, :, :, :, :, :, :)
-
-!    ! 3rd-derivative slabs at shifted coordinates (for one (i,j))
-!    real(wp), allocatable :: d3pp(:, :, :, :, :, :)   ! x + 2h
-!    real(wp), allocatable :: d3p (:, :, :, :, :, :)   ! x + h
-!    real(wp), allocatable :: d3m (:, :, :, :, :, :)   ! x - h
-!    real(wp), allocatable :: d3mm(:, :, :, :, :, :)   ! x - 2h
-
-!    real(wp), allocatable :: num4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat) for one (i,j)
-!    real(wp), allocatable :: ana4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat) for one (i,j)
-
-!    real(wp), parameter :: step = 1.0e-6_wp
-!    integer :: nat, i, j, k, l, m, n, a, b, c, d
-!    real(wp) :: diff, maxdiff
-!    real(wp) :: x0
-!    integer :: ia, ik, ib, il, ic, im, id, in, ii, ij  ! index record for reporting
-
-!    nat = mol%nat
-!    rvdw = get_vdw_rad_d3(mol%num)
-!    call new_born_integrator(gbobc, mol, rvdw)
-!    kernel = new_kernel(kernel_id, keps)
-
-!    allocate(rad(nat))
-!    allocate(draddr(3,nat,nat))
-!    allocate(draddr2(3,nat,3,nat,nat))
-!    allocate(draddr3(3,nat,3,nat,3,nat,nat))
-!    allocate(draddr4(3,nat,3,nat,3,nat,3,nat,nat))
-
-!    allocate(d3pp(3,nat,3,nat,3,nat))
-!    allocate(d3p (3,nat,3,nat,3,nat))
-!    allocate(d3m (3,nat,3,nat,3,nat))
-!    allocate(d3mm(3,nat,3,nat,3,nat))
-
-!    allocate(num4(3,nat,3,nat,3,nat,3,nat))
-!    allocate(ana4(3,nat,3,nat,3,nat,3,nat))
-
-!    ! reference geometry: need up to brdr4 for analytical
-!    call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3, dradd4r=draddr4)
-
-!    maxdiff = 0.0_wp
-!    ia=1;ik=1;ib=1;il=1;ic=1;im=1;id=1;in=1;ii=1;ij=1
-
-!    do i = 1, nat
-!       do j = 1, nat
-
-!          ! ---- analytical 4th-derivative slab for this (i,j)
-!          call compute_kernel_d4kdr4_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, draddr4, i, j, ana4)
-
-!          ! ---- numerical slab via 4-point central FD of the ij third derivative
-!          num4(:, :, :, :, :, :, :, :) = 0.0_wp
-
-!          do n = 1, nat
-!             do d = 1, 3
-
-!                x0 = mol%xyz(d, n)
-
-!                ! x + 2h
-!                mol%xyz(d, n) = x0 + 2.0_wp*step
-!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3pp)
-
-!                ! x + h
-!                mol%xyz(d, n) = x0 + 1.0_wp*step
-!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3p)
-
-!                ! x - h
-!                mol%xyz(d, n) = x0 - 1.0_wp*step
-!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3m)
-
-!                ! x - 2h
-!                mol%xyz(d, n) = x0 - 2.0_wp*step
-!                call gbobc%get_rad(mol, rad, draddr, dradd2r=draddr2, dradd3r=draddr3)
-!                call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad, draddr, draddr2, draddr3, i, j, d3mm)
-
-!                ! restore
-!                mol%xyz(d, n) = x0
-
-!                ! 4-point (4th-order) central difference for first derivative:
-!                ! f'(x) ≈ (-f(x+2h) + 8f(x+h) - 8f(x-h) + f(x-2h)) / (12h)
-!                do k = 1, nat
-!                   do a = 1, 3
-!                      do l = 1, nat
-!                         do b = 1, 3
-!                            do m = 1, nat
-!                               do c = 1, 3
-!                                  num4(a,k,b,l,c,m,d,n) = (-d3pp(a,k,b,l,c,m) + 8.0_wp*d3p(a,k,b,l,c,m) &
-!                                                           -8.0_wp*d3m(a,k,b,l,c,m) + d3mm(a,k,b,l,c,m)) &
-!                                                           / (12.0_wp*step)
-!                               end do
-!                            end do
-!                         end do
-!                      end do
-!                   end do
-!                end do
-
-!             end do
-!          end do
-
-!          ! ---- compare this slab; track worst entry globally
-!          do k = 1, nat
-!             do a = 1, 3
-!                do l = 1, nat
-!                   do b = 1, 3
-!                      do m = 1, nat
-!                         do c = 1, 3
-!                            do n = 1, nat
-!                               do d = 1, 3
-!                                  diff = abs(ana4(a,k,b,l,c,m,d,n) - num4(a,k,b,l,c,m,d,n))
-!                                  if (diff > maxdiff) then
-!                                     maxdiff = diff
-!                                     ia=a; ik=k; ib=b; il=l; ic=c; im=m; id=d; in=n; ii=i; ij=j
-!                                     print *, ana4(a,k,b,l,c,m,d,n), num4(a,k,b,l,c,m,d,n)
-!                                  end if
-!                               end do
-!                            end do
-!                         end do
-!                      end do
-!                   end do
-!                end do
-!             end do
-!          end do
-
-!       end do
-!    end do
-
-!    if (maxdiff > thr2) then
-!       call test_failed(error, "Kernel fourth derivative does not match finite difference solution")
-!       print '(a,es20.13)', "Max |d4K/dr4| difference: ", maxdiff
-!       print '(a,10(i0,1x))', "At indices (a,k,b,l,c,m,d,n,i,j) = ", ia,ik,ib,il,ic,im,id,in,ii,ij
-!    end if
-
-! end subroutine test_kernel_numq
-
-
-
-subroutine test_kernel_numq(error, mol, kernel_id, keps, qat)
+end subroutine test_numh
+
+!> Test kernel_d2_pair_dborn against numerical derivative of kernel_d2_pair wrt Born radii
+subroutine test_numh_dborn(error, mol, kernel_id, keps)
+   !> Error handling
    type(error_type), allocatable, intent(out) :: error
-   type(structure_type), intent(inout)        :: mol
-   integer, intent(in)                        :: kernel_id
-   real(wp), intent(in)                       :: keps
-   real(wp), intent(in)                       :: qat(:)
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
+   integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
+   real(wp), intent(in) :: keps
 
-   type(born_integrator) :: gbobc
+   !> Kernel instance
    class(kernel_type), allocatable :: kernel
+   !> Born radii integrator
+   type(born_integrator) :: gbobc
 
-   integer :: nat
-   real(wp), allocatable :: rvdw(:)
-
-   ! Reference Born data (physics: held fixed for shifts)
-   real(wp), allocatable :: rad_ref(:)
-   real(wp), allocatable :: draddr_ref(:, :, :)
-   real(wp), allocatable :: draddr2_ref(:, :, :, :, :)
-   real(wp), allocatable :: draddr3_ref(:, :, :, :, :, :, :)
-   real(wp), allocatable :: draddr4_ref(:, :, :, :, :, :, :, :, :)
-
-   ! d3K slabs at shifted coordinates for one (i,j)
-   real(wp), allocatable :: d3pp(:, :, :, :, :, :)   ! x + 2h
-   real(wp), allocatable :: d3p (:, :, :, :, :, :)   ! x + h
-   real(wp), allocatable :: d3m (:, :, :, :, :, :)   ! x - h
-   real(wp), allocatable :: d3mm(:, :, :, :, :, :)   ! x - 2h
-
-   ! Numerical d4K slab for one (i,j)
-   real(wp), allocatable :: num4(:, :, :, :, :, :, :, :) ! (3,nat,3,nat,3,nat,3,nat)
-
+   !> Finite difference step size
    real(wp), parameter :: step = 1.0e-6_wp
-   real(wp) :: x0
-   real(wp) :: num4_elem, ana4_elem, diff, maxdiff
 
-   integer :: i, j, k, l, m, n
-   integer :: a, b, c, d
-   integer :: ia, ik, ib, il, ic, im, id, in, ii, ij
+   !> Loop indices for atom pairs
+   integer :: jat, jc
+   !> Van der Waals radii for all atoms
+   real(wp), allocatable :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
 
-   nat = mol%nat
+   !> Atomic coordinates
+   real(wp) :: rA(3), rB(3)
+   !> Original Born radii before perturbation
+   real(wp) :: bornA0, bornB0
 
-   rvdw = get_vdw_rad_d3(mol%num)
-   call new_born_integrator(gbobc, mol, rvdw)
+   !> Hessian with positive/negative Born radius displacement
+   real(wp) :: d2_r(3,3), d2_l(3,3)
+   !> Numerical Born radius derivatives of Hessian
+   real(wp) :: num_bA(3,3), num_bB(3,3)
+   !> Analytical Born radius derivatives from kernel_d2_pair_dborn
+   real(wp) :: ana_bA(3,3), ana_bB(3,3)
+
+   !> Maximum differences for Born radius derivatives
+   real(wp) :: maxdiffA, maxdiffB
+   !> Locations of maximum differences
+   integer :: locA(2), locB(2)
+
    kernel = new_kernel(kernel_id, keps)
 
-   allocate(rad_ref(nat))
-   allocate(draddr_ref(3,nat,nat))
-   allocate(draddr2_ref(3,nat,3,nat,nat), source=0.0_wp)
-   allocate(draddr3_ref(3,nat,3,nat,3,nat,nat), source=0.0_wp)
-   allocate(draddr4_ref(3,nat,3,nat,3,nat,3,nat,nat), source=0.0_wp)
+   allocate(rvdw(mol%nat), brad(mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, brad)
 
-   allocate(d3pp(3,nat,3,nat,3,nat))
-   allocate(d3p (3,nat,3,nat,3,nat))
-   allocate(d3m (3,nat,3,nat,3,nat))
-   allocate(d3mm(3,nat,3,nat,3,nat))
+   do jat = 1, mol%nat
+      do jc = 1, mol%nat
+         if (jat == jc) cycle
 
-   allocate(num4(3,nat,3,nat,3,nat,3,nat))
+         rA = mol%xyz(:, jat)
+         rB = mol%xyz(:, jc)
 
-   ! Reference geometry Born data (used for analytical; and also held fixed for shifted numerical d3)
-   call gbobc%get_rad(mol, rad_ref, draddr_ref) !, dradd2r=draddr2_ref, dradd3r=draddr3_ref, dradd4r=draddr4_ref)
+         bornA0 = brad(jat)
+         bornB0 = brad(jc)
 
-   draddr_ref = 0.0_wp
+         ! ---- analytic d/d(bornA), d/d(bornB)
+         call kernel%kernel_d2_pair_dborn(rA, rB, bornA0, bornB0, ana_bA, ana_bB)
 
-   maxdiff = 0.0_wp
-   ia=1;ik=1;ib=1;il=1;ic=1;im=1;id=1;in=1;ii=1;ij=1
+         ! ---- numerical d/d(bornA) of d2_pair
+         call kernel%kernel_d2_pair(rA, rB, bornA0 + step, bornB0, d2_r)
+         call kernel%kernel_d2_pair(rA, rB, bornA0 - step, bornB0, d2_l)
+         num_bA(:,:) = 0.5_wp * (d2_r(:,:) - d2_l(:,:)) / step
 
-   do i = 1, nat
-      do j = 1, nat
+         ! ---- numerical d/d(bornB) of d2_pair
+         call kernel%kernel_d2_pair(rA, rB, bornA0, bornB0 + step, d2_r)
+         call kernel%kernel_d2_pair(rA, rB, bornA0, bornB0 - step, d2_l)
+         num_bB(:,:) = 0.5_wp * (d2_r(:,:) - d2_l(:,:)) / step
 
-         ! ------------------------------------------------------------
-         ! Build numerical d4K slab for this (i,j) by FD on d3K slabs.
-         ! ------------------------------------------------------------
-         num4(:,:,:,:,:,:,:,:) = 0.0_wp
+         maxdiffA = maxval(abs(ana_bA - num_bA))
+         maxdiffB = maxval(abs(ana_bB - num_bB))
 
-         do n = 1, nat
-            do d = 1, 3
+         if (maxdiffA > thr2 .or. maxdiffB > thr2) then
+            call test_failed(error, "kernel_d2_pair_dborn does not match FD(d2_pair)")
 
-               x0 = mol%xyz(d, n)
+            if (maxdiffA >= maxdiffB) then
+               locA = maxloc(abs(ana_bA - num_bA))
+               print '(a,2i6,a,es20.13)', "Mismatch d(d2)/d(bornA) at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiffA
+               print '(a,2i2)', "Worst entry (i,j)=", locA(1), locA(2)
+               print '(a,es20.13)', "ana_bA(i,j)=", ana_bA(locA(1),locA(2))
+               print '(a,es20.13)', "num_bA(i,j)=", num_bA(locA(1),locA(2))
+               print '(a,es20.13)', "diff       =", ana_bA(locA(1),locA(2)) - num_bA(locA(1),locA(2))
+            else
+               locB = maxloc(abs(ana_bB - num_bB))
+               print '(a,2i6,a,es20.13)', "Mismatch d(d2)/d(bornB) at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiffB
+               print '(a,2i2)', "Worst entry (i,j)=", locB(1), locB(2)
+               print '(a,es20.13)', "ana_bB(i,j)=", ana_bB(locB(1),locB(2))
+               print '(a,es20.13)', "num_bB(i,j)=", num_bB(locB(1),locB(2))
+               print '(a,es20.13)', "diff       =", ana_bB(locB(1),locB(2)) - num_bB(locB(1),locB(2))
+            end if
 
-               ! x + 2h
-               mol%xyz(d, n) = x0 + 2.0_wp*step
-               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad_ref, &
-                    draddr_ref, draddr2_ref, draddr3_ref, i, j, d3pp)
+            return
+         end if
 
-               ! x + h
-               mol%xyz(d, n) = x0 + 1.0_wp*step
-               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad_ref, &
-                    draddr_ref, draddr2_ref, draddr3_ref, i, j, d3p)
+      end do
+   end do
+end subroutine test_numh_dborn
 
-               ! x - h
-               mol%xyz(d, n) = x0 - 1.0_wp*step
-               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad_ref, &
-                    draddr_ref, draddr2_ref, draddr3_ref, i, j, d3m)
 
-               ! x - 2h
-               mol%xyz(d, n) = x0 - 2.0_wp*step
-               call compute_kernel_d3kdr3_ij(kernel_id, keps, nat, mol%xyz, rad_ref, &
-                    draddr_ref, draddr2_ref, draddr3_ref, i, j, d3mm)
+!> Test the kernel third derivative against numerical derivative
+subroutine test_numt(error, mol, kernel_id, keps)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
+   integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
+   real(wp), intent(in) :: keps
+   !> Kernel instance
+   class(kernel_type), allocatable :: kernel
 
-               ! restore
-               mol%xyz(d, n) = x0
+   !> Born radii integrator
+   type(born_integrator) :: gbobc
 
-               ! 4-point (4th-order) central FD for first derivative of the d3 slab:
-               ! f'(x) ≈ (-f(x+2h) + 8f(x+h) - 8f(x-h) + f(x-2h)) / (12h)
-               num4(:,:,:,:,:,:,d,n) = ( -d3pp(:,:,:,:,:,:) + 8.0_wp*d3p(:,:,:,:,:,:) &
-                                       -8.0_wp*d3m(:,:,:,:,:,:) + d3mm(:,:,:,:,:,:) ) &
-                                       / (12.0_wp*step)
+   !> Finite difference step size
+   real(wp), parameter :: step = 1.0e-6_wp
 
+   !> Loop indices for atom pairs and Cartesian directions
+   integer :: jat, jc, i, j, k
+   !> Van der Waals radii for all atoms
+   real(wp), allocatable  :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
+   !> Atomic coordinates and perturbed coordinates
+   real(wp) :: rA(3), rB(3), rA_r(3), rA_l(3)
+   !> Interatomic distance
+   real(wp) :: r
+   !> Hessian with positive/negative displacement
+   real(wp) :: d2kernel_r(3,3), d2kernel_l(3,3)
+   !> Analytical and numerical third derivative tensors
+   real(wp) :: anat_kernel(3,3,3), numt_kernel(3,3,3)
+   !> Maximum difference between analytical and numerical third derivatives
+   real(wp) :: maxdiff
+   !> Location of maximum difference
+   integer :: loc(3)
+
+   kernel = new_kernel(kernel_id, keps)
+
+   allocate(rvdw(mol%nat), brad(mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, brad)
+
+   do jat = 1, mol%nat
+      do jc = 1, mol%nat
+         if (jat == jc) cycle
+
+         rA = mol%xyz(:, jat)
+         rB = mol%xyz(:, jc)
+         r  = norm2(rA - rB)
+
+         ! analytic 3rd derivative
+         call kernel%kernel_d3_pair(rA, rB, brad(jat), brad(jc), anat_kernel)
+
+         ! numerical 3rd derivative from analytic Hessian:
+         ! n3(i,j,k) = d/dR_A,k [ d2(i,j) ]
+         numt_kernel(:,:,:) = 0.0_wp
+         do k = 1, 3
+            rA_r = rA; rA_r(k) = rA_r(k) + step
+            rA_l = rA; rA_l(k) = rA_l(k) - step
+
+            call kernel%kernel_d2_pair(rA_r, rB, brad(jat), brad(jc), d2kernel_r)
+            call kernel%kernel_d2_pair(rA_l, rB, brad(jat), brad(jc), d2kernel_l)
+
+            do i = 1, 3
+               do j = 1, 3
+                  numt_kernel(i,j,k) = 0.5_wp * (d2kernel_r(i,j) - d2kernel_l(i,j)) / step
+               end do
             end do
          end do
 
-         ! ------------------------------------------------------------
-         ! Element-by-element analytical d4K vs cached numerical num4.
-         ! This is the part that validates your scalar d4 routine.
-         ! ------------------------------------------------------------
-         do k = 1, nat
-            do a = 1, 3
-               do l = 1, nat
-                  do b = 1, 3
-                     do m = 1, nat
-                        do c = 1, 3
-                           do n = 1, nat
-                              do d = 1, 3
+         maxdiff = maxval(abs(anat_kernel - numt_kernel))
+         if (maxdiff > thr2) then
+            loc = maxloc(abs(anat_kernel - numt_kernel))
+            call test_failed(error, "Coulomb d3 (pair) does not match FD(d2)")
+            print '(a,2i6,a,es20.13)', "Mismatch at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiff
+            print '(a,3i2)', "Worst entry (i,j,k)=", loc(1), loc(2), loc(3)
+            print '(a,es20.13)', "ana d3(i,j,k)=", anat_kernel(loc(1),loc(2),loc(3))
+            print '(a,es20.13)', "num d3(i,j,k)=", numt_kernel(loc(1),loc(2),loc(3))
+            print '(a,es20.13)', "diff          =", anat_kernel(loc(1),loc(2),loc(3)) - numt_kernel(loc(1),loc(2),loc(3))
+            return
+         end if
 
-                                 num4_elem = num4(a,k,b,l,c,m,d,n)
+      end do
+   end do
+end subroutine test_numt
 
-                                 ana4_elem = 0.0_wp
-                                 call compute_kernel_d4Kdr4(kernel_id, keps, nat, mol%xyz, rad_ref, &
-                                      i, j, k, a, l, b, m, c, n, d, ana4_elem)
+!> Test kernel_d3_pair_dborn against numerical derivative of kernel_d3_pair wrt Born radii
+subroutine test_numt_dborn(error, mol, kernel_id, keps)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
+   integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
+   real(wp), intent(in) :: keps
 
-                                 diff = abs(ana4_elem - num4_elem)
-                                 if (diff > maxdiff) then
-                                    maxdiff = diff
-                                    ia=a; ik=k; ib=b; il=l; ic=c; im=m; id=d; in=n; ii=i; ij=j
-                                 end if
+   !> Kernel instance
+   class(kernel_type), allocatable :: kernel
+   !> Born radii integrator
+   type(born_integrator) :: gbobc
 
-                              end do
-                           end do
-                        end do
-                     end do
+   !> Finite difference step size
+   real(wp), parameter :: step = 1.0e-6_wp
+
+   !> Loop indices for atom pairs
+   integer :: jat, jc
+   !> Van der Waals radii for all atoms
+   real(wp), allocatable :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
+
+   !> Atomic coordinates
+   real(wp) :: rA(3), rB(3)
+   !> Original Born radii before perturbation
+   real(wp) :: bornA0, bornB0
+
+   !> Third derivative with positive/negative Born radius displacement
+   real(wp) :: d3_r(3,3,3), d3_l(3,3,3)
+   !> Numerical Born radius derivatives of third derivative
+   real(wp) :: num_bA(3,3,3), num_bB(3,3,3)
+   !> Analytical Born radius derivatives from kernel_d3_pair_dborn
+   real(wp) :: ana_bA(3,3,3), ana_bB(3,3,3)
+
+   !> Maximum differences for Born radius derivatives
+   real(wp) :: maxdiffA, maxdiffB
+   !> Locations of maximum differences
+   integer :: locA(3), locB(3)
+
+   kernel = new_kernel(kernel_id, keps)
+
+   allocate(rvdw(mol%nat), brad(mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, brad)
+
+   do jat = 1, mol%nat
+      do jc = 1, mol%nat
+         if (jat == jc) cycle
+
+         rA = mol%xyz(:, jat)
+         rB = mol%xyz(:, jc)
+
+         bornA0 = brad(jat)
+         bornB0 = brad(jc)
+
+         ! ---- analytic d/d(bornA), d/d(bornB)
+         call kernel%kernel_d3_pair_dborn(rA, rB, bornA0, bornB0, ana_bA, ana_bB)
+
+         ! ---- numerical d/d(bornA) of d3_pair
+         call kernel%kernel_d3_pair(rA, rB, bornA0 + step, bornB0, d3_r)
+         call kernel%kernel_d3_pair(rA, rB, bornA0 - step, bornB0, d3_l)
+         num_bA(:,:,:) = 0.5_wp * (d3_r(:,:,:) - d3_l(:,:,:)) / step
+
+         ! ---- numerical d/d(bornB) of d3_pair
+         call kernel%kernel_d3_pair(rA, rB, bornA0, bornB0 + step, d3_r)
+         call kernel%kernel_d3_pair(rA, rB, bornA0, bornB0 - step, d3_l)
+         num_bB(:,:,:) = 0.5_wp * (d3_r(:,:,:) - d3_l(:,:,:)) / step
+
+         maxdiffA = maxval(abs(ana_bA - num_bA))
+         maxdiffB = maxval(abs(ana_bB - num_bB))
+
+         if (maxdiffA > thr2 .or. maxdiffB > thr2) then
+            call test_failed(error, "kernel_d3_pair_dborn does not match FD(d3_pair)")
+
+            if (maxdiffA >= maxdiffB) then
+               locA = maxloc(abs(ana_bA - num_bA))
+               print '(a,2i6,a,es20.13)', "Mismatch d(d3)/d(bornA) at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiffA
+               print '(a,3i2)', "Worst entry (i,j,k)=", locA(1), locA(2), locA(3)
+               print '(a,es20.13)', "ana_bA(i,j,k)=", ana_bA(locA(1),locA(2),locA(3))
+               print '(a,es20.13)', "num_bA(i,j,k)=", num_bA(locA(1),locA(2),locA(3))
+               print '(a,es20.13)', "diff         =", ana_bA(locA(1),locA(2),locA(3)) - num_bA(locA(1),locA(2),locA(3))
+            else
+               locB = maxloc(abs(ana_bB - num_bB))
+               print '(a,2i6,a,es20.13)', "Mismatch d(d3)/d(bornB) at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiffB
+               print '(a,3i2)', "Worst entry (i,j,k)=", locB(1), locB(2), locB(3)
+               print '(a,es20.13)', "ana_bB(i,j,k)=", ana_bB(locB(1),locB(2),locB(3))
+               print '(a,es20.13)', "num_bB(i,j,k)=", num_bB(locB(1),locB(2),locB(3))
+               print '(a,es20.13)', "diff         =", ana_bB(locB(1),locB(2),locB(3)) - num_bB(locB(1),locB(2),locB(3))
+            end if
+
+            return
+         end if
+
+      end do
+   end do
+end subroutine test_numt_dborn
+
+
+!> Test the kernel fourth derivative against numerical derivative
+subroutine test_numq(error, mol, kernel_id, keps)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
+   integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
+   real(wp), intent(in) :: keps
+
+   !> Kernel instance
+   class(kernel_type), allocatable :: kernel
+
+   !> Born radii integrator
+   type(born_integrator) :: gbobc
+
+   !> Finite difference step size
+   real(wp), parameter :: step = 1.0e-6_wp
+
+   !> Loop indices for atom pairs and Cartesian directions
+   integer :: jat, jc, i, j, k, l
+   !> Van der Waals radii for all atoms
+   real(wp), allocatable :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
+   !> Atomic coordinates and perturbed coordinates
+   real(wp) :: rA(3), rB(3), rA_r(3), rA_l(3)
+   !> Interatomic distance
+   real(wp) :: r
+   !> Third derivative with positive/negative displacement
+   real(wp) :: d3kernel_r(3,3,3), d3kernel_l(3,3,3)
+   !> Analytical and numerical fourth derivative tensors
+   real(wp) :: anaq_kernel(3,3,3,3), numq_kernel(3,3,3,3)
+   !> Maximum difference between analytical and numerical fourth derivatives
+   real(wp) :: maxdiff
+   !> Location of maximum difference
+   integer :: loc(4)
+
+   kernel = new_kernel(kernel_id, keps)
+
+   allocate(rvdw(mol%nat), brad(mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, brad)
+
+   do jat = 1, mol%nat
+      do jc = 1, mol%nat
+         if (jat == jc) cycle
+
+         rA = mol%xyz(:, jat)
+         rB = mol%xyz(:, jc)
+         r  = norm2(rA - rB)
+
+         ! analytic 4th derivative
+         call kernel%kernel_d4_pair(rA, rB, brad(jat), brad(jc), anaq_kernel)
+
+         ! numerical 4th derivative from analytic 3rd derivative:
+         ! n4(i,j,k,l) = d/dR_A,l [ d3(i,j,k) ]
+         numq_kernel(:,:,:,:) = 0.0_wp
+         do l = 1, 3
+            rA_r = rA; rA_r(l) = rA_r(l) + step
+            rA_l = rA; rA_l(l) = rA_l(l) - step
+
+            call kernel%kernel_d3_pair(rA_r, rB, brad(jat), brad(jc), d3kernel_r)
+            call kernel%kernel_d3_pair(rA_l, rB, brad(jat), brad(jc), d3kernel_l)
+
+            do i = 1, 3
+               do j = 1, 3
+                  do k = 1, 3
+                     numq_kernel(i,j,k,l) = 0.5_wp * (d3kernel_r(i,j,k) - d3kernel_l(i,j,k)) / step
                   end do
                end do
             end do
          end do
 
+         maxdiff = maxval(abs(anaq_kernel - numq_kernel))
+         if (maxdiff > thr2) then
+            loc = maxloc(abs(anaq_kernel - numq_kernel))
+            call test_failed(error, "Coulomb d4 (pair) does not match FD(d3)")
+            print '(a,2i6,a,es20.13)', "Mismatch at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiff
+            print '(a,4i2)', "Worst entry (i,j,k,l)=", loc(1), loc(2), loc(3), loc(4)
+            print '(a,es20.13)', "ana d4(i,j,k,l)=", anaq_kernel(loc(1),loc(2),loc(3),loc(4))
+            print '(a,es20.13)', "num d4(i,j,k,l)=", numq_kernel(loc(1),loc(2),loc(3),loc(4))
+            print '(a,es20.13)', "diff            =", anaq_kernel(loc(1),loc(2),loc(3),loc(4)) - numq_kernel(loc(1),loc(2),loc(3),loc(4))
+            return
+         end if
+
       end do
    end do
+end subroutine test_numq
 
-   if (maxdiff > thr2) then
-      call test_failed(error, "Kernel fourth derivative (scalar d4 vs cached FD(d3 slab)) mismatch")
-      print '(a,es20.13)', "Max |d4K/dr4| difference: ", maxdiff
-      print '(a,10(i0,1x))', "At indices (a,k,b,l,c,m,d,n,i,j) = ", ia,ik,ib,il,ic,im,id,in,ii,ij
+!> Test kernel_d4_pair_dborn against numerical derivative of kernel_d4_pair wrt Born radii
+subroutine test_numq_dborn(error, mol, kernel_id, keps)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
+   integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
+   real(wp), intent(in) :: keps
 
-      ! Optional: print the two scalar values at the worst index
-      num4_elem = num4(ia,ik,ib,il,ic,im,id,in)
-      ana4_elem = 0.0_wp
-      call compute_kernel_d4Kdr4(kernel_id, keps, nat, mol%xyz, rad_ref, &
-           ii, ij, ik, ia, il, ib, im, ic, in, id, ana4_elem)
-      print '(a,es20.13)', "Analytical value: ", ana4_elem
-      print '(a,es20.13)', "Numerical  value: ", num4_elem
-      print '(a,es20.13)', "Difference       : ", ana4_elem - num4_elem
-   end if
+   !> Kernel instance
+   class(kernel_type), allocatable :: kernel
+   !> Born radii integrator
+   type(born_integrator) :: gbobc
 
-end subroutine test_kernel_numq
+   !> Finite difference step size
+   real(wp), parameter :: step = 1.0e-6_wp
+
+   !> Loop indices for atom pairs
+   integer :: jat, jc
+   !> Van der Waals radii for all atoms
+   real(wp), allocatable :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
+
+   !> Atomic coordinates
+   real(wp) :: rA(3), rB(3)
+   !> Original Born radii before perturbation
+   real(wp) :: bornA0, bornB0
+
+   !> Fourth derivative with positive/negative Born radius displacement
+   real(wp) :: d4_r(3,3,3,3), d4_l(3,3,3,3)
+   !> Numerical Born radius derivatives of fourth derivative
+   real(wp) :: num_bA(3,3,3,3), num_bB(3,3,3,3)
+   !> Analytical Born radius derivatives from kernel_d4_pair_dborn
+   real(wp) :: ana_bA(3,3,3,3), ana_bB(3,3,3,3)
+
+   !> Maximum differences for Born radius derivatives
+   real(wp) :: maxdiffA, maxdiffB
+   !> Locations of maximum differences
+   integer :: locA(4), locB(4)
+
+   kernel = new_kernel(kernel_id, keps)
+
+   allocate(rvdw(mol%nat), brad(mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, brad)
+
+   do jat = 1, mol%nat
+      do jc = 1, mol%nat
+         if (jat == jc) cycle
+
+         rA = mol%xyz(:, jat)
+         rB = mol%xyz(:, jc)
+
+         bornA0 = brad(jat)
+         bornB0 = brad(jc)
+
+         ! ---- analytic d/d(bornA), d/d(bornB)
+         call kernel%kernel_d4_pair_dborn(rA, rB, bornA0, bornB0, ana_bA, ana_bB)
+
+         ! ---- numerical d/d(bornA) of d4_pair
+         call kernel%kernel_d4_pair(rA, rB, bornA0 + step, bornB0, d4_r)
+         call kernel%kernel_d4_pair(rA, rB, bornA0 - step, bornB0, d4_l)
+         num_bA(:,:,:,:) = 0.5_wp * (d4_r(:,:,:,:) - d4_l(:,:,:,:)) / step
+
+         ! ---- numerical d/d(bornB) of d4_pair
+         call kernel%kernel_d4_pair(rA, rB, bornA0, bornB0 + step, d4_r)
+         call kernel%kernel_d4_pair(rA, rB, bornA0, bornB0 - step, d4_l)
+         num_bB(:,:,:,:) = 0.5_wp * (d4_r(:,:,:,:) - d4_l(:,:,:,:)) / step
+
+         maxdiffA = maxval(abs(ana_bA - num_bA))
+         maxdiffB = maxval(abs(ana_bB - num_bB))
+
+         if (maxdiffA > thr2 .or. maxdiffB > thr2) then
+            call test_failed(error, "kernel_d4_pair_dborn does not match FD(d4_pair)")
+
+            if (maxdiffA >= maxdiffB) then
+               locA = maxloc(abs(ana_bA - num_bA))
+               print '(a,2i6,a,es20.13)', "Mismatch d(d4)/d(bornA) at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiffA
+               print '(a,4i2)', "Worst entry (i,j,k,l)=", locA(1), locA(2), locA(3), locA(4)
+               print '(a,es20.13)', "ana_bA(i,j,k,l)=", ana_bA(locA(1),locA(2),locA(3),locA(4))
+               print '(a,es20.13)', "num_bA(i,j,k,l)=", num_bA(locA(1),locA(2),locA(3),locA(4))
+               print '(a,es20.13)', "diff          =", ana_bA(locA(1),locA(2),locA(3),locA(4)) - num_bA(locA(1),locA(2),locA(3),locA(4))
+            else
+               locB = maxloc(abs(ana_bB - num_bB))
+               print '(a,2i6,a,es20.13)', "Mismatch d(d4)/d(bornB) at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiffB
+               print '(a,4i2)', "Worst entry (i,j,k,l)=", locB(1), locB(2), locB(3), locB(4)
+               print '(a,es20.13)', "ana_bB(i,j,k,l)=", ana_bB(locB(1),locB(2),locB(3),locB(4))
+               print '(a,es20.13)', "num_bB(i,j,k,l)=", num_bB(locB(1),locB(2),locB(3),locB(4))
+               print '(a,es20.13)', "diff          =", ana_bB(locB(1),locB(2),locB(3),locB(4)) - num_bB(locB(1),locB(2),locB(3),locB(4))
+            end if
+
+            return
+         end if
+
+      end do
+   end do
+end subroutine test_numq_dborn
 
 
 
+!> Test the kernel fifth derivative against numerical derivative
+subroutine test_num5(error, mol, kernel_id, keps)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
+   integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
+   real(wp), intent(in) :: keps
 
+   !> Kernel instance
+   class(kernel_type), allocatable :: kernel
 
+   !> Born radii integrator
+   type(born_integrator) :: gbobc
+
+   !> Finite difference step size
+   real(wp), parameter :: step = 1.0e-6_wp
+
+   !> Loop indices for atom pairs and Cartesian directions
+   integer :: jat, jc, i, j, k, l, m
+   !> Van der Waals radii for all atoms
+   real(wp), allocatable :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
+   !> Atomic coordinates and perturbed coordinates
+   real(wp) :: rA(3), rB(3), rA_r(3), rA_l(3)
+   !> Interatomic distance
+   real(wp) :: r
+   !> Fourth derivative with positive/negative displacement
+   real(wp) :: d4kernel_r(3,3,3,3), d4kernel_l(3,3,3,3)
+   !> Analytical and numerical fifth derivative tensors
+   real(wp) :: ana5_kernel(3,3,3,3,3), num5_kernel(3,3,3,3,3)
+   !> Maximum difference between analytical and numerical fifth derivatives
+   real(wp) :: maxdiff
+   !> Location of maximum difference
+   integer :: loc(5)
+
+   kernel = new_kernel(kernel_id, keps)
+
+   allocate(rvdw(mol%nat), brad(mol%nat))
+   rvdw = get_vdw_rad_d3(mol%num)
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, brad)
+
+   do jat = 1, mol%nat
+      do jc = 1, mol%nat
+         if (jat == jc) cycle
+
+         rA = mol%xyz(:, jat)
+         rB = mol%xyz(:, jc)
+         r  = norm2(rA - rB)
+
+         ! analytic 5th derivative
+         call kernel%kernel_d5_pair(rA, rB, brad(jat), brad(jc), ana5_kernel)
+
+         ! numerical 5th derivative from analytic 4th derivative:
+         ! n4(i,j,k,l) = d/dR_A,l [ d3(i,j,k) ]
+         num5_kernel(:,:,:,:,:) = 0.0_wp
+         do l = 1, 3
+            rA_r = rA; rA_r(l) = rA_r(l) + step
+            rA_l = rA; rA_l(l) = rA_l(l) - step
+
+            call kernel%kernel_d4_pair(rA_r, rB, brad(jat), brad(jc), d4kernel_r)
+            call kernel%kernel_d4_pair(rA_l, rB, brad(jat), brad(jc), d4kernel_l)
+
+            do i = 1, 3
+               do j = 1, 3
+                  do k = 1, 3
+                     do m = 1,3
+                        num5_kernel(i,j,k,m,l) = 0.5_wp * (d4kernel_r(i,j,k,m) - d4kernel_l(i,j,k,m)) / step
+                     end do 
+                  end do
+               end do
+            end do
+         end do
+
+         maxdiff = maxval(abs(ana5_kernel - num5_kernel))
+         if (maxdiff > thr2) then
+            loc = maxloc(abs(ana5_kernel - num5_kernel))
+            call test_failed(error, "Coulomb d5 (pair) does not match FD(d3)")
+            print '(a,2i6,a,es20.13)', "Mismatch at pair (A,B)=(", jat, jc, "), max|diff|=", maxdiff
+            print '(a,4i2)', "Worst entry (i,j,k,l)=", loc(1), loc(2), loc(3), loc(4), loc(5)
+            print '(a,es20.13)', "ana d5(i,j,k,l)=", ana5_kernel(loc(1),loc(2),loc(3),loc(4),loc(5))
+            print '(a,es20.13)', "num d5(i,j,k,l)=", num5_kernel(loc(1),loc(2),loc(3),loc(4),loc(5))
+            print '(a,es20.13)', "diff            =", ana5_kernel(loc(1),loc(2),loc(3),loc(4),loc(5)) - num5_kernel(loc(1),loc(2),loc(3),loc(4),loc(5))
+            return
+         end if
+
+      end do
+   end do
+end subroutine test_num5
 
 
 
 !> Test setting up the kernel interacion matrices based on kernel derivatives
-!> For this test to work, damping needs to be disabled in the coulomb/multipole.f90
-!  Therefore turned off for now.
-subroutine test_amat(error, mol, kernel_id, keps, qat, make_multipole, input)
+subroutine test_amat(error, mol, keps, input, &
+   & amat_sd_ref, amat_dd_ref, amat_sq_ref, amat_dq_ref, amat_qq_ref)
+   !> Error handler for test failures
    type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data
    type(structure_type), intent(inout) :: mol
-   integer, intent(in) :: kernel_id
+   !> Dielectric screening factor (1 - 1/epsilon)
    real(wp), intent(in) :: keps
-   real(wp), intent(in) :: qat(:)
+   !> Reference charge-dipole interaction matrix (3,3,3)
+   real(wp), intent(in) :: amat_sd_ref(:,:,:)
+   !> Reference dipole-dipole interaction matrix (3,3,3,3)
+   real(wp), intent(in) :: amat_dd_ref(:,:,:,:)
+   !> Reference charge-quadrupole interaction matrix (6,3,3)
+   real(wp), intent(in) :: amat_sq_ref(:,:,:)
+   !> Reference dipole-quadrupole interaction matrix (3,3,6,3)
+   real(wp), intent(in) :: amat_dq_ref(:,:,:,:)
+   !> Reference quadrupole-quadrupole interaction matrix (6,3,6,3)
+   real(wp), intent(in) :: amat_qq_ref(:,:,:,:)
 
    !> Factory to create new electrostatic objects
-   procedure(multipole_maker) :: make_multipole
-
    type(alpb_input), intent(in) :: input
 
+   !> Container cache for solvation data
    type(container_cache) :: cache
-   type(coulomb_cache), pointer :: c_cache
-   type(damped_multipole) :: d_multipole
 
+   !> Kernel type for solvation interactions
    class(kernel_type), allocatable :: kernel
+   !> ALPB solvation model object
    type(alpb_solvation) :: solv
+   !> Temporary copy of ALPB input parameters
    type(alpb_input), allocatable :: scratch_input
-   type(alpb_cache) :: a_cache
+   !> Pointer to cached ALPB data structure containing multipole matrices
+   type(alpb_cache), pointer :: ptr
 
-
-
-   real(wp), allocatable :: amat_sd_mp(:,:,:), amat_dd_mp(:,:,:,:), amat_sq_mp(:,:,:), amat_dq_mp(:,:,:,:), amat_qq_mp(:,:,:,:)
-   real(wp), allocatable :: amat_sd_alpb(:,:,:), amat_dd_alpb(:,:,:,:), amat_sq_alpb(:,:,:), amat_dq_alpb(:,:,:,:), amat_qq_alpb(:,:,:,:)
+   !> Born radii array (unused but allocated)
+   !> Born radii derivative array (unused but allocated)
    real(wp), allocatable :: rad(:), draddr(:,:,:)
 
-   call taint(cache, c_cache)
-   call c_cache%update(mol)
-   call make_multipole(d_multipole, mol, error)
+   integer :: i, j, k, l, ii, jj
 
    scratch_input = input
    call get_alpb_param(scratch_input, mol, 'gfn2', error)
-   solv = alpb_solvation(mol, scratch_input, 'gnf2')
+   solv = alpb_solvation(mol, scratch_input, 'gfn2')
    
-
-   allocate(amat_sd_mp(3, mol%nat, mol%nat), source=0.0_wp)
-   allocate(amat_dd_mp(3, mol%nat, 3, mol%nat), source=0.0_wp)
-   allocate(amat_sq_mp(6, mol%nat, mol%nat), source=0.0_wp)
-   allocate(amat_dq_mp(3, mol%nat, 6, mol%nat), source=0.0_wp)
-   allocate(amat_qq_mp(6, mol%nat, 6, mol%nat), source=0.0_wp)
-
-   allocate(amat_sd_alpb(3, mol%nat, mol%nat), source=0.0_wp)
-   allocate(amat_dd_alpb(3, mol%nat, 3, mol%nat), source=0.0_wp)
-   allocate(amat_sq_alpb(6, mol%nat, mol%nat), source=0.0_wp)
-   allocate(amat_dq_alpb(3, mol%nat, 6, mol%nat), source=0.0_wp)
-   allocate(amat_qq_alpb(6, mol%nat, 6, mol%nat), source=0.0_wp)
-
    allocate(rad(mol%nat), source=0.0_wp)
    allocate(draddr(3, mol%nat, mol%nat), source=0.0_wp)
 
-   call d_multipole%update(mol, cache)
-
-   amat_sd_mp = c_cache%amat_sd
-   amat_dd_mp = c_cache%amat_dd
-   amat_sq_mp = c_cache%amat_sq
-   amat_dq_mp = c_cache%amat_dq
-   amat_qq_mp = c_cache%amat_qq
-
+   call taint(cache, ptr)
    call solv%update(mol, cache)
+   call view(cache, ptr)
 
 
-   call get_multipole_matrices(solv, mol, mol%xyz, solv%keps, rad, draddr, &
-      & amat_sd_alpb, amat_dd_alpb, amat_sq_alpb, amat_dq_alpb, amat_qq_alpb)
-
-
-   ! If all fail, this just reports amat_sq
-   ! While all maxdiffs are printed, this should be redone some time (if kept in for merge)
-    if (maxval(amat_sd_alpb - amat_sd_mp) > thr2) then
+   if (abs(maxval(ptr%amat_sd - amat_sd_ref)) > thr2) then
       call test_failed(error, "Monopole-dipole interaction matrices do no match!")
-      print '(a,es20.13)', "Max difference amat_sd: ", maxval(amat_sd_alpb - amat_sd_mp)
+      print '(a,es20.13)', "Max difference amat_sd: ", maxval(ptr%amat_sd - amat_sd_ref)
    end if
-   if (maxval(amat_dd_alpb - amat_dd_mp) > thr2) then
+   if (abs(maxval(ptr%amat_dd - amat_dd_ref)) > thr2) then
       call test_failed(error, "Dipole-dipole interaction matrices do no match!")
-      print '(a,es20.13)', "Max difference amat_dd: ", maxval(amat_dd_alpb - amat_dd_mp)
+      print '(a,es20.13)', "Max difference amat_dd: ", maxval(ptr%amat_dd - amat_dd_ref)
    end if
-   if (maxval(amat_sq_alpb - amat_sq_mp) > thr2) then
+   if (abs(maxval(ptr%amat_sq - amat_sq_ref)) > thr2) then
       call test_failed(error, "Monopole-quadrupole interaction matrices do no match!")
-      print '(a,es20.13)', "Max difference amat_sq: ", maxval(amat_sq_alpb - amat_sq_mp)
+      print '(a,es20.13)', "Max difference amat_sq: ", maxval(ptr%amat_sq - amat_sq_ref)
    end if
-   if (maxval(amat_dq_alpb - amat_dq_mp) > thr2) then
+   if (abs(maxval(ptr%amat_dq - amat_dq_ref)) > thr2) then
       call test_failed(error, "Dipole-quadrupole interaction matrices do no match!")
-      print '(a,es20.13)', "Max difference amat_dq: ", maxval(amat_dq_alpb - amat_dq_mp)
+      print '(a,es20.13)', "Max difference amat_dq: ", maxval(ptr%amat_dq - amat_dq_ref)
    end if
-   if (maxval(amat_qq_alpb - amat_qq_mp) > thr2) then
+   if (abs(maxval(ptr%amat_qq - amat_qq_ref)) > thr2) then
       call test_failed(error, "Quadrupole-quadrupole interaction matrices do no match!")
-      print *, "Max difference amat_qq: ", maxval(amat_qq_alpb - amat_qq_mp)
+      print *, "Max difference amat_qq: ", maxval(ptr%amat_qq - amat_qq_ref)
    end if
 
 
 end subroutine test_amat
 
 
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+subroutine get_amat_ref_still(amat_sd_ref, amat_dd_ref, amat_sq_ref, &
+   & amat_dq_ref, amat_qq_ref)
+   real(wp), intent(out) :: amat_sd_ref(3,3,3)
+   real(wp), intent(out) :: amat_dd_ref(3,3,3,3)
+   real(wp), intent(out) :: amat_sq_ref(6,3,3)
+   real(wp), intent(out) :: amat_dq_ref(3,3,6,3)
+   real(wp), intent(out) :: amat_qq_ref(6,3,6,3)
 
-
-subroutine test_amat_ho(error, mol)
-   type(error_type), allocatable, intent(out) :: error
-   type(structure_type), intent(inout) :: mol
-
-   integer :: nat
-   real(wp), allocatable :: amat_sd_mp(:,:,:), amat_dd_mp(:,:,:,:), amat_sq_mp(:,:,:)
-   real(wp), allocatable :: amat_dq_mp(:,:,:,:), amat_qq_mp(:,:,:,:)
-   real(wp), allocatable :: rad(:)
-
-   ! reference blocks for the one pair (jat=2, iat=1)
-   real(wp) :: dq_ref(3,6), qq_ref(6,6)
-
-   ! multipole moments for energy checks
-   real(wp) :: mu(3,2)     ! dipoles
-   real(wp) :: Q6(6,2)     ! packed quadrupoles (xx,2xy,yy,2xz,2yz,zz)
-
-   real(wp) :: E_dq_mp, E_dq_ref
-   real(wp) :: E_qq_mp, E_qq_ref
-
-   real(wp) :: R(3)
-   real(wp) :: tol
-   real(wp) :: maxerr_dq, maxerr_qq
-
-   integer :: iat, jat
-
-   tol = 1.0e-10_wp
-   nat = mol%nat
-
-   allocate(rad(nat), source=0.0_wp)
-
-   allocate(amat_sd_mp(3, nat, nat), source=0.0_wp)
-   allocate(amat_dd_mp(3, nat, 3, nat), source=0.0_wp)
-   allocate(amat_sq_mp(6, nat, nat), source=0.0_wp)
-   allocate(amat_dq_mp(3, nat, 6, nat), source=0.0_wp)
-   allocate(amat_qq_mp(6, nat, 6, nat), source=0.0_wp)
-
-   ! Build matrices (Coulomb; damping effectively disabled in your current version)
-   call get_multipole_matrix_0d(mol, rad, 1.0_wp, 1.0_wp, &
-      & amat_sd_mp, amat_dd_mp, amat_sq_mp, amat_dq_mp, amat_qq_mp)
-
-   ! -----------------------
-   ! Define arbitrary moments
-   ! -----------------------
-   mu(:,:) = 0.0_wp
-   Q6(:,:) = 0.0_wp
-
-   ! Dipole on atom 2: along +z
-   mu(:,2) = [0.0_wp, 0.0_wp, 1.0_wp]
-
-   ! Traceless axial quadrupole on atom 1 and 2 (aligned with z):
-   ! Q = diag(-1/2, -1/2, 1)
-   Q6(:,1) = [-0.5_wp, 0.0_wp, -0.5_wp, 0.0_wp, 0.0_wp, 1.0_wp]
-   Q6(:,2) = [-0.5_wp, 0.0_wp, -0.5_wp, 0.0_wp, 0.0_wp, 1.0_wp]
-
-   ! Choose the pair orientation consistent with your matrix storage:
-   ! In your get_multipole_matrix_0d: vec = xyz(:,iat) - xyz(:,jat),
-   ! and then stored at ( :, jat, ..., iat ).
-   iat = 1
-   jat = 2
-   R(:) = mol%xyz(:, iat) - mol%xyz(:, jat)
-
-   ! -----------------------
-   ! Build analytic references
-   ! -----------------------
-   call build_coulomb_dq_block(R, dq_ref)   ! 3x6 for (dipole on jat) vs (quad on iat)
-   call build_coulomb_qq_block(R, qq_ref)   ! 6x6 for (quad on jat) vs (quad on iat)
-
-   ! -----------------------
-   ! Matrix-entry comparisons
-   ! -----------------------
-   maxerr_dq = maxval(abs(amat_dq_mp(:, jat, :, iat) - dq_ref(:,:)))
-   maxerr_qq = maxval(abs(amat_qq_mp(:, jat, :, iat) - qq_ref(:,:)))
-
-   if (maxerr_dq > tol) then
-      print *, 'dq', amat_dq_mp(:, jat, :, iat), dq_ref(:,:), maxerr_dq
-      return
-   end if
-   if (maxerr_qq > tol) then
-      print *, 'qq', maxerr_qq
-      return
-   end if
-
-   ! -----------------------
-   ! Energy comparisons (same contraction on ref vs mp)
-   ! -----------------------
-   ! Dipole–quadrupole energy for this pair
-   E_dq_mp  = dot_product(mu(:,jat), matmul(amat_dq_mp(:,jat,:,iat), Q6(:,iat)))
-   E_dq_ref = dot_product(mu(:,jat), matmul(dq_ref(:,:),                Q6(:,iat)))
-
-   if (abs(E_dq_mp - E_dq_ref) < tol) then
-      print *, E_dq_mp, E_dq_ref
-      return
-   end if
-
-   ! Quadrupole–quadrupole energy for this pair
-   E_qq_mp  = dot_product(Q6(:,jat), matmul(amat_qq_mp(:,jat,:,iat), Q6(:,iat)))
-   E_qq_ref = dot_product(Q6(:,jat), matmul(qq_ref(:,:),             Q6(:,iat)))
-
-   if (abs(E_qq_mp - E_qq_ref) > tol) then
-      call test_failed(error, "Monopole-quadrupole interaction matrices do no match!")
-      return
-   end if
-
-
-contains
-
-   subroutine build_coulomb_dq_block(R, dq)
-      real(wp), intent(in)  :: R(3)
-      real(wp), intent(out) :: dq(3,6)
-
-      real(wp) :: r1, r2, g5, g7
-      real(wp) :: I3(3,3)
-      real(wp) :: U(3,3,3)
-      integer  :: a,b,c
-
-      I3 = 0.0_wp
-      I3(1,1)=1.0_wp; I3(2,2)=1.0_wp; I3(3,3)=1.0_wp
-
-      r2 = dot_product(R,R)
-      r1 = sqrt(r2)
-      g5 = 1.0_wp/(r1**5)
-      g7 = 1.0_wp/(r1**7)
-
-      ! U_{a,bc} = -5 R_a R_b R_c / R^7 + (δ_ab R_c + δ_ac R_b + δ_bc R_a) / R^5
-      U(:,:,:) = 0.0_wp
-      do a=1,3
-         do b=1,3
-            do c=1,3
-               U(a,b,c) = -5.0_wp * R(a)*R(b)*R(c) * g7 &
-                        + ( I3(a,b)*R(c) + I3(a,c)*R(b) + I3(b,c)*R(a) ) * g5
-            end do
-         end do
-      end do
-
-      ! Pack bc -> p in your convention: (xx, 2xy, yy, 2xz, 2yz, zz)
-      do a=1,3
-         dq(a,1) = U(a,1,1)
-         dq(a,2) = 2.0_wp*U(a,1,2)
-         dq(a,3) = U(a,2,2)
-         dq(a,4) = 2.0_wp*U(a,1,3)
-         dq(a,5) = 2.0_wp*U(a,2,3)
-         dq(a,6) = U(a,3,3)
-      end do
-   end subroutine build_coulomb_dq_block
-
-
-   subroutine build_coulomb_qq_block(R, qq)
-      real(wp), intent(in)  :: R(3)
-      real(wp), intent(out) :: qq(6,6)
-
-      real(wp) :: r1, r2, r4, g9
-      real(wp) :: I3(3,3)
-      real(wp) :: sym1, sym2, W
-      integer  :: p,q,a,b,c,d
-      integer, parameter :: pa(6) = [1, 1, 2, 1, 2, 3]
-      integer, parameter :: pb(6) = [1, 2, 2, 3, 3, 3]
-      integer, parameter :: pf(6) = [1, 2, 1, 2, 2, 1]  ! 1 for diag, 2 for offdiag
-
-      I3 = 0.0_wp
-      I3(1,1)=1.0_wp; I3(2,2)=1.0_wp; I3(3,3)=1.0_wp
-
-      r2 = dot_product(R,R)
-      r1 = sqrt(r2)
-      r4 = r2*r2
-      g9 = 1.0_wp/(r1**9)
-
-      ! Traceless-Theta Coulomb QQ tensor:
-      ! W_abcd = [ 35 R_a R_b R_c R_d
-      !          - 5 R^2 * sym(δ R R)
-      !          + (3/2) R^4 * sym(δδ) ] / R^9
-      do p=1,6
-         a = pa(p); b = pb(p)
-         do q=1,6
-            c = pa(q); d = pb(q)
-
-            sym1 = I3(a,b)*R(c)*R(d) + I3(a,c)*R(b)*R(d) + I3(a,d)*R(b)*R(c) &
-                 + I3(b,c)*R(a)*R(d) + I3(b,d)*R(a)*R(c) + I3(c,d)*R(a)*R(b)
-
-            sym2 = I3(a,b)*I3(c,d) + I3(a,c)*I3(b,d) + I3(a,d)*I3(b,c)
-
-            W = ( 35.0_wp * R(a)*R(b)*R(c)*R(d) &
-                -  5.0_wp * r2 * sym1 &
-                +  1.5_wp * r4 * sym2 ) * g9
-
-            qq(p,q) = real(pf(p)*pf(q),wp) * W
-         end do
-      end do
-   end subroutine build_coulomb_qq_block
-
-
-end subroutine test_amat_ho
+   amat_sd_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.49759202499840E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.49759202499840E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.49759202499840E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.58870044522578E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.49759202499840E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.58870044522578E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [3,3,3])
 
 
 
+   amat_dd_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-9.88004455944290E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-9.88004455944290E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-9.88004455944290E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-9.88004455944290E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.42990642057011E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.42990642057011E-3_wp,&
+      &-9.88004455944290E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-5.12022690132844E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-9.88004455944290E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-5.12022690132844E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.42990642057011E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.16579034330314E-3_wp,&
+      &-9.88004455944290E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-5.12022690132844E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-9.88004455944290E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-5.12022690132844E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.42990642057011E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.16579034330314E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [3,3,3,3])
+
+    amat_sq_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.48337937962426E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.48337937962426E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.48337937962426E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.42867241487719E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.48337937962426E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.42867241487719E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [6,3,3])
+
+   amat_dq_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.82382177838076E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 9.82382177838076E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.82382177838076E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 9.82382177838076E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.96476435567615E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 1.96476435567615E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.96476435567615E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 1.96476435567615E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.71978808702705E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.71978808702705E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 9.82382177838076E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 6.78161923557974E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 9.82382177838076E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 6.78161923557974E-4_wp,&
+      & 1.96476435567615E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 1.35632384711595E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 1.96476435567615E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 1.35632384711595E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.71978808702705E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.73000361720903E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.82382177838076E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-6.78161923557974E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.82382177838076E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-6.78161923557974E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.96476435567615E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.35632384711595E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.96476435567615E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.35632384711595E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.71978808702705E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.73000361720903E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [3,3,6,3])
+
+   amat_qq_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.74876073331153E-3_wp, 0.00000000000000E+0_wp,-5.82920244437178E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      &-1.74876073331153E-3_wp, 0.00000000000000E+0_wp,-5.82920244437178E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-2.33168097774871E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-2.33168097774871E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-5.82920244437178E-4_wp, 0.00000000000000E+0_wp,-1.74876073331153E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      &-5.82920244437178E-4_wp, 0.00000000000000E+0_wp,-1.74876073331153E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-3.89593395737049E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-3.89593395737049E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-3.89593395737049E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-3.89593395737049E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-9.73983489342622E-5_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 3.11932087590825E-4_wp,&
+      &-9.73983489342622E-5_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 3.11932087590825E-4_wp,&
+      &-1.74876073331153E-3_wp, 0.00000000000000E+0_wp,-5.82920244437178E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-6.03605689058357E-4_wp, 0.00000000000000E+0_wp,-2.01201896352786E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.35419880424931E-4_wp,&
+      & 0.00000000000000E+0_wp,-2.33168097774871E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-8.04807585411143E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-5.82920244437178E-4_wp, 0.00000000000000E+0_wp,-1.74876073331153E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-2.01201896352786E-4_wp, 0.00000000000000E+0_wp,-6.03605689058357E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.35419880424931E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-3.89593395737049E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 9.41679521699725E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-3.89593395737049E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 9.41679521699725E-4_wp, 0.00000000000000E+0_wp,&
+      &-9.73983489342622E-5_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 3.11932087590825E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 2.35419880424931E-4_wp, 0.00000000000000E+0_wp, 2.35419880424931E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 3.34121574004972E-5_wp,&
+      &-1.74876073331153E-3_wp, 0.00000000000000E+0_wp,-5.82920244437178E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      &-6.03605689058357E-4_wp, 0.00000000000000E+0_wp,-2.01201896352786E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.35419880424931E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-2.33168097774871E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-8.04807585411143E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-5.82920244437178E-4_wp, 0.00000000000000E+0_wp,-1.74876073331153E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      &-2.01201896352786E-4_wp, 0.00000000000000E+0_wp,-6.03605689058357E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.35419880424931E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-3.89593395737049E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 9.41679521699725E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-3.89593395737049E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 9.41679521699725E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-9.73983489342622E-5_wp, 0.00000000000000E+0_wp,-9.73983489342622E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 3.11932087590825E-4_wp,&
+      & 2.35419880424931E-4_wp, 0.00000000000000E+0_wp, 2.35419880424931E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 3.34121574004972E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [6,3,6,3])
 
 
-!> Factory to create electrostatic objects based on GFN2-xTB values
-subroutine make_multipole2(multipole, mol, error)
-
-   !> New electrostatic object
-   type(damped_multipole), intent(out) :: multipole
-
-   !> Molecular structure data
-   type(structure_type), intent(in) :: mol
-
-   !> Error handling
-   type(error_type), allocatable, intent(out) :: error
-
-   real(wp), parameter :: kdmp3 = 3.0_wp, kdmp5 = 3.0_wp
-   real(wp), parameter :: shift = 1.2_wp, kexp = 4.0_wp, rmax = 5.0_wp
-   !> Dipole exchange-correlation kernel
-   real(wp), parameter :: p_dkernel(20) = 0.01_wp * [&
-      & 5.563889_wp,-1.000000_wp,-0.500000_wp,-0.613341_wp,-0.481186_wp, &
-      &-0.411674_wp, 3.521273_wp,-4.935670_wp,-8.339183_wp,10.000000_wp, &
-      & 0.000000_wp,-0.082005_wp, 2.633341_wp,-0.025750_wp, 2.110225_wp, &
-      &-0.151117_wp,-2.536958_wp,-2.077329_wp,-0.103383_wp,-0.236675_wp]
-   !> Quadrupole exchange-correlation kernel
-   real(wp), parameter :: p_qkernel(20) = 0.01_wp * [&
-      & 0.027431_wp,-0.337528_wp, 0.020000_wp,-0.058586_wp,-0.058228_wp, &
-      & 0.213583_wp, 2.026786_wp,-0.310828_wp,-0.245955_wp,-0.500000_wp, &
-      & 0.020000_wp,-0.005516_wp,-0.021887_wp,-0.080000_wp, 0.028679_wp, &
-      & 0.442859_wp, 0.122783_wp,-1.083404_wp, 0.025000_wp, 0.010000_wp]
-   real(wp), parameter :: p_rad(20) = [&
-      & 1.4_wp, 3.0_wp, 5.0_wp, 5.0_wp, 5.0_wp, 3.0_wp, 1.9_wp, 1.8_wp, 2.4_wp, 5.0_wp, &
-      & 5.0_wp, 5.0_wp, 5.0_wp, 3.9_wp, 2.1_wp, 3.1_wp, 2.5_wp, 5.0_wp, 5.0_wp, 5.0_wp]
-   real(wp), parameter :: p_vcn(20) = [&
-      & 1.0_wp, 1.0_wp, 1.0_wp, 2.0_wp, 3.0_wp, 3.0_wp, 3.0_wp, 2.0_wp, 1.0_wp, 1.0_wp, &
-      & 1.0_wp, 2.0_wp, 3.0_wp, 3.0_wp, 3.0_wp, 3.0_wp, 1.0_wp, 1.0_wp, 1.0_wp, 2.0_wp]
-   real(wp), allocatable :: dkernel(:), qkernel(:), rad(:), vcn(:)
-
-   dkernel = p_dkernel(mol%num)
-   qkernel = p_qkernel(mol%num)
-   rad = p_rad(mol%num)
-   vcn = p_vcn(mol%num)
-
-   call new_damped_multipole(multipole, mol, kdmp3, kdmp5, dkernel, qkernel, &
-      & shift, kexp, rmax, rad, vcn, error)
-
-end subroutine make_multipole2
+end subroutine get_amat_ref_still
 
 
-!> Inspect container cache and reallocate it in case of type mismatch
+
+subroutine get_amat_ref_p16(amat_sd_ref, amat_dd_ref, amat_sq_ref, &
+   & amat_dq_ref, amat_qq_ref)
+   real(wp), intent(out) :: amat_sd_ref(3,3,3)
+   real(wp), intent(out) :: amat_dd_ref(3,3,3,3)
+   real(wp), intent(out) :: amat_sq_ref(6,3,3)
+   real(wp), intent(out) :: amat_dq_ref(3,3,6,3)
+   real(wp), intent(out) :: amat_qq_ref(6,3,6,3)
+
+
+   amat_sd_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.65921845083053E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.65921845083053E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.65921845083053E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.48236785603179E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.65921845083053E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.48236785603179E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [3,3,3])
+
+
+   amat_dd_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.05194109063970E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.05194109063970E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.05194109063970E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.05194109063970E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.06516102610275E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.06516102610275E-3_wp,&
+      &-1.05194109063970E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-4.90991018249639E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.05194109063970E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-4.90991018249639E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.06516102610275E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.30193154514398E-3_wp,&
+      &-1.05194109063970E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-4.90991018249639E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.05194109063970E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-4.90991018249639E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.06516102610275E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.30193154514398E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [3,3,3,3])
+
+    amat_sq_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.15141662676476E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.15141662676476E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.15141662676476E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.40394724254679E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.15141662676476E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.40394724254679E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+    ], [6,3,3])
+
+   amat_dq_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.24664622509055E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.24664622509055E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.24664622509055E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.24664622509055E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-2.49329245018109E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 2.49329245018109E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-2.49329245018109E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 2.49329245018109E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.72933625417785E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.72933625417785E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.24664622509055E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 6.73271497060787E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.24664622509055E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 6.73271497060787E-4_wp,&
+      & 2.49329245018109E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 1.34654299412157E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 2.49329245018109E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 1.34654299412157E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.72933625417785E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.91929119230186E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.24664622509055E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-6.73271497060787E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.24664622509055E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-6.73271497060787E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-2.49329245018109E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.34654299412157E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-2.49329245018109E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.34654299412157E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.72933625417785E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.91929119230186E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [3,3,6,3])
+
+   amat_qq_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-2.21918314068676E-3_wp, 0.00000000000000E+0_wp,-7.39727713562253E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      &-2.21918314068676E-3_wp, 0.00000000000000E+0_wp,-7.39727713562253E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-2.95891085424901E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-2.95891085424901E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-7.39727713562253E-4_wp, 0.00000000000000E+0_wp,-2.21918314068676E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      &-7.39727713562253E-4_wp, 0.00000000000000E+0_wp,-2.21918314068676E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 2.22528117833415E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 2.22528117833415E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 2.22528117833415E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 2.22528117833415E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 5.56320294583537E-5_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.92849366434424E-4_wp,&
+      & 5.56320294583537E-5_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.92849366434424E-4_wp,&
+      &-2.21918314068676E-3_wp, 0.00000000000000E+0_wp,-7.39727713562253E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-5.99252909651137E-4_wp, 0.00000000000000E+0_wp,-1.99750969883712E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.57492039628580E-4_wp,&
+      & 0.00000000000000E+0_wp,-2.95891085424901E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-7.99003879534850E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-7.39727713562253E-4_wp, 0.00000000000000E+0_wp,-2.21918314068676E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.99750969883712E-4_wp, 0.00000000000000E+0_wp,-5.99252909651137E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.57492039628580E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 2.22528117833415E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 1.02996815851432E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 2.22528117833415E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 1.02996815851432E-3_wp, 0.00000000000000E+0_wp,&
+      & 5.56320294583537E-5_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.92849366434424E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 2.57492039628580E-4_wp, 0.00000000000000E+0_wp, 2.57492039628580E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-6.20121728894948E-5_wp,&
+      &-2.21918314068676E-3_wp, 0.00000000000000E+0_wp,-7.39727713562253E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      &-5.99252909651137E-4_wp, 0.00000000000000E+0_wp,-1.99750969883712E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.57492039628580E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-2.95891085424901E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-7.99003879534850E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-7.39727713562253E-4_wp, 0.00000000000000E+0_wp,-2.21918314068676E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      &-1.99750969883712E-4_wp, 0.00000000000000E+0_wp,-5.99252909651137E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.57492039628580E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 2.22528117833415E-4_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 1.02996815851432E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 2.22528117833415E-4_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 1.02996815851432E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 5.56320294583537E-5_wp, 0.00000000000000E+0_wp, 5.56320294583537E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 5.92849366434424E-4_wp,&
+      & 2.57492039628580E-4_wp, 0.00000000000000E+0_wp, 2.57492039628580E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-6.20121728894948E-5_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [6,3,6,3])
+
+end subroutine get_amat_ref_p16
+
+
+
+
+subroutine get_amat_ref_coulomb(amat_sd_ref, amat_dd_ref, amat_sq_ref, &
+   & amat_dq_ref, amat_qq_ref)
+   real(wp), intent(out) :: amat_sd_ref(3,3,3)
+   real(wp), intent(out) :: amat_dd_ref(3,3,3,3)
+   real(wp), intent(out) :: amat_sq_ref(6,3,3)
+   real(wp), intent(out) :: amat_dq_ref(3,3,6,3)
+   real(wp), intent(out) :: amat_qq_ref(6,3,6,3)
+
+   amat_sd_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.56485754645450E-1_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.56485754645450E-1_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.56485754645450E-1_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.91214386613625E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.56485754645450E-1_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 3.91214386613625E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [3,3,3])
+
+
+
+   amat_dd_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 6.19030735740793E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 6.19030735740793E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 6.19030735740793E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 6.19030735740793E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.23806147148159E-1_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.23806147148159E-1_wp,&
+      & 6.19030735740793E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 7.73788419675991E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 6.19030735740793E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 7.73788419675991E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.23806147148159E-1_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.54757683935198E-2_wp,&
+      & 6.19030735740793E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 7.73788419675991E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 6.19030735740793E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 7.73788419675991E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.23806147148159E-1_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.54757683935198E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [3,3,3,3])
+
+   amat_sq_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 6.19030735740793E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 6.19030735740793E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 6.19030735740793E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 7.73788419675991E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 6.19030735740793E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 7.73788419675991E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+    ], [6,3,3])
+
+   amat_dq_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.44877914069560E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.44877914069560E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.44877914069560E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.44877914069560E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 4.89755828139120E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-4.89755828139120E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 4.89755828139120E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-4.89755828139120E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-4.89755828139120E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 4.89755828139120E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.44877914069560E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.53048696293475E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-2.44877914069560E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.53048696293475E-3_wp,&
+      &-4.89755828139120E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-3.06097392586950E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-4.89755828139120E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-3.06097392586950E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 4.89755828139120E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 3.06097392586950E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.44877914069560E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.53048696293475E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.44877914069560E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 1.53048696293475E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 4.89755828139120E-2_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 3.06097392586950E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 4.89755828139120E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 3.06097392586950E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-4.89755828139120E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.06097392586950E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+   ], [3,3,6,3])
+
+   amat_qq_ref = reshape([ &
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 4.35912713240068E-2_wp, 0.00000000000000E+0_wp, 1.45304237746689E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 4.35912713240068E-2_wp, 0.00000000000000E+0_wp, 1.45304237746689E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 5.81216950986757E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 5.81216950986757E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 1.45304237746689E-2_wp, 0.00000000000000E+0_wp, 4.35912713240068E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 1.45304237746689E-2_wp, 0.00000000000000E+0_wp, 4.35912713240068E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.35617288563577E-1_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.35617288563577E-1_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.35617288563577E-1_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.35617288563577E-1_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-3.39043221408942E-2_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 9.20260172395699E-2_wp,&
+      &-3.39043221408942E-2_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 9.20260172395699E-2_wp,&
+      & 4.35912713240068E-2_wp, 0.00000000000000E+0_wp, 1.45304237746689E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 1.36222722887521E-3_wp, 0.00000000000000E+0_wp, 4.54075742958404E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.05951006690294E-3_wp,&
+      & 0.00000000000000E+0_wp, 5.81216950986757E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 1.81630297183361E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 1.45304237746689E-2_wp, 0.00000000000000E+0_wp, 4.35912713240068E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 4.54075742958404E-4_wp, 0.00000000000000E+0_wp, 1.36222722887521E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.05951006690294E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.35617288563577E-1_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-4.23804026761177E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.35617288563577E-1_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-4.23804026761177E-3_wp, 0.00000000000000E+0_wp,&
+      &-3.39043221408942E-2_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 9.20260172395699E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.05951006690294E-3_wp, 0.00000000000000E+0_wp,-1.05951006690294E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.87581303873656E-3_wp,&
+      & 4.35912713240068E-2_wp, 0.00000000000000E+0_wp, 1.45304237746689E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 1.36222722887521E-3_wp, 0.00000000000000E+0_wp, 4.54075742958404E-4_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.05951006690294E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 5.81216950986757E-2_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 1.81630297183361E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 1.45304237746689E-2_wp, 0.00000000000000E+0_wp, 4.35912713240068E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 4.54075742958404E-4_wp, 0.00000000000000E+0_wp, 1.36222722887521E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,-1.05951006690294E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-1.35617288563577E-1_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-4.23804026761177E-3_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-1.35617288563577E-1_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp,-4.23804026761177E-3_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      &-3.39043221408942E-2_wp, 0.00000000000000E+0_wp,-3.39043221408942E-2_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 9.20260172395699E-2_wp,&
+      &-1.05951006690294E-3_wp, 0.00000000000000E+0_wp,-1.05951006690294E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 2.87581303873656E-3_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp,&
+      & 0.00000000000000E+0_wp, 0.00000000000000E+0_wp, 0.00000000000000E+0_wp &
+      ], [6,3,6,3])
+
+end subroutine get_amat_ref_coulomb
+
+
+
+
+
 subroutine taint(cache, ptr)
-   !> Instance of the container cache
    type(container_cache), target, intent(inout) :: cache
-   !> Reference to the container cache
-   type(coulomb_cache), pointer, intent(out) :: ptr
+   type(alpb_cache), pointer, intent(out) :: ptr
 
    if (allocated(cache%raw)) then
       call view(cache, ptr)
@@ -1944,7 +2255,7 @@ subroutine taint(cache, ptr)
 
    if (.not.allocated(cache%raw)) then
       block
-         type(coulomb_cache), allocatable :: tmp
+         type(alpb_cache), allocatable :: tmp
          allocate(tmp)
          call move_alloc(tmp, cache%raw)
       end block
@@ -1953,19 +2264,15 @@ subroutine taint(cache, ptr)
    call view(cache, ptr)
 end subroutine taint
 
-!> Return reference to container cache after resolving its type
 subroutine view(cache, ptr)
-   !> Instance of the container cache
    type(container_cache), target, intent(inout) :: cache
-   !> Reference to the container cache
-   type(coulomb_cache), pointer, intent(out) :: ptr
+   type(alpb_cache), pointer, intent(out) :: ptr
    nullify(ptr)
    select type(target => cache%raw)
-   type is(coulomb_cache)
+   type is(alpb_cache)
       ptr => target
    end select
 end subroutine view
-
 
 
 
