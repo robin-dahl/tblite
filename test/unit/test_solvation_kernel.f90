@@ -60,37 +60,38 @@ subroutine collect_solvation_kernel(testsuite)
       new_unittest("amat-still", test_amat_still), &
       new_unittest("amat-p16", test_amat_p16), &
       new_unittest("amat-coulomb", test_amat_coulomb), &
-      new_unittest("kernel-gradient-still", test_kernel_gradient_still), &
-      new_unittest("kernel-gradient-born-still", test_kernel_dborn_still), &
-      new_unittest("kernel-gradient-bornrad-still", test_kernel_gradient_dborn_still), &
-      new_unittest("kernel-hessian-still", test_kernel_hessian_still), &
-      new_unittest("kernel-hessian-bornrad-still", test_kernel_hessian_dborn_still), &
-      new_unittest("kernel-third-still", test_kernel_third_still), &
-      new_unittest("kernel-third-bornrad-still", test_kernel_third_dborn_still), &
-      new_unittest("kernel-fourth-still", test_kernel_fourth_still), &
-      new_unittest("kernel-fourth-bornrad-still", test_kernel_fourth_dborn_still), &
-      new_unittest("kernel-fifth-still", test_kernel_fifth_still), &
-      new_unittest("kernel-gradient-p16", test_kernel_gradient_p16), &
-      new_unittest("kernel-gradient-bornrad-p16", test_kernel_gradient_dborn_p16), &
-      new_unittest("kernel-hessian-p16", test_kernel_hessian_p16), &
-      new_unittest("kernel-hessian-bornrad-p16", test_kernel_hessian_dborn_p16), &
-      new_unittest("kernel-third-p16", test_kernel_third_p16), &
-      new_unittest("kernel-third-bornrad-p16", test_kernel_third_dborn_p16), &
-      new_unittest("kernel-fourth-p16", test_kernel_fourth_p16), &
-      new_unittest("kernel-fourth-bornrad-p16", test_kernel_fourth_dborn_p16), &
-      new_unittest("kernel-fifth-p16", test_kernel_fifth_p16), &
-      new_unittest("kernel-gradient-coulomb", test_kernel_gradient_coulomb), &
-      new_unittest("kernel-hessian-coulomb", test_kernel_hessian_coulomb), &
-      new_unittest("kernel-third-coulomb", test_kernel_third_coulomb), &
-      new_unittest("kernel-fourth-coulomb", test_kernel_fourth_coulomb), &
-      new_unittest("kernel-fifth-coulomb", test_kernel_fifth_coulomb) &
+      new_unittest("Still-gradient", test_kernel_dKdr_still), &
+      new_unittest("Still-borngrad", test_kernel_dKdborn_still), &
+      new_unittest("Still-gradient-borngrad", test_kernel_gradient_dborn_still), &
+      new_unittest("Still-hessian", test_kernel_d2Kdr2_still), &
+      new_unittest("Still-hessian-borngrad", test_kernel_hessian_dborn_still), &
+      new_unittest("Still-third", test_kernel_d3Kdr3_still), &
+      new_unittest("Still-third-borngrad", test_kernel_third_dborn_still), &
+      new_unittest("Still-fourth", test_kernel_d4Kdr4_still), &
+      new_unittest("Still-fourth-borngrad", test_kernel_fourth_dborn_still), &
+      new_unittest("Still-fifth-still", test_kernel_d5Kdr5_still), &
+      new_unittest("P16-gradient", test_kernel_dKdr_p16), &
+      new_unittest("P16-borngrad", test_kernel_dKdborn_p16), &
+      new_unittest("P16-gradient-borngrad", test_kernel_gradient_dborn_p16), &
+      new_unittest("P16-hessian", test_kernel_d2Kdr2_p16), &
+      new_unittest("P16-hessian-borngrad", test_kernel_hessian_dborn_p16), &
+      new_unittest("P16-third", test_kernel_d3Kdr3_p16), &
+      new_unittest("P16-third-borngrad", test_kernel_third_dborn_p16), &
+      new_unittest("P16-fourth", test_kernel_d4Kdr4_p16), &
+      new_unittest("P16-fourth-borngrad", test_kernel_fourth_dborn_p16), &
+      new_unittest("P16-fifth", test_kernel_d5Kdr5_p16), &
+      new_unittest("Coulomb-gradient", test_kernel_dKdr_coulomb), &
+      new_unittest("Coulomb-hessian", test_kernel_d2Kdr2_coulomb), &
+      new_unittest("Coulomb-third", test_kernel_d3Kdr3_coulomb), &
+      new_unittest("Coulomb-fourth", test_kernel_d4Kdr4_coulomb), &
+      new_unittest("Coulomb-fifth", test_kernel_d5Kdr5_coulomb) &
       ]
 
 end subroutine collect_solvation_kernel
 
 
 !> Test Still kernel gradient against numerical derivative
-subroutine test_kernel_gradient_still(error)
+subroutine test_kernel_dKdr_still(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -100,12 +101,12 @@ subroutine test_kernel_gradient_still(error)
    real(wp), parameter :: keps = 0.5_wp
    
    call get_structure(mol, "MB16-43", "01")
-   call test_numg(error, mol, kernel_enum%still, keps)
+   call test_num_dKdr(error, mol, kernel_enum%still, keps)
 
-end subroutine test_kernel_gradient_still
+end subroutine test_kernel_dKdr_still
 
 !> Test gradient of Still kernel gradient wrt Born radii against numerical derivative
-subroutine test_kernel_dborn_still(error)
+subroutine test_kernel_dKdborn_still(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -115,9 +116,9 @@ subroutine test_kernel_dborn_still(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_num_dborn_value(error, mol, kernel_enum%still, keps)
+   call test_num_dKdborn(error, mol, kernel_enum%still, keps)
 
-end subroutine test_kernel_dborn_still
+end subroutine test_kernel_dKdborn_still
 
 !> Test gradient of Still kernel gradient wrt Born radii against numerical derivative
 subroutine test_kernel_gradient_dborn_still(error)
@@ -130,12 +131,12 @@ subroutine test_kernel_gradient_dborn_still(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numg_dborn(error, mol, kernel_enum%still, keps)
+   call test_num_d_dKdr_dborn(error, mol, kernel_enum%still, keps)
 
 end subroutine test_kernel_gradient_dborn_still
 
 !> Test Still kernel Hessian against numerical derivative
-subroutine test_kernel_hessian_still(error)
+subroutine test_kernel_d2Kdr2_still(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -145,9 +146,9 @@ subroutine test_kernel_hessian_still(error)
    real(wp), parameter :: keps = 0.5_wp
   
    call get_structure(mol, "MB16-43", "01")
-   call test_numh(error, mol, kernel_enum%still, keps)
+   call test_num_d2Kdr2(error, mol, kernel_enum%still, keps)
 
-end subroutine test_kernel_hessian_still
+end subroutine test_kernel_d2Kdr2_still
 
 !> Test gradient of Still kernel Hessian wrt Born radii against numerical derivative
 subroutine test_kernel_hessian_dborn_still(error)
@@ -160,13 +161,13 @@ subroutine test_kernel_hessian_dborn_still(error)
    real(wp), parameter :: keps = 0.5_wp
    
    call get_structure(mol, "MB16-43", "01")
-   call test_numh_dborn(error, mol, kernel_enum%still, keps)
+   call test_num_d_d2Kdr2_dborn(error, mol, kernel_enum%still, keps)
 
 end subroutine test_kernel_hessian_dborn_still
 
 
 !> Test Still kernel third derivative against numerical derivative
-subroutine test_kernel_third_still(error)
+subroutine test_kernel_d3Kdr3_still(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -176,9 +177,9 @@ subroutine test_kernel_third_still(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numt(error, mol, kernel_enum%still, keps)
+   call test_num_d3Kdr3(error, mol, kernel_enum%still, keps)
 
-end subroutine test_kernel_third_still
+end subroutine test_kernel_d3Kdr3_still
 
 
 !> Test gradient of Still kernel third derivative wrt Born radii against numerical derivative
@@ -192,13 +193,13 @@ subroutine test_kernel_third_dborn_still(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numt_dborn(error, mol, kernel_enum%still, keps)
+   call test_num_d_d3Kdr3_dborn(error, mol, kernel_enum%still, keps)
 
 end subroutine test_kernel_third_dborn_still
 
 
 !> Test Still kernel fourth derivative against numerical derivative
-subroutine test_kernel_fourth_still(error)
+subroutine test_kernel_d4Kdr4_still(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -208,9 +209,9 @@ subroutine test_kernel_fourth_still(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numq(error, mol, kernel_enum%still, keps)
+   call test_num_d4Kdr4(error, mol, kernel_enum%still, keps)
 
-end subroutine test_kernel_fourth_still
+end subroutine test_kernel_d4Kdr4_still
 
 !> Test gradient of Still kernel fourth derivative wrt Born radii against numerical derivative
 subroutine test_kernel_fourth_dborn_still(error)
@@ -223,12 +224,12 @@ subroutine test_kernel_fourth_dborn_still(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numq_dborn(error, mol, kernel_enum%still, keps)
+   call test_num_d_d4Kdr4_dborn(error, mol, kernel_enum%still, keps)
 
 end subroutine test_kernel_fourth_dborn_still
 
 !> Test Still kernel fifth derivative against numerical derivative
-subroutine test_kernel_fifth_still(error)
+subroutine test_kernel_d5Kdr5_still(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -238,13 +239,13 @@ subroutine test_kernel_fifth_still(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_num5(error, mol, kernel_enum%still, keps)
+   call test_num_d5Kdr5(error, mol, kernel_enum%still, keps)
 
-end subroutine test_kernel_fifth_still
+end subroutine test_kernel_d5Kdr5_still
 
 
 !> Test P16 kernel gradient against numerical derivative
-subroutine test_kernel_gradient_p16(error)
+subroutine test_kernel_dKdr_p16(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -252,9 +253,24 @@ subroutine test_kernel_gradient_p16(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numg(error, mol, kernel_enum%p16, keps)
+   call test_num_dKdr(error, mol, kernel_enum%p16, keps)
 
-end subroutine test_kernel_gradient_p16
+end subroutine test_kernel_dKdr_p16
+
+!> Test gradient of P16 kernel gradient wrt Born radii against numerical derivative
+subroutine test_kernel_dKdborn_p16(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_num_dKdborn(error, mol, kernel_enum%p16, keps)
+
+end subroutine test_kernel_dKdborn_p16
 
 !> Test gradient of P16 kernel wrt Born radii against numerical derivative
 subroutine test_kernel_gradient_dborn_p16(error)
@@ -265,13 +281,13 @@ subroutine test_kernel_gradient_dborn_p16(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numg_dborn(error, mol, kernel_enum%p16, keps)
+   call test_num_d_dKdr_dborn(error, mol, kernel_enum%p16, keps)
 
 end subroutine test_kernel_gradient_dborn_p16
 
 
 !> Test P16 kernel Hessian against numerical derivative
-subroutine test_kernel_hessian_p16(error)
+subroutine test_kernel_d2Kdr2_p16(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -279,9 +295,9 @@ subroutine test_kernel_hessian_p16(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numh(error, mol, kernel_enum%p16, keps)
+   call test_num_d2Kdr2(error, mol, kernel_enum%p16, keps)
 
-end subroutine test_kernel_hessian_p16
+end subroutine test_kernel_d2Kdr2_p16
 
 !> Test gradient of P16 kernel Hessian wrt Born radii against numerical derivative
 subroutine test_kernel_hessian_dborn_p16(error)
@@ -292,13 +308,13 @@ subroutine test_kernel_hessian_dborn_p16(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numh_dborn(error, mol, kernel_enum%p16, keps)
+   call test_num_d_d2Kdr2_dborn(error, mol, kernel_enum%p16, keps)
 
 end subroutine test_kernel_hessian_dborn_p16
 
 
 !> Test P16 kernel third derivative against numerical derivative
-subroutine test_kernel_third_p16(error)
+subroutine test_kernel_d3Kdr3_p16(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -306,9 +322,9 @@ subroutine test_kernel_third_p16(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numt(error, mol, kernel_enum%p16, keps)
+   call test_num_d3Kdr3(error, mol, kernel_enum%p16, keps)
 
-end subroutine test_kernel_third_p16
+end subroutine test_kernel_d3Kdr3_p16
 
 !> Test gradient of P16 kernel third derivative wrt Born radii against numerical derivative
 subroutine test_kernel_third_dborn_p16(error)
@@ -319,12 +335,12 @@ subroutine test_kernel_third_dborn_p16(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numt_dborn(error, mol, kernel_enum%p16, keps)
+   call test_num_d_d3Kdr3_dborn(error, mol, kernel_enum%p16, keps)
 
 end subroutine test_kernel_third_dborn_p16
 
 !> Test P16 kernel fourth derivative against numerical derivative
-subroutine test_kernel_fourth_p16(error)
+subroutine test_kernel_d4Kdr4_p16(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -332,9 +348,9 @@ subroutine test_kernel_fourth_p16(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numq(error, mol, kernel_enum%p16, keps)
+   call test_num_d4Kdr4(error, mol, kernel_enum%p16, keps)
 
-end subroutine test_kernel_fourth_p16
+end subroutine test_kernel_d4Kdr4_p16
 
 !> Test gradient of P16 kernel fourth derivative wrt Born radii against numerical derivative
 subroutine test_kernel_fourth_dborn_p16(error)
@@ -345,12 +361,12 @@ subroutine test_kernel_fourth_dborn_p16(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numq_dborn(error, mol, kernel_enum%p16, keps)
+   call test_num_d_d4Kdr4_dborn(error, mol, kernel_enum%p16, keps)
 
 end subroutine test_kernel_fourth_dborn_p16
 
 !> Test P16 kernel fifth derivative against numerical derivative
-subroutine test_kernel_fifth_p16(error)
+subroutine test_kernel_d5Kdr5_p16(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -358,12 +374,12 @@ subroutine test_kernel_fifth_p16(error)
    real(wp), parameter :: keps = 0.5_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_num5(error, mol, kernel_enum%p16, keps)
+   call test_num_d5Kdr5(error, mol, kernel_enum%p16, keps)
 
-end subroutine test_kernel_fifth_p16
+end subroutine test_kernel_d5Kdr5_p16
 
 !> Test Coulomb kernel gradient against numerical derivative
-subroutine test_kernel_gradient_coulomb(error)
+subroutine test_kernel_dKdr_coulomb(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -373,12 +389,12 @@ subroutine test_kernel_gradient_coulomb(error)
    real(wp), parameter :: keps = 1.0_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numg(error, mol, kernel_enum%coulomb, keps)
+   call test_num_dKdr(error, mol, kernel_enum%coulomb, keps)
 
-end subroutine test_kernel_gradient_coulomb
+end subroutine test_kernel_dKdr_coulomb
 
 !> Test Coulomb kernel Hessian against numerical derivative
-subroutine test_kernel_hessian_coulomb(error)
+subroutine test_kernel_d2Kdr2_coulomb(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -388,12 +404,12 @@ subroutine test_kernel_hessian_coulomb(error)
    real(wp), parameter :: keps = 1.0_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numh(error, mol, kernel_enum%coulomb, keps)
+   call test_num_d2Kdr2(error, mol, kernel_enum%coulomb, keps)
 
-end subroutine test_kernel_hessian_coulomb
+end subroutine test_kernel_d2Kdr2_coulomb
 
 !> Test Coulomb kernel third derivative against numerical derivative
-subroutine test_kernel_third_coulomb(error)
+subroutine test_kernel_d3Kdr3_coulomb(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -403,12 +419,12 @@ subroutine test_kernel_third_coulomb(error)
    real(wp), parameter :: keps = 1.0_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numt(error, mol, kernel_enum%coulomb, keps)
+   call test_num_d3Kdr3(error, mol, kernel_enum%coulomb, keps)
 
-end subroutine test_kernel_third_coulomb
+end subroutine test_kernel_d3Kdr3_coulomb
 
 !> Test Coulomb kernel fourth derivative against numerical derivative
-subroutine test_kernel_fourth_coulomb(error)
+subroutine test_kernel_d4Kdr4_coulomb(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -418,12 +434,12 @@ subroutine test_kernel_fourth_coulomb(error)
    real(wp), parameter :: keps = 1.0_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_numq(error, mol, kernel_enum%coulomb, keps)
+   call test_num_d4Kdr4(error, mol, kernel_enum%coulomb, keps)
 
-end subroutine test_kernel_fourth_coulomb
+end subroutine test_kernel_d4Kdr4_coulomb
 
 !> Test Coulomb kernel fifth derivative against numerical derivative
-subroutine test_kernel_fifth_coulomb(error)
+subroutine test_kernel_d5Kdr5_coulomb(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
@@ -433,9 +449,9 @@ subroutine test_kernel_fifth_coulomb(error)
    real(wp), parameter :: keps = 1.0_wp
 
    call get_structure(mol, "MB16-43", "01")
-   call test_num5(error, mol, kernel_enum%coulomb, keps)
+   call test_num_d5Kdr5(error, mol, kernel_enum%coulomb, keps)
 
-end subroutine test_kernel_fifth_coulomb
+end subroutine test_kernel_d5Kdr5_coulomb
 
 !> Test construction of multipole interaction matrices
 subroutine test_amat_still(error)
@@ -527,7 +543,7 @@ end subroutine test_amat_coulomb
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 !> Test the kernel gradient against numerical derivative
-subroutine test_numg(error, mol, kernel_id, keps)
+subroutine test_num_dKdr(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data (modified during finite difference)
@@ -587,11 +603,11 @@ subroutine test_numg(error, mol, kernel_id, keps)
       do ic = 1, 3
          mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
          kernel_r(:, :) = 0.0_wp
-         call kernel%add_kernel_mat(mol%nat, mol%xyz, brad, kernel_r)
+         call kernel%kernel_K(mol%nat, mol%xyz, brad, kernel_r)
 
          mol%xyz(ic, iat) = mol%xyz(ic, iat) - 2*step
          kernel_l(:, :) = 0.0_wp
-         call kernel%add_kernel_mat(mol%nat, mol%xyz, brad, kernel_l)
+         call kernel%kernel_K(mol%nat, mol%xyz, brad, kernel_l)
 
          mol%xyz(ic, iat) = mol%xyz(ic, iat) + step
 
@@ -609,7 +625,7 @@ subroutine test_numg(error, mol, kernel_id, keps)
 
          anag_pair_kernel(:, :) = 0.0_wp
 
-         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_m)
+         call kernel%kernel_dKdr(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_m)
 
          do k = 1, mol%nat
             do alpha = 1, 3
@@ -642,12 +658,12 @@ subroutine test_numg(error, mol, kernel_id, keps)
       end do
    end do
 
-end subroutine test_numg
+end subroutine test_num_dKdr
 
 
 !> Test kernel Born-radius gradient (∂K/∂born) against numerical derivative
 !> Test kernel Born-radius gradient (∂K/∂born) against numerical derivative
-subroutine test_num_dborn_value(error, mol, kernel_id, keps)
+subroutine test_num_dKdborn(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data
@@ -707,11 +723,11 @@ subroutine test_num_dborn_value(error, mol, kernel_id, keps)
 
          brtmp(jat) = bornA0 + step
          kernel_r(:, :) = 0.0_wp
-         call kernel%add_kernel_mat(mol%nat, mol%xyz, brtmp, kernel_r)
+         call kernel%kernel_K(mol%nat, mol%xyz, brtmp, kernel_r)
 
          brtmp(jat) = bornA0 - step
          kernel_l(:, :) = 0.0_wp
-         call kernel%add_kernel_mat(mol%nat, mol%xyz, brtmp, kernel_l)
+         call kernel%kernel_K(mol%nat, mol%xyz, brtmp, kernel_l)
 
          num_dK_bA = 0.5_wp * (kernel_r(jat, jc) - kernel_l(jat, jc)) / step
 
@@ -722,18 +738,18 @@ subroutine test_num_dborn_value(error, mol, kernel_id, keps)
 
          brtmp(jc) = bornB0 + step
          kernel_r(:, :) = 0.0_wp
-         call kernel%add_kernel_mat(mol%nat, mol%xyz, brtmp, kernel_r)
+         call kernel%kernel_K(mol%nat, mol%xyz, brtmp, kernel_r)
 
          brtmp(jc) = bornB0 - step
          kernel_l(:, :) = 0.0_wp
-         call kernel%add_kernel_mat(mol%nat, mol%xyz, brtmp, kernel_l)
+         call kernel%kernel_K(mol%nat, mol%xyz, brtmp, kernel_l)
 
          num_dK_bB = 0.5_wp * (kernel_r(jat, jc) - kernel_l(jat, jc)) / step
 
          ! ---------------------------
          ! Analytical: call kernel_pair_dborn
          ! ---------------------------
-         call kernel%kernel_pair_dborn( mol%xyz(:, jat), mol%xyz(:, jc), bornA0, bornB0, &
+         call kernel%kernel_dKdborn( mol%xyz(:, jat), mol%xyz(:, jc), bornA0, bornB0, &
                                         ana_dK_bA, ana_dK_bB )
 
          diffA = ana_dK_bA - num_dK_bA
@@ -752,13 +768,13 @@ subroutine test_num_dborn_value(error, mol, kernel_id, keps)
       end do
    end do
 
-end subroutine test_num_dborn_value
+end subroutine test_num_dKdborn
 
 
 
 
 !> Test kernel gradient Born radius derivative against numerical derivative
-subroutine test_numg_dborn(error, mol, kernel_id, keps)
+subroutine test_num_d_dKdr_dborn(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data
@@ -818,10 +834,10 @@ subroutine test_numg_dborn(error, mol, kernel_id, keps)
          ! Numerical: d(d1_pair)/d(bornA)
          ! ---------------------------
          brad(jat) = bornA0 + step
-         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_r)
+         call kernel%kernel_dKdr(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_r)
 
          brad(jat) = bornA0 - step
-         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_l)
+         call kernel%kernel_dKdr(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_l)
 
          brad(jat) = bornA0
          num_bA(:) = 0.5_wp * (grad_r(:) - grad_l(:)) / step
@@ -830,10 +846,10 @@ subroutine test_numg_dborn(error, mol, kernel_id, keps)
          ! Numerical: d(d1_pair)/d(bornB)
          ! ---------------------------
          brad(jc) = bornB0 + step
-         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_r)
+         call kernel%kernel_dKdr(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_r)
 
          brad(jc) = bornB0 - step
-         call kernel%kernel_d1_pair(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_l)
+         call kernel%kernel_dKdr(mol%xyz(:, jat), mol%xyz(:, jc), brad(jat), brad(jc), grad_l)
 
          brad(jc) = bornB0
          num_bB(:) = 0.5_wp * (grad_r(:) - grad_l(:)) / step
@@ -841,7 +857,7 @@ subroutine test_numg_dborn(error, mol, kernel_id, keps)
          ! ---------------------------
          ! Analytical: kernel_d1_pair_dborn
          ! ---------------------------
-         call kernel%kernel_d1_pair_dborn( mol%xyz(:, jat), mol%xyz(:, jc), bornA0, bornB0, &
+         call kernel%kernel_d_dKdr_dborn( mol%xyz(:, jat), mol%xyz(:, jc), bornA0, bornB0, &
                                            ana_bA, ana_bB )
 
          ! ---------------------------
@@ -875,11 +891,11 @@ subroutine test_numg_dborn(error, mol, kernel_id, keps)
       end do
    end do
 
-end subroutine test_numg_dborn
+end subroutine test_num_d_dKdr_dborn
 
 
 !> Test the kernel Hessian against numerical derivative
-subroutine test_numh(error, mol, kernel_id, keps)
+subroutine test_num_d2Kdr2(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data
@@ -933,7 +949,7 @@ subroutine test_numh(error, mol, kernel_id, keps)
          r  = norm2(rA - rB)
 
          ! analytic Hessian
-         call kernel%kernel_d2_pair(rA, rB, brad(jat), brad(jc), anah_kernel)
+         call kernel%kernel_d2Kdr2(rA, rB, brad(jat), brad(jc), anah_kernel)
 
          ! numerical Hessian from analytic gradient:
          ! n2(i,j) = d/dR_A,j [ d1(i) ]
@@ -942,8 +958,8 @@ subroutine test_numh(error, mol, kernel_id, keps)
             rA_r = rA; rA_r(j) = rA_r(j) + step
             rA_l = rA; rA_l(j) = rA_l(j) - step
 
-            call kernel%kernel_d1_pair(rA_r, rB, brad(jat), brad(jc), dkernel_r)
-            call kernel%kernel_d1_pair(rA_l, rB, brad(jat), brad(jc), dkernel_l)
+            call kernel%kernel_dKdr(rA_r, rB, brad(jat), brad(jc), dkernel_r)
+            call kernel%kernel_dKdr(rA_l, rB, brad(jat), brad(jc), dkernel_l)
 
             do i = 1, 3
                numh_kernel(i,j) = 0.5_wp * (dkernel_r(i) - dkernel_l(i)) / step
@@ -964,10 +980,10 @@ subroutine test_numh(error, mol, kernel_id, keps)
 
       end do
    end do
-end subroutine test_numh
+end subroutine test_num_d2Kdr2
 
 !> Test kernel_d2_pair_dborn against numerical derivative of kernel_d2_pair wrt Born radii
-subroutine test_numh_dborn(error, mol, kernel_id, keps)
+subroutine test_num_d_d2Kdr2_dborn(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data
@@ -1027,16 +1043,16 @@ subroutine test_numh_dborn(error, mol, kernel_id, keps)
          bornB0 = brad(jc)
 
          ! ---- analytic d/d(bornA), d/d(bornB)
-         call kernel%kernel_d2_pair_dborn(rA, rB, bornA0, bornB0, ana_bA, ana_bB)
+         call kernel%kernel_d_d2Kdr2_dborn(rA, rB, bornA0, bornB0, ana_bA, ana_bB)
 
          ! ---- numerical d/d(bornA) of d2_pair
-         call kernel%kernel_d2_pair(rA, rB, bornA0 + step, bornB0, d2_r)
-         call kernel%kernel_d2_pair(rA, rB, bornA0 - step, bornB0, d2_l)
+         call kernel%kernel_d2Kdr2(rA, rB, bornA0 + step, bornB0, d2_r)
+         call kernel%kernel_d2Kdr2(rA, rB, bornA0 - step, bornB0, d2_l)
          num_bA(:,:) = 0.5_wp * (d2_r(:,:) - d2_l(:,:)) / step
 
          ! ---- numerical d/d(bornB) of d2_pair
-         call kernel%kernel_d2_pair(rA, rB, bornA0, bornB0 + step, d2_r)
-         call kernel%kernel_d2_pair(rA, rB, bornA0, bornB0 - step, d2_l)
+         call kernel%kernel_d2Kdr2(rA, rB, bornA0, bornB0 + step, d2_r)
+         call kernel%kernel_d2Kdr2(rA, rB, bornA0, bornB0 - step, d2_l)
          num_bB(:,:) = 0.5_wp * (d2_r(:,:) - d2_l(:,:)) / step
 
          maxdiffA = maxval(abs(ana_bA - num_bA))
@@ -1066,11 +1082,11 @@ subroutine test_numh_dborn(error, mol, kernel_id, keps)
 
       end do
    end do
-end subroutine test_numh_dborn
+end subroutine test_num_d_d2Kdr2_dborn
 
 
 !> Test the kernel third derivative against numerical derivative
-subroutine test_numt(error, mol, kernel_id, keps)
+subroutine test_num_d3Kdr3(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data
@@ -1123,7 +1139,7 @@ subroutine test_numt(error, mol, kernel_id, keps)
          r  = norm2(rA - rB)
 
          ! analytic 3rd derivative
-         call kernel%kernel_d3_pair(rA, rB, brad(jat), brad(jc), anat_kernel)
+         call kernel%kernel_d3Kdr3(rA, rB, brad(jat), brad(jc), anat_kernel)
 
          ! numerical 3rd derivative from analytic Hessian:
          ! n3(i,j,k) = d/dR_A,k [ d2(i,j) ]
@@ -1132,8 +1148,8 @@ subroutine test_numt(error, mol, kernel_id, keps)
             rA_r = rA; rA_r(k) = rA_r(k) + step
             rA_l = rA; rA_l(k) = rA_l(k) - step
 
-            call kernel%kernel_d2_pair(rA_r, rB, brad(jat), brad(jc), d2kernel_r)
-            call kernel%kernel_d2_pair(rA_l, rB, brad(jat), brad(jc), d2kernel_l)
+            call kernel%kernel_d2Kdr2(rA_r, rB, brad(jat), brad(jc), d2kernel_r)
+            call kernel%kernel_d2Kdr2(rA_l, rB, brad(jat), brad(jc), d2kernel_l)
 
             do i = 1, 3
                do j = 1, 3
@@ -1156,10 +1172,10 @@ subroutine test_numt(error, mol, kernel_id, keps)
 
       end do
    end do
-end subroutine test_numt
+end subroutine test_num_d3Kdr3
 
 !> Test kernel_d3_pair_dborn against numerical derivative of kernel_d3_pair wrt Born radii
-subroutine test_numt_dborn(error, mol, kernel_id, keps)
+subroutine test_num_d_d3Kdr3_dborn(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data
@@ -1219,16 +1235,16 @@ subroutine test_numt_dborn(error, mol, kernel_id, keps)
          bornB0 = brad(jc)
 
          ! ---- analytic d/d(bornA), d/d(bornB)
-         call kernel%kernel_d3_pair_dborn(rA, rB, bornA0, bornB0, ana_bA, ana_bB)
+         call kernel%kernel_d_d3Kdr3_dborn(rA, rB, bornA0, bornB0, ana_bA, ana_bB)
 
          ! ---- numerical d/d(bornA) of d3_pair
-         call kernel%kernel_d3_pair(rA, rB, bornA0 + step, bornB0, d3_r)
-         call kernel%kernel_d3_pair(rA, rB, bornA0 - step, bornB0, d3_l)
+         call kernel%kernel_d3Kdr3(rA, rB, bornA0 + step, bornB0, d3_r)
+         call kernel%kernel_d3Kdr3(rA, rB, bornA0 - step, bornB0, d3_l)
          num_bA(:,:,:) = 0.5_wp * (d3_r(:,:,:) - d3_l(:,:,:)) / step
 
          ! ---- numerical d/d(bornB) of d3_pair
-         call kernel%kernel_d3_pair(rA, rB, bornA0, bornB0 + step, d3_r)
-         call kernel%kernel_d3_pair(rA, rB, bornA0, bornB0 - step, d3_l)
+         call kernel%kernel_d3Kdr3(rA, rB, bornA0, bornB0 + step, d3_r)
+         call kernel%kernel_d3Kdr3(rA, rB, bornA0, bornB0 - step, d3_l)
          num_bB(:,:,:) = 0.5_wp * (d3_r(:,:,:) - d3_l(:,:,:)) / step
 
          maxdiffA = maxval(abs(ana_bA - num_bA))
@@ -1258,11 +1274,11 @@ subroutine test_numt_dborn(error, mol, kernel_id, keps)
 
       end do
    end do
-end subroutine test_numt_dborn
+end subroutine test_num_d_d3Kdr3_dborn
 
 
 !> Test the kernel fourth derivative against numerical derivative
-subroutine test_numq(error, mol, kernel_id, keps)
+subroutine test_num_d4Kdr4(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data
@@ -1316,7 +1332,7 @@ subroutine test_numq(error, mol, kernel_id, keps)
          r  = norm2(rA - rB)
 
          ! analytic 4th derivative
-         call kernel%kernel_d4_pair(rA, rB, brad(jat), brad(jc), anaq_kernel)
+         call kernel%kernel_d4Kdr4(rA, rB, brad(jat), brad(jc), anaq_kernel)
 
          ! numerical 4th derivative from analytic 3rd derivative:
          ! n4(i,j,k,l) = d/dR_A,l [ d3(i,j,k) ]
@@ -1325,8 +1341,8 @@ subroutine test_numq(error, mol, kernel_id, keps)
             rA_r = rA; rA_r(l) = rA_r(l) + step
             rA_l = rA; rA_l(l) = rA_l(l) - step
 
-            call kernel%kernel_d3_pair(rA_r, rB, brad(jat), brad(jc), d3kernel_r)
-            call kernel%kernel_d3_pair(rA_l, rB, brad(jat), brad(jc), d3kernel_l)
+            call kernel%kernel_d3Kdr3(rA_r, rB, brad(jat), brad(jc), d3kernel_r)
+            call kernel%kernel_d3Kdr3(rA_l, rB, brad(jat), brad(jc), d3kernel_l)
 
             do i = 1, 3
                do j = 1, 3
@@ -1351,10 +1367,10 @@ subroutine test_numq(error, mol, kernel_id, keps)
 
       end do
    end do
-end subroutine test_numq
+end subroutine test_num_d4Kdr4
 
 !> Test kernel_d4_pair_dborn against numerical derivative of kernel_d4_pair wrt Born radii
-subroutine test_numq_dborn(error, mol, kernel_id, keps)
+subroutine test_num_d_d4Kdr4_dborn(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data
@@ -1414,16 +1430,16 @@ subroutine test_numq_dborn(error, mol, kernel_id, keps)
          bornB0 = brad(jc)
 
          ! ---- analytic d/d(bornA), d/d(bornB)
-         call kernel%kernel_d4_pair_dborn(rA, rB, bornA0, bornB0, ana_bA, ana_bB)
+         call kernel%kernel_d_d4Kdr4_dborn(rA, rB, bornA0, bornB0, ana_bA, ana_bB)
 
          ! ---- numerical d/d(bornA) of d4_pair
-         call kernel%kernel_d4_pair(rA, rB, bornA0 + step, bornB0, d4_r)
-         call kernel%kernel_d4_pair(rA, rB, bornA0 - step, bornB0, d4_l)
+         call kernel%kernel_d4Kdr4(rA, rB, bornA0 + step, bornB0, d4_r)
+         call kernel%kernel_d4Kdr4(rA, rB, bornA0 - step, bornB0, d4_l)
          num_bA(:,:,:,:) = 0.5_wp * (d4_r(:,:,:,:) - d4_l(:,:,:,:)) / step
 
          ! ---- numerical d/d(bornB) of d4_pair
-         call kernel%kernel_d4_pair(rA, rB, bornA0, bornB0 + step, d4_r)
-         call kernel%kernel_d4_pair(rA, rB, bornA0, bornB0 - step, d4_l)
+         call kernel%kernel_d4Kdr4(rA, rB, bornA0, bornB0 + step, d4_r)
+         call kernel%kernel_d4Kdr4(rA, rB, bornA0, bornB0 - step, d4_l)
          num_bB(:,:,:,:) = 0.5_wp * (d4_r(:,:,:,:) - d4_l(:,:,:,:)) / step
 
          maxdiffA = maxval(abs(ana_bA - num_bA))
@@ -1453,12 +1469,12 @@ subroutine test_numq_dborn(error, mol, kernel_id, keps)
 
       end do
    end do
-end subroutine test_numq_dborn
+end subroutine test_num_d_d4Kdr4_dborn
 
 
 
 !> Test the kernel fifth derivative against numerical derivative
-subroutine test_num5(error, mol, kernel_id, keps)
+subroutine test_num_d5Kdr5(error, mol, kernel_id, keps)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
    !> Molecular structure data
@@ -1512,7 +1528,7 @@ subroutine test_num5(error, mol, kernel_id, keps)
          r  = norm2(rA - rB)
 
          ! analytic 5th derivative
-         call kernel%kernel_d5_pair(rA, rB, brad(jat), brad(jc), ana5_kernel)
+         call kernel%kernel_d5Kdr5(rA, rB, brad(jat), brad(jc), ana5_kernel)
 
          ! numerical 5th derivative from analytic 4th derivative:
          ! n4(i,j,k,l) = d/dR_A,l [ d3(i,j,k) ]
@@ -1521,8 +1537,8 @@ subroutine test_num5(error, mol, kernel_id, keps)
             rA_r = rA; rA_r(l) = rA_r(l) + step
             rA_l = rA; rA_l(l) = rA_l(l) - step
 
-            call kernel%kernel_d4_pair(rA_r, rB, brad(jat), brad(jc), d4kernel_r)
-            call kernel%kernel_d4_pair(rA_l, rB, brad(jat), brad(jc), d4kernel_l)
+            call kernel%kernel_d4Kdr4(rA_r, rB, brad(jat), brad(jc), d4kernel_r)
+            call kernel%kernel_d4Kdr4(rA_l, rB, brad(jat), brad(jc), d4kernel_l)
 
             do i = 1, 3
                do j = 1, 3
@@ -1549,7 +1565,7 @@ subroutine test_num5(error, mol, kernel_id, keps)
 
       end do
    end do
-end subroutine test_num5
+end subroutine test_num_d5Kdr5
 
 
 

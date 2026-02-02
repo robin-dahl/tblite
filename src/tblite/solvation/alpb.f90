@@ -279,7 +279,7 @@ subroutine update(self, mol, cache)
       allocate(ptr%scratch(mol%nat))
    endif
    call self%gbobc%get_rad(mol, ptr%rad, ptr%draddr)
-   call self%kernel%add_kernel_mat(mol%nat, mol%xyz, ptr%rad, ptr%jmat)
+   call self%kernel%kernel_K(mol%nat, mol%xyz, ptr%rad, ptr%jmat)
 
    if (self%alpbet > 0.0_wp) then
       call get_adet(mol%nat, mol%xyz, self%gbobc%vdwr, adet)
@@ -731,7 +731,7 @@ subroutine get_multipole_matrices(self, mol, xyz, keps, brad, &
          ! =================================================================================
          ! 1) Get charge-dipole interaction from first derivative of the interaction kernel
          ! =================================================================================
-         call self%kernel%kernel_d1_pair(rj, ri, bornj, borni, dKij_drj)
+         call self%kernel%kernel_dKdr(rj, ri, bornj, borni, dKij_drj)
 
          ! Index pattern (..., j, ..., i) here and in the following:
          ! Response on j due to source on i
@@ -744,7 +744,7 @@ subroutine get_multipole_matrices(self, mol, xyz, keps, brad, &
          !                                |                       |
          !                         (x,y,z) dipole          (x,y,z) dipole
          ! ==================================================================================
-         call self%kernel%kernel_d2_pair(rj, ri, bornj, borni, d2Kij_drj2)
+         call self%kernel%kernel_d2Kdr2(rj, ri, bornj, borni, d2Kij_drj2)
 
          do alpha = 1, 3
             do beta = 1, 3
@@ -794,7 +794,7 @@ subroutine get_multipole_matrices(self, mol, xyz, keps, brad, &
          !                                    |                           |
          !                             (x,y,z) dipole        (xx,xy,xz,yy,yz,zz) quadrupole
          ! ==================================================================================
-         call self%kernel%kernel_d3_pair(rj, ri, bornj, borni, d3Kij_drj3)
+         call self%kernel%kernel_d3Kdr3(rj, ri, bornj, borni, d3Kij_drj3)
 
          ! quadrupole cotribution in lower triangular order: 11, 12, 22, 13, 23, 33
          ! Off-diagonal terms are doubled, factor 1/3 from isotropic correction (trace removal)
@@ -814,7 +814,7 @@ subroutine get_multipole_matrices(self, mol, xyz, keps, brad, &
          !                                                    |                           |
          !                                     (xx,xy,xz,yy,yz,zz) quadrupole   (xx,xy,xz,yy,yz,zz) quadrupole
          ! ==================================================================================
-         call self%kernel%kernel_d4_pair(rj, ri, bornj, borni, d4Kij_drj4)
+         call self%kernel%kernel_d4Kdr4(rj, ri, bornj, borni, d4Kij_drj4)
 
          ! Isotropic correction coefficient
          s5 = coef * invr2
@@ -885,12 +885,12 @@ subroutine add_grad(self, nat, xyz, qat, brad, brdr, gradient)
             qq = qat(i)*qat(j)
 
             ! Frozen radii: -> Derivative of kernel wrt nuclear coordinates
-            call self%kernel%kernel_d1_pair(xyz(:, j), xyz(:, i), brad(j), brad(i), dKdr)
+            call self%kernel%kernel_dKdr(xyz(:, j), xyz(:, i), brad(j), brad(i), dKdr)
             gradient(:, j) = gradient(:, j)+dKdr*qq
             gradient(:, i) = gradient(:, i)-dKdr*qq
          
             ! Derivative of kernel wrt Born radii
-            call self%kernel%kernel_pair_dborn(xyz(:,j), xyz(:,i), brad(j), brad(i), dK_bj, dK_bi)
+            call self%kernel%kernel_dKdborn(xyz(:,j), xyz(:,i), brad(j), brad(i), dK_bj, dK_bi)
             grddb(j) = grddb(j)+dK_bj*qq
             grddb(i) = grddb(i)+dK_bi*qq
 
@@ -1034,17 +1034,17 @@ subroutine add_grad_multipole_contributions(self, nat, xyz, qat, dpat, qpat, bra
          dinvr = invr2*uvec
 
          ! Kernel derivatives: response center = xyz(:, iat)
-         call self%kernel%kernel_d1_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d1)
-         call self%kernel%kernel_d2_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d2)
-         call self%kernel%kernel_d3_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d3)
-         call self%kernel%kernel_d4_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d4)
-         call self%kernel%kernel_d5_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d5)
+         call self%kernel%kernel_dKdr(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d1)
+         call self%kernel%kernel_d2Kdr2(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d2)
+         call self%kernel%kernel_d3Kdr3(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d3)
+         call self%kernel%kernel_d4Kdr4(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d4)
+         call self%kernel%kernel_d5Kdr5(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d5)
 
          ! Derivatives w.r.t. Born radii
-         call self%kernel%kernel_d1_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d1_br, d1_bs)
-         call self%kernel%kernel_d2_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d2_br, d2_bs)
-         call self%kernel%kernel_d3_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d3_br, d3_bs)
-         call self%kernel%kernel_d4_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d4_br, d4_bs)
+         call self%kernel%kernel_d_dKdr_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d1_br, d1_bs)
+         call self%kernel%kernel_d_d2Kdr2_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d2_br, d2_bs)
+         call self%kernel%kernel_d_d3Kdr3_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d3_br, d3_bs)
+         call self%kernel%kernel_d_d4Kdr4_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d4_br, d4_bs)
         
          ! Construct coefficient for SQ/QQ terms
          gpar = dot_product(d1, uvec)

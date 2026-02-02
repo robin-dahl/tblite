@@ -28,22 +28,22 @@ module tblite_solvation_kernel_coulomb
 
    type, extends(kernel_type) :: coulomb_kernel
    contains
-      procedure :: add_kernel_mat => add_coulomb_mat
-      procedure :: kernel_pair_dborn => coulomb_pair_dborn
-      procedure :: kernel_d1_pair => coulomb_d1_pair
-      procedure :: kernel_d1_pair_dborn => coulomb_d1_pair_dborn
-      procedure :: kernel_d2_pair => coulomb_d2_pair
-      procedure :: kernel_d2_pair_dborn => coulomb_d2_pair_dborn
-      procedure :: kernel_d3_pair => coulomb_d3_pair
-      procedure :: kernel_d3_pair_dborn => coulomb_d3_pair_dborn
-      procedure :: kernel_d4_pair => coulomb_d4_pair
-      procedure :: kernel_d4_pair_dborn => coulomb_d4_pair_dborn
-      procedure :: kernel_d5_pair => coulomb_d5_pair
+      procedure :: kernel_K => coulomb_K
+      procedure :: kernel_dKdborn => coulomb_dKdborn
+      procedure :: kernel_dKdr => coulomb_dKdr
+      procedure :: kernel_d_dKdr_dborn => coulomb_d_dKdr_dborn
+      procedure :: kernel_d2Kdr2 => coulomb_d2Kdr2
+      procedure :: kernel_d_d2Kdr2_dborn => coulomb_d_d2Kdr2_dborn
+      procedure :: kernel_d3Kdr3 => coulomb_d3Kdr3
+      procedure :: kernel_d_d3Kdr3_dborn => coulomb_d_d3Kdr3_dborn
+      procedure :: kernel_d4Kdr4 => coulomb_d4Kdr4
+      procedure :: kernel_d_d4Kdr4_dborn => coulomb_d_d4Kdr4_dborn
+      procedure :: kernel_d5Kdr5 => coulomb_d5Kdr5
    end type
 
 contains
 
-   pure subroutine add_coulomb_mat(self, nat, xyz, brad, Amat)
+   pure subroutine coulomb_K(self, nat, xyz, brad, Amat)
       !> Instance of Coulomb kernel
       class(coulomb_kernel), intent(in) :: self
       !> Number of atoms
@@ -74,9 +74,9 @@ contains
          end do
 
       end do
-   end subroutine add_coulomb_mat
+   end subroutine coulomb_K
  
-   subroutine coulomb_pair_dborn(self, rA, rB, bornA, bornB, dk_bA, dk_bB)
+   subroutine coulomb_dKdborn(self, rA, rB, bornA, bornB, dk_bA, dk_bB)
       !> Instance of Coulomb kernel
       class(coulomb_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -96,9 +96,9 @@ contains
 
       dk_bA = 0.0_wp
       dk_bB = 0.0_wp
-   end subroutine coulomb_pair_dborn
+   end subroutine coulomb_dKdborn
 
-   subroutine coulomb_d1_pair(self, rA, rB, bornA, bornB, d1)
+   subroutine coulomb_dKdr(self, rA, rB, bornA, bornB, d1)
    !! d1(i) = ∂(1/r)/∂r_i (gradient w.r.t. r = rA-rB)
       !> Instance of Coulomb kernel
       class(coulomb_kernel), intent(in) :: self
@@ -128,9 +128,9 @@ contains
       invr3 = invr*invr*invr
 
       d1 = -rvec*invr3
-   end subroutine coulomb_d1_pair
+   end subroutine coulomb_dKdr
 
-   subroutine coulomb_d1_pair_dborn(self, rA, rB, bornA, bornB, d1_bA, d1_bB)
+   subroutine coulomb_d_dKdr_dborn(self, rA, rB, bornA, bornB, d1_bA, d1_bB)
       !> Instance of Coulomb kernel
       class(coulomb_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -150,9 +150,9 @@ contains
 
       d1_bA = 0.0_wp
       d1_bB = 0.0_wp
-   end subroutine coulomb_d1_pair_dborn
+   end subroutine coulomb_d_dKdr_dborn
 
-   subroutine coulomb_d2_pair(self, rA, rB, bornA, bornB, d2)
+   subroutine coulomb_d2Kdr2(self, rA, rB, bornA, bornB, d2)
     !! d2(i,j) = ∂²(1/r)/∂r_i∂r_j  (Hessian)
       !> Instance of Coulomb kernel
       class(coulomb_kernel), intent(in) :: self
@@ -188,9 +188,9 @@ contains
             if (i == j) d2(i, j) = d2(i, j)-invr3
          end do
       end do
-   end subroutine coulomb_d2_pair
+   end subroutine coulomb_d2Kdr2
 
-   subroutine coulomb_d2_pair_dborn(self, rA, rB, bornA, bornB, d2_bA, d2_bB)
+   subroutine coulomb_d_d2Kdr2_dborn(self, rA, rB, bornA, bornB, d2_bA, d2_bB)
       !> Instance of Coulomb kernel
       class(coulomb_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -209,9 +209,9 @@ contains
       real(wp), intent(out) :: d2_bB(3, 3)
       d2_bA = 0.0_wp
       d2_bB = 0.0_wp
-   end subroutine coulomb_d2_pair_dborn
+   end subroutine coulomb_d_d2Kdr2_dborn
 
-   subroutine coulomb_d3_pair(self, rA, rB, bornA, bornB, d3)
+   subroutine coulomb_d3Kdr3(self, rA, rB, bornA, bornB, d3)
     !! d3(i,j,k) = ∂³(1/r)/∂r_i∂r_j∂r_k
     !!
     !! d3 = 3(δ_ij r_k + δ_ik r_j + δ_jk r_i)/r^5 - 15 r_i r_j r_k / r^7
@@ -253,9 +253,9 @@ contains
             end do
          end do
       end do
-   end subroutine coulomb_d3_pair
+   end subroutine coulomb_d3Kdr3
 
-   subroutine coulomb_d3_pair_dborn(self, rA, rB, bornA, bornB, d3_bA, d3_bB)
+   subroutine coulomb_d_d3Kdr3_dborn(self, rA, rB, bornA, bornB, d3_bA, d3_bB)
       !> Instance of Coulomb kernel
       class(coulomb_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -274,9 +274,9 @@ contains
       real(wp), intent(out) :: d3_bB(3, 3, 3)
       d3_bA = 0.0_wp
       d3_bB = 0.0_wp
-   end subroutine coulomb_d3_pair_dborn
+   end subroutine coulomb_d_d3Kdr3_dborn
 
-   subroutine coulomb_d4_pair(self, rA, rB, bornA, bornB, d4)
+   subroutine coulomb_d4Kdr4(self, rA, rB, bornA, bornB, d4)
     !! d4(i,j,k,l) = ∂⁴(1/r)/∂r_i∂r_j∂r_k∂r_l
     !!
     !! d4 = 105 r_i r_j r_k r_l / r^9
@@ -331,9 +331,9 @@ contains
             end do
          end do
       end do
-   end subroutine coulomb_d4_pair
+   end subroutine coulomb_d4Kdr4
 
-   subroutine coulomb_d4_pair_dborn(self, rA, rB, bornA, bornB, d4_bA, d4_bB)
+   subroutine coulomb_d_d4Kdr4_dborn(self, rA, rB, bornA, bornB, d4_bA, d4_bB)
       !> Instance of Coulomb kernel
       class(coulomb_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -352,9 +352,9 @@ contains
       real(wp), intent(out) :: d4_bB(3, 3, 3, 3)
       d4_bA = 0.0_wp
       d4_bB = 0.0_wp
-   end subroutine coulomb_d4_pair_dborn
+   end subroutine coulomb_d_d4Kdr4_dborn
 
-   subroutine coulomb_d5_pair(self, rA, rB, bornA, bornB, d5)
+   subroutine coulomb_d5Kdr5(self, rA, rB, bornA, bornB, d5)
     !! d5(i,j,k,l,m) = ∂⁵(1/r)/∂r_i∂r_j∂r_k∂r_l∂r_m
     !!
     !! d5 = -945 r_i r_j r_k r_l r_m / r^11
@@ -440,6 +440,6 @@ contains
             end do
          end do
       end do
-   end subroutine coulomb_d5_pair
+   end subroutine coulomb_d5Kdr5
 
 end module tblite_solvation_kernel_coulomb

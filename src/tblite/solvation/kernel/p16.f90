@@ -28,17 +28,17 @@ module tblite_solvation_kernel_p16
 
    type, extends(kernel_type) :: p16_kernel
    contains
-      procedure :: add_kernel_mat => add_p16_mat
-      procedure :: kernel_pair_dborn => p16_pair_dborn
-      procedure :: kernel_d1_pair => p16_d1_pair
-      procedure :: kernel_d1_pair_dborn => p16_d1_pair_dborn
-      procedure :: kernel_d2_pair => p16_d2_pair
-      procedure :: kernel_d2_pair_dborn => p16_d2_pair_dborn
-      procedure :: kernel_d3_pair => p16_d3_pair
-      procedure :: kernel_d3_pair_dborn => p16_d3_pair_dborn
-      procedure :: kernel_d4_pair => p16_d4_pair
-      procedure :: kernel_d4_pair_dborn => p16_d4_pair_dborn
-      procedure :: kernel_d5_pair => p16_d5_pair
+      procedure :: kernel_K => p16_K
+      procedure :: kernel_dKdr => p16_dKdr
+      procedure :: kernel_dKdborn => p16_dKdborn
+      procedure :: kernel_d_dKdr_dborn => p16_d_dKdr_dborn
+      procedure :: kernel_d2Kdr2 => p16_d2Kdr2
+      procedure :: kernel_d_d2Kdr2_dborn => p16_d_d2Kdr2_dborn
+      procedure :: kernel_d3Kdr3 => p16_d3Kdr3
+      procedure :: kernel_d_d3Kdr3_dborn => p16_d_d3Kdr3_dborn
+      procedure :: kernel_d4Kdr4 => p16_d4Kdr4
+      procedure :: kernel_d_d4Kdr4_dborn => p16_d_d4Kdr4_dborn
+      procedure :: kernel_d5Kdr5 => p16_d5Kdr5
    end type p16_kernel
 
    real(wp), parameter :: zetaP16 = 1.028_wp
@@ -46,7 +46,7 @@ module tblite_solvation_kernel_p16
 
 contains
 
-   subroutine add_p16_mat(self, nat, xyz, brad, Amat)
+   subroutine p16_K(self, nat, xyz, brad, Amat)
       !> Instance of P16 kernel
       class(p16_kernel), intent(in) :: self
       !> Number of atoms
@@ -83,9 +83,37 @@ contains
          bp = 1.0_wp/brad(iat)
          Amat(iat, iat) = Amat(iat, iat)+self%keps*bp
       end do
-   end subroutine add_p16_mat
+   end subroutine p16_K
 
-   subroutine p16_pair_dborn(self, rA, rB, bornA, bornB, dk_bA, dk_bB)
+    subroutine p16_dKdr(self, ra, rb, bornA, bornB, d1)
+      ! d1(i) = ∂K/∂xa_i
+      !> Instance of P16 kernel
+      class(p16_kernel), intent(in) :: self
+      !> Cartesian coordinates of atom A
+      real(wp), intent(in)  :: ra(3)
+      !> Cartesian coordinates of atom B
+      real(wp), intent(in)  :: rb(3)
+      !> Born radius of atom A
+      real(wp), intent(in)  :: bornA
+      !> Born radius of atom B
+      real(wp), intent(in)  :: bornB
+      !> First derivative of P16 kernel
+      real(wp), intent(out) :: d1(3)
+
+      real(wp) :: rv(3), r, k1, k2, k3, k4
+
+      rv = ra-rb
+      r = sqrt(dot_product(rv, rv))
+      if (r == 0.0_wp) then
+         d1 = 0.0_wp
+         return
+      end if
+
+      call p16_radial_k_derivs(r, bornA, bornB, k1, k2, k3, k4)
+      d1 = self%keps*(k1/r)*rv
+   end subroutine p16_dKdr
+
+   subroutine p16_dKdborn(self, rA, rB, bornA, bornB, dk_bA, dk_bB)
       class(p16_kernel), intent(in) :: self
       real(wp), intent(in) :: rA(3), rB(3)
       real(wp), intent(in) :: bornA, bornB
@@ -143,38 +171,10 @@ contains
 
       dk_bA = dKdab * facA
       dk_bB = dKdab * facB
-   end subroutine p16_pair_dborn
+   end subroutine p16_dKdborn
 
 
-   subroutine p16_d1_pair(self, ra, rb, bornA, bornB, d1)
-      ! d1(i) = ∂K/∂xa_i
-      !> Instance of P16 kernel
-      class(p16_kernel), intent(in) :: self
-      !> Cartesian coordinates of atom A
-      real(wp), intent(in)  :: ra(3)
-      !> Cartesian coordinates of atom B
-      real(wp), intent(in)  :: rb(3)
-      !> Born radius of atom A
-      real(wp), intent(in)  :: bornA
-      !> Born radius of atom B
-      real(wp), intent(in)  :: bornB
-      !> First derivative of P16 kernel
-      real(wp), intent(out) :: d1(3)
-
-      real(wp) :: rv(3), r, k1, k2, k3, k4
-
-      rv = ra-rb
-      r = sqrt(dot_product(rv, rv))
-      if (r == 0.0_wp) then
-         d1 = 0.0_wp
-         return
-      end if
-
-      call p16_radial_k_derivs(r, bornA, bornB, k1, k2, k3, k4)
-      d1 = self%keps*(k1/r)*rv
-   end subroutine p16_d1_pair
-
-   subroutine p16_d1_pair_dborn(self, ra, rb, bornA, bornB, d1_bA, d1_bB)
+   subroutine p16_d_dKdr_dborn(self, ra, rb, bornA, bornB, d1_bA, d1_bB)
       !> Instance of P16 kernel
       class(p16_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -216,9 +216,9 @@ contains
 
       d1_bA = self%keps*(dk1ab*facA)*u
       d1_bB = self%keps*(dk1ab*facB)*u
-   end subroutine p16_d1_pair_dborn
+   end subroutine p16_d_dKdr_dborn
 
-   subroutine p16_d2_pair(self, ra, rb, bornA, bornB, d2)
+   subroutine p16_d2Kdr2(self, ra, rb, bornA, bornB, d2)
       ! d2(i,j) = ∂²K/∂xa_i∂xa_j
       !> Instance of P16 kernel
       class(p16_kernel), intent(in) :: self
@@ -258,9 +258,9 @@ contains
             if (i == j) d2(i, j) = d2(i, j)+self%keps*a
          end do
       end do
-   end subroutine p16_d2_pair
+   end subroutine p16_d2Kdr2
 
-   subroutine p16_d2_pair_dborn(self, ra, rb, bornA, bornB, d2_bA, d2_bB)
+   subroutine p16_d_d2Kdr2_dborn(self, ra, rb, bornA, bornB, d2_bA, d2_bB)
       !> Instance of P16 kernel
       class(p16_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -318,9 +318,9 @@ contains
             end if
          end do
       end do
-   end subroutine p16_d2_pair_dborn
+   end subroutine p16_d_d2Kdr2_dborn
 
-   subroutine p16_d3_pair(self, ra, rb, bornA, bornB, d3)
+   subroutine p16_d3Kdr3(self, ra, rb, bornA, bornB, d3)
       ! d3(i,j,k) = ∂³K/∂xa_i∂xa_j∂xa_k
       !> Instance of P16 kernel
       class(p16_kernel), intent(in) :: self
@@ -365,9 +365,9 @@ contains
             end do
          end do
       end do
-   end subroutine p16_d3_pair
+   end subroutine p16_d3Kdr3
 
-   subroutine p16_d3_pair_dborn(self, ra, rb, bornA, bornB, d3_bA, d3_bB)
+   subroutine p16_d_d3Kdr3_dborn(self, ra, rb, bornA, bornB, d3_bA, d3_bB)
       !> Instance of P16 kernel
       class(p16_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -444,9 +444,9 @@ contains
             end do
          end do
       end do
-   end subroutine p16_d3_pair_dborn
+   end subroutine p16_d_d3Kdr3_dborn
 
-   subroutine p16_d4_pair(self, ra, rb, bornA, bornB, d4)
+   subroutine p16_d4Kdr4(self, ra, rb, bornA, bornB, d4)
       ! d4(i,j,k,l) = ∂⁴K/∂xa_i∂xa_j∂xa_k∂xa_l
       !> Instance of P16 kernel
       class(p16_kernel), intent(in) :: self
@@ -506,9 +506,9 @@ contains
             end do
          end do
       end do
-   end subroutine p16_d4_pair
+   end subroutine p16_d4Kdr4
 
-   subroutine p16_d4_pair_dborn(self, ra, rb, bornA, bornB, d4_bA, d4_bB)
+   subroutine p16_d_d4Kdr4_dborn(self, ra, rb, bornA, bornB, d4_bA, d4_bB)
       !> Instance of P16 kernel
       class(p16_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -621,9 +621,9 @@ contains
             end do
          end do
       end do
-   end subroutine p16_d4_pair_dborn
+   end subroutine p16_d_d4Kdr4_dborn
 
-   subroutine p16_d5_pair(self, ra, rb, bornA, bornB, d5)
+   subroutine p16_d5Kdr5(self, ra, rb, bornA, bornB, d5)
       ! d5(i,j,k,l,m) = ∂⁵K/∂xa_i∂xa_j∂xa_k∂xa_l∂xa_m  (radial K(r))
       !> Instance of P16 kernel
       class(p16_kernel), intent(in) :: self
@@ -716,7 +716,7 @@ contains
          end do
       end do
 
-   end subroutine p16_d5_pair
+   end subroutine p16_d5Kdr5
 
 !> Internal helper routine to compute radial derivatives of P16 kernel
    pure subroutine p16_radial_k_derivs(r, bornA, bornB, k1, k2, k3, k4, k5, dk1ab, dk2ab, dk3ab, dk4ab)

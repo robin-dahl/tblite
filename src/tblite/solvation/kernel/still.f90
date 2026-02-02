@@ -28,22 +28,22 @@ module tblite_solvation_kernel_still
 
    type, extends(kernel_type) :: still_kernel
    contains
-      procedure :: add_kernel_mat => add_still_mat
-      procedure :: kernel_pair_dborn => still_pair_dborn
-      procedure :: kernel_d1_pair => still_d1_pair
-      procedure :: kernel_d1_pair_dborn => still_d1_pair_dborn
-      procedure :: kernel_d2_pair => still_d2_pair
-      procedure :: kernel_d2_pair_dborn => still_d2_pair_dborn
-      procedure :: kernel_d3_pair => still_d3_pair
-      procedure :: kernel_d3_pair_dborn => still_d3_pair_dborn
-      procedure :: kernel_d4_pair => still_d4_pair
-      procedure :: kernel_d4_pair_dborn => still_d4_pair_dborn
-      procedure :: kernel_d5_pair => still_d5_pair
+      procedure :: kernel_K => still_K
+      procedure :: kernel_dKdr => still_dKdr
+      procedure :: kernel_dKdborn => still_dKdborn
+      procedure :: kernel_d_dKdr_dborn => still_d_dKdr_dborn
+      procedure :: kernel_d2Kdr2 => still_d2Kdr2
+      procedure :: kernel_d_d2Kdr2_dborn => still_d_d2Kdr2_dborn
+      procedure :: kernel_d3Kdr3 => still_d3Kdr3
+      procedure :: kernel_d_d3Kdr3_dborn => still_d_d3Kdr3_dborn
+      procedure :: kernel_d4Kdr4 => still_d4Kdr4
+      procedure :: kernel_d_d4Kdr4_dborn => still_d_d4Kdr4_dborn
+      procedure :: kernel_d5Kdr5 => still_d5Kdr5
    end type still_kernel
 
 contains
 
-   pure subroutine add_still_mat(self, nat, xyz, brad, Amat)
+   pure subroutine still_K(self, nat, xyz, brad, Amat)
       !> Instance of Still kernel
       class(still_kernel), intent(in) :: self
       !> Number of atoms
@@ -81,10 +81,38 @@ contains
          bp = 1.0_wp/brad(i)
          Amat(i, i) = Amat(i, i)+self%keps*bp
       end do
-   end subroutine add_still_mat
+   end subroutine still_K
 
-  
-   pure subroutine still_pair_dborn(self, rA, rB, bornA, bornB, dK_bA, dK_bB)
+ 
+   subroutine still_dKdr(self, rA, rB, bornA, bornB, d1)
+   !! d1(i) = ∂K/∂R_A,i where K = 1/sqrt(r^2 + a*exp(-r^2/(4a))), a=bornA*bornB
+      !> Instance of Still kernel
+      class(still_kernel), intent(in) :: self
+      !> Cartesian coordinates of atom A
+      real(wp), intent(in) :: rA(3)
+      !> Cartesian coordinates of atom B
+      real(wp), intent(in) :: rB(3)
+      !> Born radius of atom A
+      real(wp), intent(in) :: bornA
+      !> Born radius of atom B
+      real(wp), intent(in) :: bornB
+      !> First derivative of Still kernel
+      real(wp), intent(out) :: d1(3)
+
+      real(wp) :: rvec(3), s, a, e, u
+      real(wp) :: invu, invsqrtu, um3
+      real(wp) :: u1, u2, u3, u4
+      real(wp) :: Acoef, Bcoef, Ccoef, Dcoef
+
+      call still_scalar_coeffs(rA, rB, bornA, bornB, rvec, s, a, e, u, invu, invsqrtu, um3, &
+                               u1, u2, u3, u4, Acoef, Bcoef, Ccoef, Dcoef)
+
+      ! ∂K/∂r_i = 2 r_i * dK/ds
+      d1 = self%keps*2.0_wp*rvec*Acoef
+   end subroutine still_dKdr
+
+    
+   pure subroutine still_dKdborn(self, rA, rB, bornA, bornB, dK_bA, dK_bB)
       !! dK_bA = ∂K/∂bornA, dK_bB = ∂K/∂bornB (coordinates held fixed)
       !! K = keps / sqrt( s + a*exp(-s/(4a)) ),  a = bornA*bornB, s = |rA-rB|^2
       class(still_kernel), intent(in) :: self
@@ -130,37 +158,9 @@ contains
 
       dK_bA = bornB * dK_da
       dK_bB = bornA * dK_da
-   end subroutine still_pair_dborn
+   end subroutine still_dKdborn
 
-
-   subroutine still_d1_pair(self, rA, rB, bornA, bornB, d1)
-   !! d1(i) = ∂K/∂R_A,i where K = 1/sqrt(r^2 + a*exp(-r^2/(4a))), a=bornA*bornB
-      !> Instance of Still kernel
-      class(still_kernel), intent(in) :: self
-      !> Cartesian coordinates of atom A
-      real(wp), intent(in) :: rA(3)
-      !> Cartesian coordinates of atom B
-      real(wp), intent(in) :: rB(3)
-      !> Born radius of atom A
-      real(wp), intent(in) :: bornA
-      !> Born radius of atom B
-      real(wp), intent(in) :: bornB
-      !> First derivative of Still kernel
-      real(wp), intent(out) :: d1(3)
-
-      real(wp) :: rvec(3), s, a, e, u
-      real(wp) :: invu, invsqrtu, um3
-      real(wp) :: u1, u2, u3, u4
-      real(wp) :: Acoef, Bcoef, Ccoef, Dcoef
-
-      call still_scalar_coeffs(rA, rB, bornA, bornB, rvec, s, a, e, u, invu, invsqrtu, um3, &
-                               u1, u2, u3, u4, Acoef, Bcoef, Ccoef, Dcoef)
-
-      ! ∂K/∂r_i = 2 r_i * dK/ds
-      d1 = self%keps*2.0_wp*rvec*Acoef
-   end subroutine still_d1_pair
-
-   subroutine still_d1_pair_dborn(self, rA, rB, bornA, bornB, d1_bA, d1_bB)
+   subroutine still_d_dKdr_dborn(self, rA, rB, bornA, bornB, d1_bA, d1_bB)
       !> Instance of Still kernel
       class(still_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -200,9 +200,9 @@ contains
 
       d1_bA = self%keps*2.0_wp*rvec*dA_bA
       d1_bB = self%keps*2.0_wp*rvec*dA_bB
-   end subroutine still_d1_pair_dborn
+   end subroutine still_d_dKdr_dborn
 
-   subroutine still_d2_pair(self, rA, rB, bornA, bornB, d2)
+   subroutine still_d2Kdr2(self, rA, rB, bornA, bornB, d2)
    !! d2(i,j) = ∂²K/∂R_A,i ∂R_A,j
       !> Instance of Still kernel
       class(still_kernel), intent(in) :: self
@@ -233,9 +233,9 @@ contains
             if (i == j) d2(i, j) = d2(i, j)+self%keps*2.0_wp*Acoef
          end do
       end do
-   end subroutine still_d2_pair
+   end subroutine still_d2Kdr2
 
-   subroutine still_d2_pair_dborn(self, rA, rB, bornA, bornB, d2_bA, d2_bB)
+   subroutine still_d_d2Kdr2_dborn(self, rA, rB, bornA, bornB, d2_bA, d2_bB)
       !> Instance of Still kernel
       class(still_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -285,9 +285,9 @@ contains
             end if
          end do
       end do
-   end subroutine still_d2_pair_dborn
+   end subroutine still_d_d2Kdr2_dborn
 
-   subroutine still_d3_pair(self, rA, rB, bornA, bornB, d3)
+   subroutine still_d3Kdr3(self, rA, rB, bornA, bornB, d3)
     !! d3(i,j,k) = ∂³K/∂R_A,i ∂R_A,j ∂R_A,k
       !> Instance of Still kernel
       class(still_kernel), intent(in) :: self
@@ -322,9 +322,9 @@ contains
             end do
          end do
       end do
-   end subroutine still_d3_pair
+   end subroutine still_d3Kdr3
 
-   subroutine still_d3_pair_dborn(self, rA, rB, bornA, bornB, d3_bA, d3_bB)
+   subroutine still_d_d3Kdr3_dborn(self, rA, rB, bornA, bornB, d3_bA, d3_bB)
       !> Instance of Still kernel
       class(still_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -383,9 +383,9 @@ contains
             end do
          end do
       end do
-   end subroutine still_d3_pair_dborn
+   end subroutine still_d_d3Kdr3_dborn
 
-   subroutine still_d4_pair(self, rA, rB, bornA, bornB, d4)
+   subroutine still_d4Kdr4(self, rA, rB, bornA, bornB, d4)
     !! d4(i,j,k,l) = ∂⁴K/∂R_A,i ∂R_A,j ∂R_A,k ∂R_A,l
       !> Instance of Still kernel
       class(still_kernel), intent(in) :: self
@@ -434,9 +434,9 @@ contains
             end do
          end do
       end do
-   end subroutine still_d4_pair
+   end subroutine still_d4Kdr4
 
-   subroutine still_d4_pair_dborn(self, rA, rB, bornA, bornB, d4_bA, d4_bB)
+   subroutine still_d_d4Kdr4_dborn(self, rA, rB, bornA, bornB, d4_bA, d4_bB)
       !> Instance of Still kernel
       class(still_kernel), intent(in) :: self
       !> Cartesian coordinates of atom A
@@ -528,9 +528,9 @@ contains
             end do
          end do
       end do
-   end subroutine still_d4_pair_dborn
+   end subroutine still_d_d4Kdr4_dborn
 
-   subroutine still_d5_pair(self, rA, rB, bornA, bornB, d5)
+   subroutine still_d5Kdr5(self, rA, rB, bornA, bornB, d5)
     !! d5(i,j,k,l,m) = ∂⁵K/∂R_A,i ∂R_A,j ∂R_A,k ∂R_A,l ∂R_A,m
     !!
     !! For radial K(s), s = r·r:
@@ -637,7 +637,7 @@ contains
             end do
          end do
       end do
-   end subroutine still_d5_pair
+   end subroutine still_d5Kdr5
 
    ! ---------------- internal helper: compute scalar coefficients K'(s),K''(s),K'''(s),K''''(s) ----------------
 
