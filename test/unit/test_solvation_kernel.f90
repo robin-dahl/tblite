@@ -61,6 +61,7 @@ subroutine collect_solvation_kernel(testsuite)
       new_unittest("amat-p16", test_amat_p16), &
       new_unittest("amat-coulomb", test_amat_coulomb), &
       new_unittest("kernel-gradient-still", test_kernel_gradient_still), &
+      new_unittest("kernel-gradient-born-still", test_kernel_dborn_still), &
       new_unittest("kernel-gradient-bornrad-still", test_kernel_gradient_dborn_still), &
       new_unittest("kernel-hessian-still", test_kernel_hessian_still), &
       new_unittest("kernel-hessian-bornrad-still", test_kernel_hessian_dborn_still), &
@@ -102,6 +103,21 @@ subroutine test_kernel_gradient_still(error)
    call test_numg(error, mol, kernel_enum%still, keps)
 
 end subroutine test_kernel_gradient_still
+
+!> Test gradient of Still kernel gradient wrt Born radii against numerical derivative
+subroutine test_kernel_dborn_still(error)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   type(born_integrator) :: gbobc
+   class(kernel_type), allocatable :: kernel
+   real(wp), parameter :: keps = 0.5_wp
+
+   call get_structure(mol, "MB16-43", "01")
+   call test_num_dborn_value(error, mol, kernel_enum%still, keps)
+
+end subroutine test_kernel_dborn_still
 
 !> Test gradient of Still kernel gradient wrt Born radii against numerical derivative
 subroutine test_kernel_gradient_dborn_still(error)
@@ -627,6 +643,118 @@ subroutine test_numg(error, mol, kernel_id, keps)
    end do
 
 end subroutine test_numg
+
+
+!> Test kernel Born-radius gradient (∂K/∂born) against numerical derivative
+!> Test kernel Born-radius gradient (∂K/∂born) against numerical derivative
+subroutine test_num_dborn_value(error, mol, kernel_id, keps)
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+   !> Kernel identifier (still, p16, or coulomb)
+   integer, intent(in) :: kernel_id
+   !> Dielectric screening factor
+   real(wp), intent(in) :: keps
+
+   !> Born radii integrator
+   type(born_integrator) :: gbobc
+   !> Kernel instance
+   class(kernel_type), allocatable :: kernel
+
+   !> Van der Waals radii for all atoms
+   real(wp), allocatable :: rvdw(:)
+   !> Born radii for all atoms
+   real(wp), allocatable :: brad(:)
+   !> Temporary Born radii (for FD)
+   real(wp), allocatable :: brtmp(:)
+
+   !> Kernel matrix with positive/negative Born displacement
+   real(wp), allocatable :: kernel_r(:, :)
+   real(wp), allocatable :: kernel_l(:, :)
+
+   !> Finite difference step size
+   real(wp), parameter :: step = 1.0e-6_wp
+
+   integer :: jat, jc
+   real(wp) :: bornA0, bornB0
+   real(wp) :: num_dK_bA, num_dK_bB
+   real(wp) :: ana_dK_bA, ana_dK_bB
+   real(wp) :: diffA, diffB, maxdiff
+
+   kernel = new_kernel(kernel_id, keps)
+
+   allocate(rvdw(mol%nat), brad(mol%nat), brtmp(mol%nat))
+   allocate(kernel_r(mol%nat, mol%nat), kernel_l(mol%nat, mol%nat))
+
+   rvdw = get_vdw_rad_d3(mol%num)
+   call new_born_integrator(gbobc, mol, rvdw)
+   call gbobc%get_rad(mol, brad)
+
+   do jat = 1, mol%nat
+      do jc = 1, mol%nat
+
+         ! Same convention as your dborn test: skip self-pair
+         if (jat == jc) cycle
+
+         bornA0 = brad(jat)
+         bornB0 = brad(jc)
+
+         ! ---------------------------
+         ! Numerical: ∂K(jat,jc)/∂bornA  (perturb brad(jat))
+         ! ---------------------------
+         brtmp(:) = brad(:)
+
+         brtmp(jat) = bornA0 + step
+         kernel_r(:, :) = 0.0_wp
+         call kernel%add_kernel_mat(mol%nat, mol%xyz, brtmp, kernel_r)
+
+         brtmp(jat) = bornA0 - step
+         kernel_l(:, :) = 0.0_wp
+         call kernel%add_kernel_mat(mol%nat, mol%xyz, brtmp, kernel_l)
+
+         num_dK_bA = 0.5_wp * (kernel_r(jat, jc) - kernel_l(jat, jc)) / step
+
+         ! ---------------------------
+         ! Numerical: ∂K(jat,jc)/∂bornB  (perturb brad(jc))
+         ! ---------------------------
+         brtmp(:) = brad(:)
+
+         brtmp(jc) = bornB0 + step
+         kernel_r(:, :) = 0.0_wp
+         call kernel%add_kernel_mat(mol%nat, mol%xyz, brtmp, kernel_r)
+
+         brtmp(jc) = bornB0 - step
+         kernel_l(:, :) = 0.0_wp
+         call kernel%add_kernel_mat(mol%nat, mol%xyz, brtmp, kernel_l)
+
+         num_dK_bB = 0.5_wp * (kernel_r(jat, jc) - kernel_l(jat, jc)) / step
+
+         ! ---------------------------
+         ! Analytical: call kernel_pair_dborn
+         ! ---------------------------
+         call kernel%kernel_pair_dborn( mol%xyz(:, jat), mol%xyz(:, jc), bornA0, bornB0, &
+                                        ana_dK_bA, ana_dK_bB )
+
+         diffA = ana_dK_bA - num_dK_bA
+         diffB = ana_dK_bB - num_dK_bB
+         maxdiff = max(abs(diffA), abs(diffB))
+
+         if (maxdiff > thr2) then
+            call test_failed(error, "Analytical kernel Born-gradient does not match finite difference solution")
+            print '(a,2i6,a,es20.13)', "Mismatch at (A,B)=(", jat, jc, "), max|diff|=", maxdiff
+            print '(a,es20.13,a,es20.13)', "ana_dK_bA=", ana_dK_bA, "  num_dK_bA=", num_dK_bA
+            print '(a,es20.13,a,es20.13)', "ana_dK_bB=", ana_dK_bB, "  num_dK_bB=", num_dK_bB
+            print '(a,es20.13,a,es20.13)', "diffA=", diffA, "  diffB=", diffB
+            return
+         end if
+
+      end do
+   end do
+
+end subroutine test_num_dborn_value
+
+
 
 
 !> Test kernel gradient Born radius derivative against numerical derivative

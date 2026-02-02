@@ -29,8 +29,7 @@ module tblite_solvation_kernel_still
    type, extends(kernel_type) :: still_kernel
    contains
       procedure :: add_kernel_mat => add_still_mat
-      procedure :: add_kernel_deriv => add_still_deriv
-      procedure :: add_kernel_deriv_multipole_contributions => add_still_deriv_multipole_contributions
+      procedure :: kernel_pair_dborn => still_pair_dborn
       procedure :: kernel_d1_pair => still_d1_pair
       procedure :: kernel_d1_pair_dborn => still_d1_pair_dborn
       procedure :: kernel_d2_pair => still_d2_pair
@@ -84,418 +83,55 @@ contains
       end do
    end subroutine add_still_mat
 
-   subroutine add_still_deriv(self, nat, xyz, qat, brad, brdr, energy, gradient)
-      !> Instance of Still kernel
+  
+   pure subroutine still_pair_dborn(self, rA, rB, bornA, bornB, dK_bA, dK_bB)
+      !! dK_bA = ∂K/∂bornA, dK_bB = ∂K/∂bornB (coordinates held fixed)
+      !! K = keps / sqrt( s + a*exp(-s/(4a)) ),  a = bornA*bornB, s = |rA-rB|^2
       class(still_kernel), intent(in) :: self
-      !> Number of atoms
-      integer, intent(in) :: nat
-      !> Cartesian coordinates
-      real(wp), intent(in) :: xyz(:, :)
-      !> Atomic partial charges
-      real(wp), intent(in) :: qat(:)
-      !> Born radii
-      real(wp), intent(in) :: brad(:)
-      !> Born radii derivatives
-      real(wp), contiguous, intent(in) :: brdr(:, :, :)
-      !> Solvation energy
-      real(wp), intent(out) :: energy
-      !> Molecular gradient
-      real(wp), contiguous, intent(inout) :: gradient(:, :)
+      real(wp), intent(in)  :: rA(3), rB(3)
+      real(wp), intent(in)  :: bornA, bornB
+      real(wp), intent(out) :: dK_bA, dK_bB
 
-      integer :: i, j
-      real(wp), parameter :: a4 = 0.25_wp
-      real(wp) :: aa, r2, fgb2
-      real(wp) :: qq, dd, expd, dfgb, dfgb2, dfgb3, egb, ap, bp
-      real(wp) :: grddbi, grddbj
-      real(wp) :: dr(3), r1, vec(3)
-      real(wp), allocatable :: grddb(:)
+      real(wp) :: rvec(3), s, a, e, u
+      real(wp) :: invu, invsqrtu, um3
+      real(wp) :: du_da, dK_da
 
-      allocate (grddb(nat), source=0.0_wp)
+      rvec = rA - rB
+      s = dot_product(rvec, rvec)
 
-      egb = 0.0_wp
-      grddb(:) = 0.0_wp
+      a = bornA*bornB
+      if (a <= 0.0_wp) then
+         dK_bA = 0.0_wp
+         dK_bB = 0.0_wp
+         return
+      end if
 
-      do i = 1, nat
-         do j = 1, i-1
-            vec(:) = xyz(:, i)-xyz(:, j)
-            r1 = norm2(vec)
-            r2 = r1*r1
+      ! Handle s==0 robustly (coincident coordinates):
+      ! u = a, K = keps / sqrt(a), dK/da = -0.5 * keps * a^(-3/2)
+      if (s == 0.0_wp) then
+         dK_da = self%keps * (-0.5_wp) / (a*sqrt(a))
+         dK_bA = bornB * dK_da
+         dK_bB = bornA * dK_da
+         return
+      end if
 
-            qq = qat(i)*qat(j)
-            aa = brad(i)*brad(j)
-            dd = a4*r2/aa
-            expd = exp(-dd)
-            fgb2 = r2+aa*expd
-            dfgb2 = 1.0_wp/fgb2
-            dfgb = sqrt(dfgb2)
-            dfgb3 = dfgb2*dfgb*self%keps
+      e = exp(-s/(4.0_wp*a))
+      u = s + a*e
 
-            egb = egb+qq*self%keps*dfgb
+      invu     = 1.0_wp/u
+      invsqrtu = 1.0_wp/sqrt(u)
+      um3      = invu*invsqrtu   ! u^(-3/2)
 
-            ! Frozen radii:
-            ap = (1.0_wp-a4*expd)*dfgb3
-            dr = ap*vec
-            gradient(:, i) = gradient(:, i)-dr*qq
-            gradient(:, j) = gradient(:, j)+dr*qq
+      ! du/da = e*(1 + s/(4a))
+      du_da = e * (1.0_wp + s/(4.0_wp*a))
 
-            ! Born radii dependence:
-            bp = -0.5_wp*expd*(1.0_wp+dd)*dfgb3
-            grddbi = brad(j)*bp
-            grddbj = brad(i)*bp
-            grddb(i) = grddb(i)+grddbi*qq
-            grddb(j) = grddb(j)+grddbj*qq
-         end do
+      ! dK/da = keps * (-1/2) * u^(-3/2) * du/da
+      dK_da = self%keps * (-0.5_wp) * um3 * du_da
 
-         bp = 1.0_wp/brad(i)
-         qq = qat(i)*bp
-         egb = egb+0.5_wp*qat(i)*qq*self%keps
-         grddbi = -0.5_wp*self%keps*qq*bp
-         grddb(i) = grddb(i)+grddbi*qat(i)
-      end do
+      dK_bA = bornB * dK_da
+      dK_bB = bornA * dK_da
+   end subroutine still_pair_dborn
 
-      call gemv(brdr, grddb, gradient, beta=1.0_wp)
-      energy = egb
-   end subroutine add_still_deriv
-
-   subroutine add_still_deriv_multipole_contributions(self, nat, xyz, q_at, mu_at, q_at2, brad, brdr, gradient)
-      use mctc_env, only: wp
-      use tblite_blas, only: gemv
-      implicit none
-
-      !> Instance of Still kernel
-      class(still_kernel), intent(in) :: self
-      !> Number of atoms
-      integer, intent(in) :: nat
-      !> Cartesian coordinates (3,nat)
-      real(wp), intent(in) :: xyz(:, :)
-      !> Atomic partial charges (nat)
-      real(wp), intent(in) :: q_at(:)
-      !> Atomic dipole moments (3,nat)
-      real(wp), intent(in) :: mu_at(:, :)
-      !> Atomic quadrupole moments (6,nat), packed as (xx,xy,yy,xz,yz,zz), NOT doubled
-      real(wp), intent(in) :: q_at2(:, :)
-      !> Born radii (nat)
-      real(wp), intent(in) :: brad(:)
-      !> Born radii derivatives (3,nat,nat)
-      real(wp), contiguous, intent(in) :: brdr(:, :, :)
-      !> Nuclear gradient (3,nat)
-      real(wp), contiguous, intent(inout) :: gradient(:, :)
-
-      !> Loop indices for atoms
-      integer :: iat, jat
-      !> Loop indices for Cartesian directions and multipole components
-      integer :: ic, ipk, iqk
-      !> Auxiliary indices for tensor contractions
-      integer :: ia1, ia2, ig1, ig2
-
-      !> Distance vector between atoms
-      real(wp) :: vec(3)
-      !> Distance between atoms and its powers
-      real(wp) :: rij, invr, invr2, invr3
-      !> Unit vector and its derivatives
-      real(wp) :: uvec(3), duvec(3, 3)
-      !> Derivative of inverse distance
-      real(wp) :: dinvr(3)
-
-      !> Kernel derivatives up to 5th order
-      real(wp) :: d1(3), d2(3, 3), d3(3, 3, 3), d4(3, 3, 3, 3), d5(3, 3, 3, 3, 3)
-      !> First-order kernel derivatives with respect to Born radii
-      real(wp) :: d1_br(3), d1_bs(3)
-      !> Second-order kernel derivatives with respect to Born radii
-      real(wp) :: d2_br(3, 3), d2_bs(3, 3)
-      !> Third-order kernel derivatives with respect to Born radii
-      real(wp) :: d3_br(3, 3, 3), d3_bs(3, 3, 3)
-      !> Fourth-order kernel derivatives with respect to Born radii
-      real(wp) :: d4_br(3, 3, 3, 3), d4_bs(3, 3, 3, 3)
-
-      !> Charge on source atom
-      real(wp) :: qsrc
-      !> Dipole moments on response and source atoms
-      real(wp) :: mresp(3), msrc(3)
-      !> Quadrupole moments on response and source atoms (packed format)
-      real(wp) :: qresp6(6), qsrc6(6)
-      !> Born radii for response and source atoms
-      real(wp) :: brad_resp, brad_src
-
-      !> Generalized Born function and kernel prefactor
-      real(wp) :: gpar, kpp, coef
-      !> Derivatives of gpar, kpp, and coef with respect to coordinates
-      real(wp) :: dgpar(3), dkpp(3), dcoef(3)
-      !> Second derivatives and temporary storage
-      real(wp) :: d2u(3), tmp3(3)
-
-      !> Generalized Born function derivatives with respect to Born radii
-      real(wp) :: gpar_br, gpar_bs, kpp_br, kpp_bs, coef_br, coef_bs
-      !> Fifth-order contraction and its derivatives
-      real(wp) :: s5, ds5(3), s5_br, s5_bs
-
-      !> Temporary storage for Born radii derivatives
-      real(wp), allocatable :: grddb(:)
-
-      !> Temporary variables for Born radii derivative calculations
-      real(wp) :: t, uu12, dtc, sym2, dwabge, wabge, brad_contrib
-
-      !> Index arrays for unpacking quadrupole tensor components
-      integer, parameter :: pa(6) = [1, 1, 2, 1, 2, 3]
-      integer, parameter :: pb(6) = [1, 2, 2, 3, 3, 3]
-      !> Factor array for symmetric tensor components
-      integer, parameter :: pf(6) = [1, 2, 1, 2, 2, 1]
-
-      allocate (grddb(nat), source=0.0_wp)
-
-      ! Loop over ordered pairs: response = iat, source = jat
-      do iat = 1, nat
-         mresp(:) = mu_at(:, iat)
-         qresp6(:) = q_at2(:, iat)
-         brad_resp = brad(iat)
-
-         do jat = 1, nat
-            if (jat == iat) cycle
-
-            qsrc = q_at(jat)
-            msrc(:) = mu_at(:, jat)
-            qsrc6(:) = q_at2(:, jat)
-            brad_src = brad(jat)
-
-            ! vec = xyz(:, jat) - xyz(:, iat) points from response to source
-            vec = xyz(:, jat)-xyz(:, iat)
-            rij = sqrt(dot_product(vec, vec))
-            if (rij == 0.0_wp) cycle
-
-            invr = 1.0_wp/rij
-            invr2 = invr*invr
-            invr3 = invr2*invr
-
-            uvec = vec*invr
-
-            ! Derivatives w.r.t. response position xyz(:, iat):
-            ! du/dR_resp = -(I - u u^T) / r
-            duvec = 0.0_wp
-            do ic = 1, 3
-               duvec(1, ic) = -(merge(1.0_wp, 0.0_wp, 1 == ic)-uvec(1)*uvec(ic))*invr
-               duvec(2, ic) = -(merge(1.0_wp, 0.0_wp, 2 == ic)-uvec(2)*uvec(ic))*invr
-               duvec(3, ic) = -(merge(1.0_wp, 0.0_wp, 3 == ic)-uvec(3)*uvec(ic))*invr
-            end do
-
-            ! d(1/r)/dR_resp = +u / r^2
-            dinvr = invr2*uvec
-
-            ! Kernel derivatives: response center = xyz(:, iat)
-            call self%kernel_d1_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d1)
-            call self%kernel_d2_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d2)
-            call self%kernel_d3_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d3)
-            call self%kernel_d4_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d4)
-            call self%kernel_d5_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d5)
-
-            ! Derivatives w.r.t. Born radii
-            call self%kernel_d1_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d1_br, d1_bs)
-            call self%kernel_d2_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d2_br, d2_bs)
-            call self%kernel_d3_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d3_br, d3_bs)
-            call self%kernel_d4_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d4_br, d4_bs)
-            call self%kernel_d3_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d3)
-            call self%kernel_d4_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d4)
-            call self%kernel_d5_pair(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d5)
-
-            ! Derivatives w.r.t. Born radii
-            call self%kernel_d1_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d1_br, d1_bs)
-            call self%kernel_d2_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d2_br, d2_bs)
-            call self%kernel_d3_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d3_br, d3_bs)
-            call self%kernel_d4_pair_dborn(xyz(:, iat), xyz(:, jat), brad_resp, brad_src, d4_br, d4_bs)
-
-            ! Construct coefficient for SQ/QQ terms
-            gpar = dot_product(d1, uvec)
-            d2u = matmul(d2, uvec)
-            kpp = dot_product(uvec, d2u)
-            coef = (kpp+gpar*invr)/3.0_wp
-
-            do ic = 1, 3
-               dgpar(ic) = dot_product(d2(:, ic), uvec)+dot_product(d1, duvec(:, ic))
-               tmp3 = matmul(d3(:, :, ic), uvec)
-               dkpp(ic) = 2.0_wp*dot_product(duvec(:, ic), d2u)+dot_product(uvec, tmp3)
-               dcoef(ic) = (dkpp(ic)+dgpar(ic)*invr+gpar*dinvr(ic))/3.0_wp
-            end do
-
-            ! Derivatives of coefficient w.r.t. Born radii
-            gpar_br = dot_product(d1_br, uvec)
-            gpar_bs = dot_product(d1_bs, uvec)
-            kpp_br = dot_product(uvec, matmul(d2_br, uvec))
-            kpp_bs = dot_product(uvec, matmul(d2_bs, uvec))
-            coef_br = (kpp_br+gpar_br*invr)/3.0_wp
-            coef_bs = (kpp_bs+gpar_bs*invr)/3.0_wp
-
-            ! ============================================================
-            ! SD: E += qsrc * mresp · d1
-            ! d/dR_resp uses d2; Born chain uses d1_dborn
-            ! ============================================================
-            gradient(:, iat) = gradient(:, iat)+qsrc*matmul(transpose(d2), mresp)
-            gradient(:, jat) = gradient(:, jat)-qsrc*matmul(transpose(d2), mresp)
-
-            grddb(iat) = grddb(iat)+qsrc*dot_product(mresp, d1_br)
-            grddb(jat) = grddb(jat)+qsrc*dot_product(mresp, d1_bs)
-
-            ! ============================================================
-            ! DD: E += 0.5 * mresp^T * (-d2) * msrc
-            ! d/dR_resp uses -d3; Born chain uses -d2_dborn
-            ! ============================================================
-            do ic = 1, 3
-               t = -0.5_wp*dot_product(mresp, matmul(d3(:, :, ic), msrc))
-               gradient(ic, iat) = gradient(ic, iat)+t
-               gradient(ic, jat) = gradient(ic, jat)-t
-            end do
-
-            grddb(iat) = grddb(iat)-0.5_wp*dot_product(mresp, matmul(d2_br, msrc))
-            grddb(jat) = grddb(jat)-0.5_wp*dot_product(mresp, matmul(d2_bs, msrc))
-
-            ! ============================================================
-            ! DQ: E += mresp · [-(1/3) pf * d3] · qsrc6
-            ! d/dR_resp uses d4; Born chain uses d3_dborn
-            ! ============================================================
-            do ic = 1, 3
-               t = 0.0_wp
-               do ipk = 1, 6
-                  ia1 = pa(ipk)
-                  ia2 = pb(ipk)
-                  t = t+real(pf(ipk), wp)*qsrc6(ipk)*dot_product(mresp, d4(:, ia1, ia2, ic))
-               end do
-               t = -(1.0_wp/3.0_wp)*t
-               gradient(ic, iat) = gradient(ic, iat)+t
-               gradient(ic, jat) = gradient(ic, jat)-t
-            end do
-
-            brad_contrib = 0.0_wp
-            do ipk = 1, 6
-               ia1 = pa(ipk)
-               ia2 = pb(ipk)
-               brad_contrib = brad_contrib+real(pf(ipk), wp)*qsrc6(ipk)*dot_product(mresp, d3_br(:, ia1, ia2))
-            end do
-            grddb(iat) = grddb(iat)-(1.0_wp/3.0_wp)*brad_contrib
-
-            brad_contrib = 0.0_wp
-            do ipk = 1, 6
-               ia1 = pa(ipk)
-               ia2 = pb(ipk)
-               brad_contrib = brad_contrib+real(pf(ipk), wp)*qsrc6(ipk)*dot_product(mresp, d3_bs(:, ia1, ia2))
-            end do
-            grddb(jat) = grddb(jat)-(1.0_wp/3.0_wp)*brad_contrib
-
-            ! ============================================================
-            ! SQ: E += qsrc * qresp6 · tc, tc_p = pf(p)*coef*u_a u_b
-            ! d/dR_resp uses dcoef and du; Born chain uses coef_dborn
-            ! ============================================================
-            do ic = 1, 3
-               t = 0.0_wp
-               do ipk = 1, 6
-                  ia1 = pa(ipk)
-                  ia2 = pb(ipk)
-                  uu12 = uvec(ia1)*uvec(ia2)
-                  dtc = real(pf(ipk), wp)*(dcoef(ic)*uu12+coef*(duvec(ia1, ic)*uvec(ia2)+uvec(ia1)*duvec(ia2, ic)))
-                  t = t+qresp6(ipk)*dtc
-               end do
-               gradient(ic, iat) = gradient(ic, iat)+qsrc*t
-               gradient(ic, jat) = gradient(ic, jat)-qsrc*t
-            end do
-
-            brad_contrib = 0.0_wp
-            do ipk = 1, 6
-               ia1 = pa(ipk)
-               ia2 = pb(ipk)
-               uu12 = uvec(ia1)*uvec(ia2)
-               brad_contrib = brad_contrib+qresp6(ipk)*(real(pf(ipk), wp)*coef_br*uu12)
-            end do
-            grddb(iat) = grddb(iat)+qsrc*brad_contrib
-
-            brad_contrib = 0.0_wp
-            do ipk = 1, 6
-               ia1 = pa(ipk)
-               ia2 = pb(ipk)
-               uu12 = uvec(ia1)*uvec(ia2)
-               brad_contrib = brad_contrib+qresp6(ipk)*(real(pf(ipk), wp)*coef_bs*uu12)
-            end do
-            grddb(jat) = grddb(jat)+qsrc*brad_contrib
-
-            ! ============================================================
-            ! QQ: E += 0.5 * qresp6^T * [pfpf*((1/3)d4 + 0.5*sym2*s5)] * qsrc6
-            ! s5 = coef / r^2
-            ! d/dR_resp uses d5 and ds5; Born chain uses d4_dborn and s5_dborn
-            ! ============================================================
-            s5 = coef*invr2
-            do ic = 1, 3
-               ds5(ic) = dcoef(ic)*invr2+coef*(2.0_wp*invr3*uvec(ic))
-            end do
-            s5_br = coef_br*invr2
-            s5_bs = coef_bs*invr2
-
-            do ic = 1, 3
-               t = 0.0_wp
-               do ipk = 1, 6
-                  ia1 = pa(ipk)
-                  ia2 = pb(ipk)
-                  do iqk = 1, 6
-                     ig1 = pa(iqk)
-                     ig2 = pb(iqk)
-
-                     sym2 = 0.0_wp
-                     if (ia1 == ia2 .and. ig1 == ig2) sym2 = sym2+1.0_wp
-                     if (ia1 == ig1 .and. ia2 == ig2) sym2 = sym2+1.0_wp
-                     if (ia1 == ig2 .and. ia2 == ig1) sym2 = sym2+1.0_wp
-
-                     dwabge = (1.0_wp/3.0_wp)*d5(ia1, ia2, ig1, ig2, ic)+0.5_wp*sym2*ds5(ic)
-
-                     t = t+qresp6(ipk)*(real(pf(ipk)*pf(iqk), wp)*dwabge)*qsrc6(iqk)
-                  end do
-               end do
-               t = 0.5_wp*t
-               gradient(ic, iat) = gradient(ic, iat)+t
-               gradient(ic, jat) = gradient(ic, jat)-t
-            end do
-
-            brad_contrib = 0.0_wp
-            do ipk = 1, 6
-               ia1 = pa(ipk)
-               ia2 = pb(ipk)
-               do iqk = 1, 6
-                  ig1 = pa(iqk)
-                  ig2 = pb(iqk)
-
-                  sym2 = 0.0_wp
-                  if (ia1 == ia2 .and. ig1 == ig2) sym2 = sym2+1.0_wp
-                  if (ia1 == ig1 .and. ia2 == ig2) sym2 = sym2+1.0_wp
-                  if (ia1 == ig2 .and. ia2 == ig1) sym2 = sym2+1.0_wp
-
-                  wabge = (1.0_wp/3.0_wp)*d4_br(ia1, ia2, ig1, ig2)+0.5_wp*sym2*s5_br
-                  brad_contrib = brad_contrib+qresp6(ipk)*(real(pf(ipk)*pf(iqk), wp)*wabge)*qsrc6(iqk)
-               end do
-            end do
-            grddb(iat) = grddb(iat)+0.5_wp*brad_contrib
-
-            brad_contrib = 0.0_wp
-            do ipk = 1, 6
-               ia1 = pa(ipk)
-               ia2 = pb(ipk)
-               do iqk = 1, 6
-                  ig1 = pa(iqk)
-                  ig2 = pb(iqk)
-
-                  sym2 = 0.0_wp
-                  if (ia1 == ia2 .and. ig1 == ig2) sym2 = sym2+1.0_wp
-                  if (ia1 == ig1 .and. ia2 == ig2) sym2 = sym2+1.0_wp
-                  if (ia1 == ig2 .and. ia2 == ig1) sym2 = sym2+1.0_wp
-
-                  wabge = (1.0_wp/3.0_wp)*d4_bs(ia1, ia2, ig1, ig2)+0.5_wp*sym2*s5_bs
-                  brad_contrib = brad_contrib+qresp6(ipk)*(real(pf(ipk)*pf(iqk), wp)*wabge)*qsrc6(iqk)
-               end do
-            end do
-            grddb(jat) = grddb(jat)+0.5_wp*brad_contrib
-
-         end do
-      end do
-
-      ! Born chain rule: dE/dR += sum_k (dE/db_k) (db_k/dR)
-      call gemv(brdr, grddb, gradient, beta=1.0_wp)
-
-      deallocate (grddb)
-
-   end subroutine add_still_deriv_multipole_contributions
 
    subroutine still_d1_pair(self, rA, rB, bornA, bornB, d1)
    !! d1(i) = ∂K/∂R_A,i where K = 1/sqrt(r^2 + a*exp(-r^2/(4a))), a=bornA*bornB
@@ -539,6 +175,7 @@ contains
       real(wp), intent(out) :: d1_bA(3)
       !> Derivative wrt Born radius of atom B
       real(wp), intent(out) :: d1_bB(3)
+      
 
       real(wp) :: rvec(3), s, a, e, u
       real(wp) :: invu, invsqrtu, um3

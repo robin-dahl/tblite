@@ -2,4 +2,4 @@
 
 meson compile -C build || { echo "Compilation failed"; exit 1; }
 
-./build/app/tblite run dna.xyz --alpb water --born-multipoles
+./build/app/tblite run acetonitrile.xyz --alpb water --born-multipoles --grad

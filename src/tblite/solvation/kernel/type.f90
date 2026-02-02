@@ -29,8 +29,7 @@ module tblite_solvation_kernel_type
       real(wp) :: keps
    contains
       procedure(add_kernel_mat_interface),           deferred :: add_kernel_mat
-      procedure(add_kernel_deriv_interface),         deferred :: add_kernel_deriv
-      procedure(add_kernel_deriv_multipole_contributions_interface),         deferred :: add_kernel_deriv_multipole_contributions
+      procedure(kernel_pair_dborn_interface),        deferred :: kernel_pair_dborn
       procedure(kernel_d1_pair_interface),           deferred :: kernel_d1_pair
       procedure(kernel_d1_pair_dborn_interface),     deferred :: kernel_d1_pair_dborn
       procedure(kernel_d2_pair_interface),           deferred :: kernel_d2_pair
@@ -58,40 +57,24 @@ module tblite_solvation_kernel_type
          real(wp), intent(inout) :: amat(:, :)
       end subroutine add_kernel_mat_interface
 
-      !> Add kernel derivative contributions to energy and gradient 
-      subroutine add_kernel_deriv_interface(self, nat, xyz, qat, brad, brdr, energy, gradient)
+      !> Gradient of pairwise kernel wrt Born radii (dK/dborn) 
+      subroutine kernel_pair_dborn_interface(self, rA, rB, bornA, bornB, dk_bA, dk_bB)
          import :: kernel_type, wp
          !> Instance of interaction kernel
          class(kernel_type), intent(in) :: self
-         !> Number of atoms
-         integer, intent(in) :: nat
-         !> Cartesian coordinates
-         real(wp), intent(in) :: xyz(:, :)
-         !> Atomic partial charges
-         real(wp), intent(in) :: qat(:)
-         !> Born radii
-         real(wp), intent(in) :: brad(:)
-         !> Born radii derivatives
-         real(wp), contiguous, intent(in) :: brdr(:, :, :)
-         !> Solvation energy
-         real(wp), intent(out) :: energy
-         !> Molecular gradient
-         real(wp), contiguous, intent(inout) :: gradient(:, :)
-      end subroutine add_kernel_deriv_interface
-
-      subroutine add_kernel_deriv_multipole_contributions_interface(self, nat, xyz, q_at, mu_at, q_at2, brad, brdr, gradient)
-       import :: kernel_type, wp
-
-      class(kernel_type), intent(in) :: self
-      integer, intent(in) :: nat
-      real(wp), intent(in) :: xyz(:, :)          ! (3,nat)
-      real(wp), intent(in) :: q_at(:)               ! (nat)
-      real(wp), intent(in) :: mu_at(:, :)           ! (3,nat)
-      real(wp), intent(in) :: q_at2(:, :)         ! (6,nat)  (lower-tri: xx,xy,yy,xz,yz,zz), moments NOT doubled
-      real(wp), intent(in) :: brad(:)            ! (nat)
-      real(wp), contiguous, intent(in) :: brdr(:, :, :)   ! (3,nat,nat) -> gemv-compatible like in add_still_deriv
-      real(wp), contiguous, intent(inout) :: gradient(:, :) ! (3,nat)
-      end subroutine add_kernel_deriv_multipole_contributions_interface
+         !> Cartesian coordinates of atom A
+         real(wp), intent(in) :: rA(3)
+         !> Cartesian coordinates of atom B
+         real(wp), intent(in) :: rB(3)
+         !> Born radius of atom A
+         real(wp), intent(in) :: bornA
+         !> Born radius of atom B
+         real(wp), intent(in) :: bornB
+         !> Derivative wrt Born radius of atom A
+         real(wp), intent(out) :: dk_bA
+         !> Derivative wrt Born radius of atom B
+         real(wp), intent(out) :: dk_bB
+      end subroutine kernel_pair_dborn_interface
 
       !> Pairwise kernel gradient (interface) 
       subroutine kernel_d1_pair_interface(self, rA, rB, bornA, bornB, d1)

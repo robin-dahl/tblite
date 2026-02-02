@@ -29,8 +29,7 @@ module tblite_solvation_kernel_coulomb
    type, extends(kernel_type) :: coulomb_kernel
    contains
       procedure :: add_kernel_mat => add_coulomb_mat
-      procedure :: add_kernel_deriv => add_coulomb_deriv
-      procedure :: add_kernel_deriv_multipole_contributions => add_coulomb_deriv_multipole_contributions
+      procedure :: kernel_pair_dborn => coulomb_pair_dborn
       procedure :: kernel_d1_pair => coulomb_d1_pair
       procedure :: kernel_d1_pair_dborn => coulomb_d1_pair_dborn
       procedure :: kernel_d2_pair => coulomb_d2_pair
@@ -76,87 +75,28 @@ contains
 
       end do
    end subroutine add_coulomb_mat
-
-   subroutine add_coulomb_deriv(self, nat, xyz, qat, brad, brdr, energy, gradient)
+ 
+   subroutine coulomb_pair_dborn(self, rA, rB, bornA, bornB, dk_bA, dk_bB)
       !> Instance of Coulomb kernel
       class(coulomb_kernel), intent(in) :: self
-      !> Number of atoms
-      integer, intent(in) :: nat
-      !> Cartesian coordinates
-      real(wp), intent(in) :: xyz(:, :)
-      !> Atomic partial charges
-      real(wp), intent(in) :: qat(:)
-      !> Born radii (unused for Coulomb kernel)
+      !> Cartesian coordinates of atom A
+      real(wp), intent(in) :: rA(3)
+      !> Cartesian coordinates of atom B
+      real(wp), intent(in) :: rB(3)
+      !> Born radius of atom A (unused for Coulomb kernel)
       !  Keep for interface compatibility
-      real(wp), intent(in) :: brad(:)
-      !> Born radii derivatives (unused for Coulomb kernel)
+      real(wp), intent(in) :: bornA
+      !> Born radius of atom B (unused for Coulomb kernel)
       !  Keep for interface compatibility
-      real(wp), contiguous, intent(in) :: brdr(:, :, :)
-      !> Solvation energy
-      real(wp), intent(out) :: energy
-      !> Molecular gradient
-      real(wp), contiguous, intent(inout) :: gradient(:, :)
+      real(wp), intent(in) :: bornB
+      !> Derivative wrt Born radius of atom A (zero for Coulomb kernel)
+      real(wp), intent(out) :: dk_bA
+      !> Derivative wrt Born radius of atom B (zero for Coulomb kernel)
+      real(wp), intent(out) :: dk_bB
 
-      integer :: i, j
-      real(wp) :: vec(3), r1, r2, invr, invr3
-      real(wp) :: qq
-      real(wp) :: dr(3)
-      real(wp) :: e_coul
-      real(wp), allocatable :: grddb(:)
-
-      ! Keep for interface compatibility (unused for pure Coulomb kernel)
-      allocate (grddb(nat), source=0.0_wp)
-
-      e_coul = 0.0_wp
-      grddb(:) = 0.0_wp
-
-      do i = 1, nat
-         do j = 1, i-1
-            vec(:) = xyz(:, i)-xyz(:, j)
-            r1 = norm2(vec)
-            r2 = r1*r1
-
-            invr = 1.0_wp/r1
-            invr3 = invr/r2    ! = 1 / r^3
-
-            qq = qat(i)*qat(j)
-
-            ! Energy contribution: keps * q_i q_j / r_ij
-            e_coul = e_coul+self%keps*qq*invr
-
-            ! d/dr (1/r) = - r_vec / r^3
-            dr = self%keps*invr3*vec
-
-            ! Gradient on coordinates
-            gradient(:, i) = gradient(:, i)-dr*qq
-            gradient(:, j) = gradient(:, j)+dr*qq
-         end do
-
-      end do
-
-      ! Keep call for interface compatibility; grddb is zero so this is a no-op.
-      call gemv(brdr, grddb, gradient, beta=1.0_wp)
-
-      energy = e_coul
-   end subroutine add_coulomb_deriv
-
-   subroutine add_coulomb_deriv_multipole_contributions(self, nat, xyz, q_at, mu_at, q_at2, brad, brdr, gradient)
-      use mctc_env, only: wp
-      use tblite_blas, only: gemv
-      implicit none
-
-      class(coulomb_kernel), intent(in) :: self
-      integer, intent(in) :: nat
-      real(wp), intent(in) :: xyz(:, :)          ! (3,nat)
-      real(wp), intent(in) :: q_at(:)               ! (nat)
-      real(wp), intent(in) :: mu_at(:, :)           ! (3,nat)
-      real(wp), intent(in) :: q_at2(:, :)         ! (6,nat)  (lower-tri: xx,xy,yy,xz,yz,zz), moments NOT doubled
-      real(wp), intent(in) :: brad(:)            ! (nat)
-      real(wp), contiguous, intent(in) :: brdr(:, :, :)   ! (3,nat,nat) -> gemv-compatible like in add_still_deriv
-      real(wp), contiguous, intent(inout) :: gradient(:, :) ! (3,nat)
-
-      ! Empty subroutine - Coulomb kernel has no multipole contributions
-   end subroutine add_coulomb_deriv_multipole_contributions
+      dk_bA = 0.0_wp
+      dk_bB = 0.0_wp
+   end subroutine coulomb_pair_dborn
 
    subroutine coulomb_d1_pair(self, rA, rB, bornA, bornB, d1)
    !! d1(i) = ∂(1/r)/∂r_i (gradient w.r.t. r = rA-rB)
