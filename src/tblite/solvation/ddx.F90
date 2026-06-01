@@ -29,6 +29,7 @@ module tblite_solvation_ddx
       & ddx_state_type, ddx_type, fill_guess, fill_guess_adjoint, setup, &
       & solvation_force_terms, solve, solve_adjoint
    use ddx_core, only: ddx_electrostatics_type
+   use ddx_cosmo, only: cosmo_solvation_force_dr_terms
    use ddx_multipolar_solutes, only: multipole_electrostatics, multipole_force_terms, multipole_psi
 #endif
    use mctc_env, only: wp, error_type, fatal_error
@@ -128,6 +129,8 @@ module tblite_solvation_ddx
       integer :: incore = 0
       !> 1 to use FMM acceleration and 0 otherwise
       integer :: enable_fmm = 1
+      !> Gradient of the radii 
+      real(wp), allocatable :: drdr(:, :, :)
    contains
       !> Update cache from container
       procedure :: update
@@ -267,16 +270,9 @@ subroutine new_ddx(self, mol, input, error)
    end if
 
    !%%%%%%%%%%%%%%%%%%%%%%
-   print *, 'Radii for ddX solvation:'
-   print *, self%rvdw
-
-   allocate(drdr(3, mol%nat, mol%nat), source=0.0_wp)
-   call draco(mol, self%rvdw, self%rvdw, "water", "cosmo", drdr=drdr)
-
-   print *, 'Radii after DRACO:'
-   print *, self%rvdw
-   print *, drdr
-
+   ! Scale the radii with draco and store the gradient of the radii
+   allocate(self%drdr(3, mol%nat, mol%nat), source=0.0_wp)
+   call draco(mol, self%rvdw, self%rvdw, "water", "cosmo", drdr=self%drdr)
    !%%%%%%%%%%%%%%%%%%%%%%
    
       
@@ -541,23 +537,43 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
 
 #if TBLITE_HAS_DDX
    !> Temporary variable for the ddX force/gradient
-   real(wp), allocatable :: force(:,:)
+   real(wp), allocatable :: force(:,:), dr(:)
 
    type(ddx_cache), pointer :: ptr
+
+   integer :: i, k
    
    call view(cache, ptr)
 
    allocate(force(3, mol%nat), source=0.0_wp)
+   allocate(dr(mol%nat), source=0.0_wp)
 
    ! Compute all the solute-aspecific solvation force terms
-   call solvation_force_terms(ptr%ddx%params, ptr%ddx%constants, &
-      & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, force, ptr%ddx_error)
+   call cosmo_solvation_force_dr_terms(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics%e_cav, force, dr, ptr%ddx_error)
    call check_error(ptr%ddx_error)
 
    ! Compute all the solute-specific solvation force terms
    call multipole_force_terms(ptr%ddx%params, ptr%ddx%constants, ptr%ddx%workspace, &
       ptr%ddx_state, 0, ptr%multipoles, force, ptr%ddx_error)
    call check_error(ptr%ddx_error)
+
+   ! Now I have:
+   ! self%drdr(3, mol%nat, mol%nat) : the gradient of the radii with respect to the Cartesian coordinates
+
+   ! force(3, mol%nat) : the gradient of the solvation energy with respect to the Cartesian coordinates, 
+   !   without the contribution from the gradient of the radii
+
+   ! dr(mol%nat) : the contribution of the gradient of the radii to the solvation energy gradient
+
+   ! Add chain-rule contribution from dynamical radii:
+   ! force(:, k) += sum_i dr(i) * d r_i / d x_k
+
+   do k = 1, mol%nat              ! atom whose Cartesian coordinate is differentiated
+      do i = 1, mol%nat           ! atom whose radius is differentiated
+         force(:, k) = force(:, k) + dr(i) * self%drdr(:, i, k)
+      end do
+   end do
 
    ! Add the dielectric factor to the gradient of the solvation energy
    ! (ddX computes the gradient without it)
