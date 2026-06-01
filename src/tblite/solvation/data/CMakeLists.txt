@@ -20,6 +20,7 @@ list(
   APPEND srcs
   "${dir}/alpb.f90"
   "${dir}/cds.f90"
+  "${dir}/draco.f90"
   "${dir}/shift.f90"
 )
 

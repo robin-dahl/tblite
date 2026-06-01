@@ -17,5 +17,6 @@
 srcs += files(
   'alpb.f90',
   'cds.f90',
+  'draco.f90',
   'shift.f90',
 )

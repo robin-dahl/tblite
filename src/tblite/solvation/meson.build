@@ -24,6 +24,7 @@ srcs += files(
   'ddx.F90',
   'data.f90',
   'input.f90',
+  'radii_scaling.f90',
   'shift.f90',
   'surface.f90',
   'type.f90',

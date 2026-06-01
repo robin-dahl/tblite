@@ -27,6 +27,7 @@ list(
   "${dir}/ddx.F90"
   "${dir}/data.f90"
   "${dir}/input.f90"
+  "${dir}/radii_scaling.f90"
   "${dir}/surface.f90"
   "${dir}/shift.f90"
   "${dir}/type.f90"

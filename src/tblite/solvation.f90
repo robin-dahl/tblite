@@ -31,6 +31,8 @@ module tblite_solvation
    use tblite_solvation_shift, only : shift_solvation, new_shift, shift_input, solution_state
    use tblite_solvation_data, only : solvent_data, get_solvent_data
    use tblite_solvation_input, only : solvation_input
+   use tblite_solvation_radii_scaling, only : radii_scaling_type, &
+      & draco_radii_scaling, new_draco_radii_scaling, draco
    use tblite_solvation_type, only : solvation_type
    use tblite_solvation_data_alpb, only: get_alpb_param
    use tblite_solvation_data_cds, only: get_cds_param
@@ -46,6 +48,7 @@ module tblite_solvation
    public :: solvation_input, new_solvation, solvation_type
    public :: new_solvation_cds
    public :: new_solvation_shift, solution_state
+   public :: radii_scaling_type, draco_radii_scaling, new_draco_radii_scaling, draco
 
 contains
 

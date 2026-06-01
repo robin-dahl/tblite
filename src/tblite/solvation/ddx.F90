@@ -44,6 +44,8 @@ module tblite_solvation_ddx
    use tblite_solvation_type, only: solvation_type
    use tblite_wavefunction_type, only: wavefunction_type
 
+   use tblite_solvation_radii_scaling
+
    implicit none
    private
 
@@ -232,6 +234,8 @@ subroutine new_ddx(self, mol, input, error)
    integer :: iat, izp
    real(wp) :: feps_param 
 
+   real(wp), allocatable :: drdr(:, :, :)
+
    ! Set label
    if (input%ddx_model == ddx_solvation_model%cosmo) then
       self%label = "ddcosmo solvation model"
@@ -262,6 +266,20 @@ subroutine new_ddx(self, mol, input, error)
       end do
    end if
 
+   !%%%%%%%%%%%%%%%%%%%%%%
+   print *, 'Radii for ddX solvation:'
+   print *, self%rvdw
+
+   allocate(drdr(3, mol%nat, mol%nat), source=0.0_wp)
+   call draco(mol, self%rvdw, self%rvdw, "water", "cosmo", drdr=drdr)
+
+   print *, 'Radii after DRACO:'
+   print *, self%rvdw
+   print *, drdr
+
+   !%%%%%%%%%%%%%%%%%%%%%%
+   
+      
    ! Get epsilon and calculate dielectric function depending on the model
    self%dielectric_const = input%dielectric_const
    if (input%ddx_model == ddx_solvation_model%cosmo) then
