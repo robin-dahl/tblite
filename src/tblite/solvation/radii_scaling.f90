@@ -170,7 +170,8 @@ subroutine draco(mol, radii_in, radii_out, solvent, radtype, q, cn, atoms_to_sca
    type(draco_radii_scaling) :: scale
    character(len=:), allocatable :: local_radtype
    real(wp), allocatable :: qscratch(:), cnscratch(:)
-   real(wp), allocatable :: dqdr_scratch(:, :, :), dcndr_scratch(:, :, :)
+   real(wp), allocatable :: dqdr_scratch(:, :, :), dqdL_scratch(:, :, :)
+   real(wp), allocatable :: dcndr_scratch(:, :, :), dcndL_scratch(:, :, :)
    class(ncoord_type), allocatable :: ncoord
 
    type(error_type), allocatable :: error
@@ -185,7 +186,9 @@ subroutine draco(mol, radii_in, radii_out, solvent, radtype, q, cn, atoms_to_sca
    else
       allocate(qscratch(mol%nat))
       if (present(drdr)) then
-         call get_eeq_charges(mol, error, qscratch, dqdr=dqdr_scratch)
+         allocate(dqdr_scratch(3, mol%nat, mol%nat), source=0.0_wp)
+         allocate(dqdL_scratch(3, 3, mol%nat), source=0.0_wp)
+         call get_eeq_charges(mol, error, qscratch, dqdr=dqdr_scratch, dqdL=dqdL_scratch)
       else
          call get_eeq_charges(mol, error, qscratch)
       end if
@@ -197,8 +200,9 @@ subroutine draco(mol, radii_in, radii_out, solvent, radtype, q, cn, atoms_to_sca
       allocate(cnscratch(mol%nat))
       call new_ncoord(ncoord, mol, cn_count%erf_en, error)
       if (present(drdr)) then
-         allocate(dcndr_scratch(3, mol%nat, mol%nat))
-         call ncoord%get_cn(mol, cnscratch, dcndr_scratch)
+         allocate(dcndr_scratch(3, mol%nat, mol%nat), source=0.0_wp)
+         allocate(dcndL_scratch(3, 3, mol%nat), source=0.0_wp)
+         call ncoord%get_cn(mol, cnscratch, dcndr_scratch, dcndL_scratch)
       else
          call ncoord%get_cn(mol, cnscratch)
       end if
@@ -299,4 +303,3 @@ pure function scale_atom(izp, atoms_to_scale) result(scale)
 end function scale_atom
 
 end module tblite_solvation_radii_scaling
-

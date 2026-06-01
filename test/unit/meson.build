@@ -54,6 +54,7 @@ tests = [
   'slater-expansion',
   'spin',
   'solvation-born',
+  'solvation-draco',
   'solvation-ddx',
   'solvation-surface',
   'solvation-cds',
