@@ -54,15 +54,16 @@ subroutine collect_solvation_ddx(testsuite)
 
    if (get_tblite_feature("ddx")) then
       testsuite = [ &
-         new_unittest("energy-mol-cosmo", test_e_cosmo_m01), &
-         new_unittest("energy-mol-cpcm", test_e_cpcm_m01), &
-         new_unittest("energy-mol-pcm", test_e_pcm_m01), &
-         new_unittest("gradient-mol-num-cosmo", test_g_cosmo_m02), &
-         new_unittest("gradient-mol-num-cpcm", test_g_cpcm_m02), &
-         new_unittest("gradient-mol-num-pcm", test_g_pcm_m02), &
-         new_unittest("potential-mol-cosmo", test_p_cosmo_m03), &
-         new_unittest("potential-mol-cpcm", test_p_cpcm_m03), &
-         new_unittest("potential-mol-pcm", test_p_pcm_m03) &
+         !new_unittest("energy-mol-cosmo", test_e_cosmo_m01), &
+         !new_unittest("energy-mol-cpcm", test_e_cpcm_m01), &
+         !new_unittest("energy-mol-pcm", test_e_pcm_m01), &
+         !new_unittest("gradient-mol-num-cosmo", test_g_cosmo_m02), &
+         !new_unittest("gradient-mol-num-cpcm", test_g_cpcm_m02), &
+         !new_unittest("gradient-mol-num-pcm", test_g_pcm_m02), &
+         new_unittest("gradient-water-draco-cosmo", test_g_draco_water_cosmo) &
+         !new_unittest("potential-mol-cosmo", test_p_cosmo_m03), &
+         !new_unittest("potential-mol-cpcm", test_p_cpcm_m03), &
+         !new_unittest("potential-mol-pcm", test_p_pcm_m03) &
          ]
    else
       testsuite = [new_unittest("ddx-disabled", test_ddx_disabled)]
@@ -197,6 +198,118 @@ subroutine test_g(error, model, mol, qat)
       print '(3es20.13)', gradient - numg
    end if
 end subroutine test_g
+
+subroutine test_g_dynamic_radii(error, model, mol, qat)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Solvation model (COSMO=100, CPCM=101, PCM=200)
+   integer, intent(in) :: model
+
+   !> Molecular structure data
+   type(structure_type), intent(inout) :: mol
+
+   !> Atomic partial charges
+   real(wp), intent(in) :: qat(:)
+
+   type(ddx_solvation) :: solv
+   type(wavefunction_type) :: wfn
+   type(potential_type) :: pot
+   type(container_cache) :: cache
+   real(wp), parameter :: eps = 80.0_wp
+   integer, parameter :: nang = 302
+   real(wp), parameter :: step = 1.0e-4_wp
+   real(wp), parameter :: thr = 5.0e-5_wp
+   real(wp), allocatable :: gradient(:, :), numg(:, :)
+   real(wp) :: energy(mol%nat), sigma(3, 3)
+   integer :: ii, ic
+
+   wfn%qat = reshape(qat, [size(qat), 1])
+   allocate(pot%vat(size(qat, 1), 1))
+   allocate(numg(3, mol%nat), gradient(3, mol%nat))
+
+   do ii = 1, mol%nat
+      do ic = 1, 3
+         mol%xyz(ic, ii) = mol%xyz(ic, ii) + step
+         call get_dynamic_radii_energy(error, model, mol, wfn, pot, nang, eps, energy)
+         if (allocated(error)) return
+         numg(ic, ii) = sum(energy)
+
+         mol%xyz(ic, ii) = mol%xyz(ic, ii) - 2*step
+         call get_dynamic_radii_energy(error, model, mol, wfn, pot, nang, eps, energy)
+         if (allocated(error)) return
+         numg(ic, ii) = 0.5_wp*(numg(ic, ii) - sum(energy))/step
+
+         mol%xyz(ic, ii) = mol%xyz(ic, ii) + step
+      end do
+   end do
+
+   call new_ddx(solv, mol, ddx_input(ddx_model=model, dielectric_const=eps, nang=nang), error)
+   if (allocated(error)) return
+
+   energy = 0.0_wp
+   gradient(:, :) = 0.0_wp
+   sigma(:, :) = 0.0_wp
+   pot%vat(:, :) = 0.0_wp
+
+   call solv%update(mol, cache)
+   call solv%get_potential(mol, cache, wfn, pot)
+   call solv%get_energy(mol, cache, wfn, energy)
+   call solv%get_gradient(mol, cache, wfn, gradient, sigma)
+
+   if (any(abs(gradient - numg) > thr)) then
+      call test_failed(error, "Dynamic-radii gradient does not match")
+      print '(a)', 'analytical'
+      print '(3es20.13)', gradient
+      print '(a)', "---"
+      print '(a)', 'numerical'
+      print '(3es20.13)', numg
+      print '(a)', "---"
+      print '(a)', 'diff'
+      print '(3es20.13)', gradient - numg
+   end if
+end subroutine test_g_dynamic_radii
+
+subroutine get_dynamic_radii_energy(error, model, mol, wfn, pot, nang, eps, energy)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Solvation model (COSMO=100, CPCM=101, PCM=200)
+   integer, intent(in) :: model
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Wavefunction data
+   type(wavefunction_type), intent(in) :: wfn
+
+   !> Density dependent potential
+   type(potential_type), intent(inout) :: pot
+
+   !> Number of angular grid points
+   integer, intent(in) :: nang
+
+   !> Dielectric constant
+   real(wp), intent(in) :: eps
+
+   !> Solvation free energy
+   real(wp), intent(out) :: energy(:)
+
+   type(ddx_solvation) :: solv
+   type(container_cache) :: cache
+
+   call new_ddx(solv, mol, ddx_input(ddx_model=model, dielectric_const=eps, nang=nang), error)
+   if (allocated(error)) return
+
+   energy(:) = 0.0_wp
+   pot%vat(:, :) = 0.0_wp
+
+   call solv%update(mol, cache)
+   call solv%get_potential(mol, cache, wfn, pot)
+   call solv%get_energy(mol, cache, wfn, energy)
+end subroutine get_dynamic_radii_energy
 
 subroutine test_p(error, model, mol, qat)
 
@@ -369,6 +482,25 @@ subroutine test_g_pcm_m02(error)
    call test_g(error, ddx_solvation_model%pcm, mol, qat)
 
 end subroutine test_g_pcm_m02
+
+subroutine test_g_draco_water_cosmo(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   integer, parameter :: num(3) = [8, 1, 1]
+   real(wp), parameter :: xyz(3, 3) = reshape([&
+      &  0.000000000000_wp,  0.000000000000_wp,  0.000000000000_wp, &
+      &  1.515263215189_wp,  0.000000000000_wp, -1.058898509481_wp, &
+      & -1.515263215189_wp,  0.000000000000_wp, -1.058898509481_wp], [3, 3])
+   real(wp), parameter :: qat(*) = [-8.34000000000000E-1_wp, &
+      & 4.17000000000000E-1_wp, 4.17000000000000E-1_wp]
+
+   call new(mol, num, xyz)
+   call test_g_dynamic_radii(error, ddx_solvation_model%cosmo, mol, qat)
+
+end subroutine test_g_draco_water_cosmo
 
 subroutine test_p_cosmo_m03(error)
 

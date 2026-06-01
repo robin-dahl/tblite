@@ -237,7 +237,7 @@ subroutine new_ddx(self, mol, input, error)
    integer :: iat, izp
    real(wp) :: feps_param 
 
-   real(wp), allocatable :: drdr(:, :, :)
+   real(wp), allocatable :: scaled_rvdw(:)
 
    ! Set label
    if (input%ddx_model == ddx_solvation_model%cosmo) then
@@ -271,8 +271,10 @@ subroutine new_ddx(self, mol, input, error)
 
    !%%%%%%%%%%%%%%%%%%%%%%
    ! Scale the radii with draco and store the gradient of the radii
+   allocate(scaled_rvdw(mol%nat), source=0.0_wp)
    allocate(self%drdr(3, mol%nat, mol%nat), source=0.0_wp)
-   call draco(mol, self%rvdw, self%rvdw, "water", "cosmo", drdr=self%drdr)
+   call draco(mol, self%rvdw, scaled_rvdw, "water", "cosmo", drdr=self%drdr)
+   self%rvdw(:) = scaled_rvdw
    !%%%%%%%%%%%%%%%%%%%%%%
    
       
@@ -571,7 +573,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
 
    do k = 1, mol%nat              ! atom whose Cartesian coordinate is differentiated
       do i = 1, mol%nat           ! atom whose radius is differentiated
-         force(:, k) = force(:, k) + dr(i) * self%drdr(:, i, k)
+         force(:, k) = force(:, k) + dr(i) * self%drdr(:, k, i)
       end do
    end do
 
