@@ -16,8 +16,8 @@
 
 set(_lib "ddx")
 set(_pkg "DDX")
-set(_url "https://github.com/ddsolvation/ddX")
-set(_rev "v0.8.0")
+set(_url "https://github.com/robin-dahl/ddX.git")
+set(_rev "radgrad-fix")
 
 if(NOT DEFINED "${_pkg}_FIND_METHOD")
   if(DEFINED "${PROJECT_NAME}-dependency-method")
