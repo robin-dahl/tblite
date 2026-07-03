@@ -22,3 +22,9 @@ srcs += files(
   'type.f90',
   'diat_trafo.f90',
 )
+
+if libcint_found
+  srcs += files(
+    'libcint.F90',
+  )
+endif

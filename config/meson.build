@@ -21,6 +21,7 @@ if has_cc
   cc = meson.get_compiler('c')
 endif
 fc_id = fc.get_id()
+fs = import('fs')
 
 if fc_id == 'gcc'
   add_project_arguments(
@@ -152,6 +153,33 @@ if trexio_dep.found()
     ],
     dependencies: [trexio_dep],
   )
+endif
+
+libcint_found = false
+libcint_dep = declare_dependency()
+if not get_option('libcint').disabled()
+  libcint_dep = dependency('cint', required: false, method: 'pkg-config')
+  if not libcint_dep.found()
+    local_libcint_build = meson.project_source_root() / '..' / 'libcint' / 'build'
+    if fs.exists(local_libcint_build / 'libcint.dylib') or fs.exists(local_libcint_build / 'libcint.so') or fs.exists(local_libcint_build / 'libcint.a')
+      local_libcint_dep = cc.find_library('cint', dirs: local_libcint_build, required: false)
+      if local_libcint_dep.found()
+        libcint_dep = declare_dependency(
+          dependencies: [local_libcint_dep],
+          link_args: ['-Wl,-rpath,' + local_libcint_build],
+        )
+      endif
+    endif
+  endif
+  libcint_found = libcint_dep.found()
+endif
+if libcint_found
+  lib_deps += declare_dependency(
+    compile_args: ['-DTBLITE_HAS_LIBCINT=1'],
+    dependencies: [libcint_dep],
+  )
+elif get_option('libcint').enabled()
+  error('libcint support was requested but libcint was not found')
 endif
 
 # Create TOML Fortran as subproject

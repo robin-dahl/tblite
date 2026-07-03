@@ -26,4 +26,11 @@ list(
   "${dir}/diat_trafo.f90"
 )
 
+if(TBLITE_WITH_LIBCINT)
+  list(
+    APPEND srcs
+    "${dir}/libcint.F90"
+  )
+endif()
+
 set(srcs "${srcs}" PARENT_SCOPE)

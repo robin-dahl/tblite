@@ -62,6 +62,16 @@ if(TBLITE_WITH_TREXIO AND NOT TARGET "TREXIO::TREXIO")
     INTERFACE_INCLUDE_DIRECTORIES "${TREXIO_INCLUDE_DIR}"
   )
 endif()
+if(TBLITE_WITH_LIBCINT AND NOT TARGET "cint::cint")
+  find_package("cint" CONFIG QUIET)
+  if(NOT TARGET "cint::cint" AND EXISTS "${PROJECT_SOURCE_DIR}/../libcint/build/cintConfig.cmake")
+    list(PREPEND CMAKE_PREFIX_PATH "${PROJECT_SOURCE_DIR}/../libcint/build")
+    find_package("cint" CONFIG REQUIRED)
+  endif()
+  if(NOT TARGET "cint::cint")
+    message(FATAL_ERROR "libcint support requested, but cint::cint could not be found")
+  endif()
+endif()
 if(NOT TARGET "LAPACK::LAPACK")
   find_package("LAPACK" REQUIRED)
 endif()
@@ -159,6 +169,18 @@ if(TBLITE_WITH_TREXIO)
     "${PROJECT_NAME}-lib"
     PUBLIC
     "TBLITE_HAS_TREXIO=1"
+  )
+endif()
+if(TBLITE_WITH_LIBCINT)
+  target_link_libraries(
+    "${PROJECT_NAME}-lib"
+    PUBLIC
+    "cint::cint"
+  )
+  target_compile_definitions(
+    "${PROJECT_NAME}-lib"
+    PUBLIC
+    "TBLITE_HAS_LIBCINT=1"
   )
 endif()
 target_include_directories(

@@ -44,6 +44,7 @@ tests = [
   'hdf5',
   'halogen',
   'integral-overlap',
+  'integral-libcint',
   'integral-multipole',
   'integral-trafo',
   'ipea1-xtb',
@@ -71,7 +72,11 @@ test_srcs = files(
   'main.f90',
 )
 foreach t : tests
-  test_srcs += files('test_@0@.f90'.format(t.underscorify()))
+  if t == 'integral-libcint'
+    test_srcs += files('test_integral_libcint.F90')
+  else
+    test_srcs += files('test_@0@.f90'.format(t.underscorify()))
+  endif
 endforeach
 
 tester = executable(
