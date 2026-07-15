@@ -2,12 +2,17 @@
 ! SPDX-Identifier: LGPL-3.0-or-later
 
 module test_integral_libcint
-   use, intrinsic :: iso_c_binding, only : c_double, c_int
+   use, intrinsic :: iso_c_binding, only : c_double
    use mctc_env, only : wp
    use mctc_env_testing, only : new_unittest, unittest_type, error_type, check
+   use mctc_io, only : structure_type, new
+   use tblite_basis_type, only : basis_type, cgto_type, new_basis, new_cgto, get_cutoff
    use tblite_features, only : tblite_use_libcint
 #if TBLITE_HAS_LIBCINT
    use tblite_integral_libcint
+   use tblite_integral_dipole, only : dipole_cgto
+   use tblite_integral_multipole, only : multipole_cgto
+   use tblite_integral_overlap, only : get_overlap, overlap_grad_cgto
 #endif
    implicit none
    private
@@ -23,10 +28,11 @@ subroutine collect_integral_libcint(testsuite)
 
 #if TBLITE_HAS_LIBCINT
    testsuite = [ &
-      new_unittest("overlap-kinetic-nuclear", test_one_electron), &
-      new_unittest("eri-shell", test_eri_shell), &
-      new_unittest("grids-nuclear-consistency", test_grids_nuclear_consistency), &
-      new_unittest("cartesian-spheric-dimensions", test_cart_sph_dimensions) &
+      new_unittest("tblite-overlap-consistency", test_tblite_overlap_consistency), &
+      new_unittest("tblite-overlap-gradient-consistency", &
+         & test_tblite_overlap_gradient_consistency), &
+      new_unittest("tblite-dipole-consistency", test_tblite_dipole_consistency), &
+      new_unittest("tblite-quadrupole-consistency", test_tblite_quadrupole_consistency) &
       ]
 #else
    testsuite = [ &
@@ -36,163 +42,208 @@ subroutine collect_integral_libcint(testsuite)
 end subroutine collect_integral_libcint
 
 #if TBLITE_HAS_LIBCINT
-subroutine make_h2_basis(atm, bas, env)
-   integer(c_int), allocatable, intent(out) :: atm(:, :)
-   integer(c_int), allocatable, intent(out) :: bas(:, :)
-   real(c_double), allocatable, intent(out) :: env(:)
+subroutine make_comparison_basis(mol, basis, cbasis)
+   type(structure_type), intent(out) :: mol
+   type(basis_type), intent(out) :: basis
+   type(libcint_basis_type), intent(out) :: cbasis
+   type(cgto_type), allocatable :: cgto(:, :)
+   integer, allocatable :: nshell(:)
 
-   integer :: off
+   call new(mol, [6, 6], reshape([ &
+      & 0.0_wp, 0.0_wp, 0.0_wp, &
+      & 0.8_wp, -0.5_wp, 1.1_wp], [3, 2]))
+   allocate(nshell(mol%nid), cgto(3, mol%nid))
+   nshell = 3
+   call new_cgto(cgto(1, 1), 2, 0, [1.4_wp, 0.35_wp], &
+      & [0.65_wp, 0.45_wp], .true.)
+   call new_cgto(cgto(2, 1), 2, 1, [1.1_wp, 0.28_wp], &
+      & [0.60_wp, 0.50_wp], .true.)
+   call new_cgto(cgto(3, 1), 2, 2, [0.9_wp, 0.22_wp], &
+      & [0.55_wp, 0.52_wp], .true.)
+   call new_basis(basis, mol, nshell, cgto, 1.0_wp)
+   call new_libcint_basis(cbasis, mol, basis)
+end subroutine make_comparison_basis
 
-   allocate(atm(ATM_SLOTS, 2), source=0_c_int)
-   allocate(bas(BAS_SLOTS, 2), source=0_c_int)
-   allocate(env(64), source=0.0_c_double)
-
-   off = PTR_ENV_START
-   atm(CHARGE_OF, 1) = 1_c_int
-   atm(PTR_COORD, 1) = int(off, c_int)
-   env(off+1) = 0.0_c_double
-   env(off+2) = 0.0_c_double
-   env(off+3) = -0.7_c_double
-   off = off + 3
-
-   atm(CHARGE_OF, 2) = 1_c_int
-   atm(PTR_COORD, 2) = int(off, c_int)
-   env(off+1) = 0.0_c_double
-   env(off+2) = 0.0_c_double
-   env(off+3) = 0.7_c_double
-   off = off + 3
-
-   bas(ATOM_OF, 1) = 0_c_int
-   bas(ANG_OF, 1) = 0_c_int
-   bas(NPRIM_OF, 1) = 1_c_int
-   bas(NCTR_OF, 1) = 1_c_int
-   bas(PTR_EXP, 1) = int(off, c_int)
-   env(off+1) = 1.0_c_double
-   off = off + 1
-   bas(PTR_COEFF, 1) = int(off, c_int)
-   env(off+1) = real(libcint_gto_norm(0, 1.0_wp), c_double)
-   off = off + 1
-
-   bas(ATOM_OF, 2) = 1_c_int
-   bas(ANG_OF, 2) = bas(ANG_OF, 1)
-   bas(NPRIM_OF, 2) = bas(NPRIM_OF, 1)
-   bas(NCTR_OF, 2) = bas(NCTR_OF, 1)
-   bas(PTR_EXP, 2) = bas(PTR_EXP, 1)
-   bas(PTR_COEFF, 2) = bas(PTR_COEFF, 1)
-end subroutine make_h2_basis
-
-subroutine test_one_electron(error)
+subroutine test_tblite_overlap_consistency(error)
    type(error_type), allocatable, intent(out) :: error
 
-   integer(c_int), allocatable :: atm(:, :), bas(:, :)
-   real(c_double), allocatable :: env(:)
-   real(c_double) :: buf(1, 1)
-   integer :: stat
+   type(structure_type) :: mol
+   type(basis_type) :: basis
+   type(libcint_basis_type) :: cbasis
+   real(wp), allocatable :: ref(:, :), cint_overlap(:, :)
+   real(wp) :: trans(3, 1), cutoff
+   real(c_double) :: block(5, 5)
+   integer :: ish, jsh, ii, jj, di, dj, iao, jao, stat
 
-   call make_h2_basis(atm, bas, env)
+   call make_comparison_basis(mol, basis, cbasis)
 
-   stat = libcint_eval_1e(LIBCINT_1E_OVERLAP, LIBCINT_SPHERICAL, buf, [0, 0], atm, bas, env)
-   call check(error, stat >= 0)
+   call check(error, size(cbasis%atm, 2), mol%nat)
    if (allocated(error)) return
-   call check(error, real(buf(1, 1), wp), 1.0_wp, thr=thr)
-   if (allocated(error)) return
-
-   stat = libcint_eval_1e(LIBCINT_1E_OVERLAP, LIBCINT_SPHERICAL, buf, [0, 1], atm, bas, env)
-   call check(error, stat >= 0)
-   if (allocated(error)) return
-   call check(error, all(abs(buf) < huge(1.0_c_double)))
-   if (allocated(error)) return
-   call check(error, buf(1, 1) > 0.0_c_double)
+   call check(error, size(cbasis%bas, 2), basis%nsh)
    if (allocated(error)) return
 
-   stat = libcint_eval_1e(LIBCINT_1E_KINETIC, LIBCINT_SPHERICAL, buf, [0, 1], atm, bas, env)
-   call check(error, stat >= 0)
-   if (allocated(error)) return
-   call check(error, all(abs(buf) < huge(1.0_c_double)))
-   if (allocated(error)) return
+   cutoff = get_cutoff(basis)
+   trans = 0.0_wp
+   allocate(ref(basis%nao, basis%nao), cint_overlap(basis%nao, basis%nao), &
+      & source=0.0_wp)
+   call get_overlap(mol, trans, cutoff, basis, ref)
 
-   stat = libcint_eval_1e(LIBCINT_1E_NUCLEAR, LIBCINT_SPHERICAL, buf, [0, 1], atm, bas, env)
-   call check(error, stat >= 0)
-   if (allocated(error)) return
-   call check(error, all(abs(buf) < huge(1.0_c_double)))
-end subroutine test_one_electron
+   do ish = 1, basis%nsh
+      ii = basis%iao_sh(ish)
+      di = basis%nao_sh(ish)
+      do jsh = 1, basis%nsh
+         jj = basis%iao_sh(jsh)
+         dj = basis%nao_sh(jsh)
+         stat = libcint_eval_1e(LIBCINT_1E_OVERLAP, LIBCINT_SPHERICAL, &
+            & block, [ish-1, jsh-1], cbasis%atm, cbasis%bas, cbasis%env)
+         call check(error, stat >= 0)
+         if (allocated(error)) return
+         do iao = 1, di
+            do jao = 1, dj
+               cint_overlap(ii+iao, jj+jao) = real(block(iao, jao), wp)
+            end do
+         end do
+      end do
+   end do
 
-subroutine test_eri_shell(error)
+   do ii = 1, basis%nao
+      do jj = 1, basis%nao
+         call check(error, cint_overlap(jj, ii), ref(jj, ii), thr=thr)
+         if (allocated(error)) return
+      end do
+   end do
+end subroutine test_tblite_overlap_consistency
+
+subroutine test_tblite_overlap_gradient_consistency(error)
    type(error_type), allocatable, intent(out) :: error
+   type(structure_type) :: mol
+   type(basis_type) :: basis
+   type(libcint_basis_type) :: cbasis
+   real(wp) :: ref_s(5, 5), ref_g(3, 5, 5), vec(3), r2
+   real(c_double) :: cint_g(5, 5, 3)
+   integer :: ish, jsh, iat, jat, isp, jsp, ilsh, jlsh
+   integer :: ii, jj, di, dj, iao, jao, ic, stat
 
-   integer(c_int), allocatable :: atm(:, :), bas(:, :)
-   real(c_double), allocatable :: env(:)
-   real(c_double) :: eri_0101(1, 1, 1, 1), eri_1010(1, 1, 1, 1)
-   integer :: stat
+   call make_comparison_basis(mol, basis, cbasis)
+   do ish = 1, basis%nsh
+      iat = basis%sh2at(ish); isp = mol%id(iat)
+      ilsh = ish - basis%ish_at(iat)
+      ii = basis%iao_sh(ish); di = basis%nao_sh(ish)
+      do jsh = 1, basis%nsh
+         jat = basis%sh2at(jsh); jsp = mol%id(jat)
+         jlsh = jsh - basis%ish_at(jat)
+         jj = basis%iao_sh(jsh); dj = basis%nao_sh(jsh)
+         vec = mol%xyz(:, iat) - mol%xyz(:, jat)
+         r2 = sum(vec**2)
+         call overlap_grad_cgto(basis%cgto(jlsh, jsp), basis%cgto(ilsh, isp), &
+            & r2, vec, basis%intcut, ref_s(1:dj, 1:di), ref_g(:, 1:dj, 1:di))
+         ! The reversed order gives libcint output (j,i), with shell i in the
+         ! second position differentiated by int1e_ovlpip_sph.
+         stat = libcint_eval_overlap_gradient(cint_g, [jsh-1, ish-1], &
+            & cbasis%atm, cbasis%bas, cbasis%env)
+         call check(error, stat >= 0)
+         if (allocated(error)) return
+         do ic = 1, 3
+            do iao = 1, di
+               do jao = 1, dj
+                  call check(error, real(cint_g(jao, iao, ic), wp), &
+                     & ref_g(ic, jao, iao), thr=thr)
+                  if (allocated(error)) return
+               end do
+            end do
+         end do
+      end do
+   end do
+end subroutine test_tblite_overlap_gradient_consistency
 
-   call make_h2_basis(atm, bas, env)
-
-   stat = libcint_eval_eri(LIBCINT_SPHERICAL, eri_0101, [0, 1, 0, 1], atm, bas, env)
-   call check(error, stat >= 0)
-   if (allocated(error)) return
-   call check(error, all(abs(eri_0101) < huge(1.0_c_double)))
-   if (allocated(error)) return
-   call check(error, eri_0101(1, 1, 1, 1) > 0.0_c_double)
-   if (allocated(error)) return
-
-   stat = libcint_eval_eri(LIBCINT_SPHERICAL, eri_1010, [1, 0, 1, 0], atm, bas, env)
-   call check(error, stat >= 0)
-   if (allocated(error)) return
-   call check(error, real(eri_0101(1, 1, 1, 1) - eri_1010(1, 1, 1, 1), wp), 0.0_wp, thr=thr)
-end subroutine test_eri_shell
-
-subroutine test_grids_nuclear_consistency(error)
+subroutine test_tblite_dipole_consistency(error)
    type(error_type), allocatable, intent(out) :: error
+   type(structure_type) :: mol
+   type(basis_type) :: basis
+   type(libcint_basis_type) :: cbasis
+   real(wp) :: ref_s(5, 5), ref_d(3, 5, 5), vec(3), r2
+   real(c_double) :: cint_d(5, 5, 3)
+   integer :: ish, jsh, iat, jat, isp, jsp, ilsh, jlsh
+   integer :: ii, jj, di, dj, iao, jao, ic, stat
 
-   integer(c_int), allocatable :: atm(:, :), bas(:, :), atm_frac(:, :)
-   real(c_double), allocatable :: env(:), env_frac(:)
-   real(c_double) :: grid_buf(1, 1, 1), nuc_buf(1, 1)
-   integer :: stat, off
+   call make_comparison_basis(mol, basis, cbasis)
+   do ish = 1, basis%nsh
+      iat = basis%sh2at(ish); isp = mol%id(iat)
+      ilsh = ish - basis%ish_at(iat)
+      ii = basis%iao_sh(ish); di = basis%nao_sh(ish)
+      do jsh = 1, basis%nsh
+         jat = basis%sh2at(jsh); jsp = mol%id(jat)
+         jlsh = jsh - basis%ish_at(jat)
+         jj = basis%iao_sh(jsh); dj = basis%nao_sh(jsh)
+         vec = mol%xyz(:, iat) - mol%xyz(:, jat)
+         r2 = sum(vec**2)
+         call dipole_cgto(basis%cgto(jlsh, jsp), basis%cgto(ilsh, isp), &
+            & r2, vec, basis%intcut, ref_s(1:dj, 1:di), ref_d(:, 1:dj, 1:di))
+         ! Reversing the libcint shells makes origj the tblite ket centre i.
+         stat = libcint_eval_dipole(cint_d, [jsh-1, ish-1], &
+            & cbasis%atm, cbasis%bas, cbasis%env)
+         call check(error, stat >= 0)
+         if (allocated(error)) return
+         do ic = 1, 3
+            do iao = 1, di
+               do jao = 1, dj
+                  call check(error, real(cint_d(jao, iao, ic), wp), &
+                     & ref_d(ic, jao, iao), thr=thr)
+                  if (allocated(error)) return
+               end do
+            end do
+         end do
+      end do
+   end do
+end subroutine test_tblite_dipole_consistency
 
-   call make_h2_basis(atm, bas, env)
-
-   allocate(atm_frac(ATM_SLOTS, 3), source=0_c_int)
-   allocate(env_frac(128), source=0.0_c_double)
-   atm_frac(:, 1:2) = atm
-   atm_frac(CHARGE_OF, 1:2) = 0_c_int
-   env_frac(:size(env)) = env
-
-   off = 40
-   env_frac(PTR_GRIDS+1) = real(off, c_double)
-   env_frac(off+1:off+3) = [0.2_c_double, -0.1_c_double, 0.4_c_double]
-
-   stat = libcint_eval_1e_grids(grid_buf, [0, 0], [0, 1], atm, bas, env_frac)
-   call check(error, stat >= 0)
-   if (allocated(error)) return
-
-   atm_frac(NUC_MOD_OF, 3) = FRAC_CHARGE_NUC
-   atm_frac(PTR_COORD, 3) = int(off, c_int)
-   atm_frac(PTR_FRAC_CHARGE, 3) = int(off+3, c_int)
-   env_frac(off+4) = 1.0_c_double
-
-   stat = libcint_eval_1e(LIBCINT_1E_NUCLEAR, LIBCINT_SPHERICAL, nuc_buf, &
-      & [0, 0], atm_frac, bas, env_frac)
-   call check(error, stat >= 0)
-   if (allocated(error)) return
-   call check(error, real(grid_buf(1, 1, 1) + nuc_buf(1, 1), wp), 0.0_wp, thr=thr)
-end subroutine test_grids_nuclear_consistency
-
-subroutine test_cart_sph_dimensions(error)
+subroutine test_tblite_quadrupole_consistency(error)
    type(error_type), allocatable, intent(out) :: error
+   type(structure_type) :: mol
+   type(basis_type) :: basis
+   type(libcint_basis_type) :: cbasis
+   real(wp) :: ref_s(5, 5), ref_d(3, 5, 5), ref_q(6, 5, 5)
+   real(wp) :: vec(3), r2, raw(6), quad(6), trace
+   real(c_double) :: cint_q(5, 5, 9)
+   integer :: ish, jsh, iat, jat, isp, jsp, ilsh, jlsh
+   integer :: ii, jj, di, dj, iao, jao, ic, stat
+   integer, parameter :: qmap(6) = [1, 2, 5, 3, 6, 9]
 
-   integer(c_int), allocatable :: atm(:, :), bas(:, :)
-   real(c_double), allocatable :: env(:)
-
-   call make_h2_basis(atm, bas, env)
-
-   call check(error, libcint_cgto_cart(0, bas), 1)
-   if (allocated(error)) return
-   call check(error, libcint_cgto_spheric(0, bas), 1)
-   if (allocated(error)) return
-   call check(error, libcint_tot_cgto_cart(bas), 2)
-   if (allocated(error)) return
-   call check(error, libcint_tot_cgto_spheric(bas), 2)
-end subroutine test_cart_sph_dimensions
+   call make_comparison_basis(mol, basis, cbasis)
+   do ish = 1, basis%nsh
+      iat = basis%sh2at(ish); isp = mol%id(iat)
+      ilsh = ish - basis%ish_at(iat)
+      ii = basis%iao_sh(ish); di = basis%nao_sh(ish)
+      do jsh = 1, basis%nsh
+         jat = basis%sh2at(jsh); jsp = mol%id(jat)
+         jlsh = jsh - basis%ish_at(jat)
+         jj = basis%iao_sh(jsh); dj = basis%nao_sh(jsh)
+         vec = mol%xyz(:, iat) - mol%xyz(:, jat)
+         r2 = sum(vec**2)
+         call multipole_cgto(basis%cgto(jlsh, jsp), basis%cgto(ilsh, isp), &
+            & r2, vec, basis%intcut, ref_s(1:dj, 1:di), ref_d(:, 1:dj, 1:di), &
+            & ref_q(:, 1:dj, 1:di))
+         stat = libcint_eval_quadrupole(cint_q, [jsh-1, ish-1], &
+            & cbasis%atm, cbasis%bas, cbasis%env)
+         call check(error, stat >= 0)
+         if (allocated(error)) return
+         do iao = 1, di
+            do jao = 1, dj
+               do ic = 1, 6
+                  raw(ic) = real(cint_q(jao, iao, qmap(ic)), wp)
+               end do
+               trace = 0.5_wp*(raw(1) + raw(3) + raw(6))
+               quad = 1.5_wp*raw
+               quad([1, 3, 6]) = quad([1, 3, 6]) - trace
+               do ic = 1, 6
+                  call check(error, quad(ic), ref_q(ic, jao, iao), thr=thr)
+                  if (allocated(error)) return
+               end do
+            end do
+         end do
+      end do
+   end do
+end subroutine test_tblite_quadrupole_consistency
 
 #else
 subroutine test_disabled(error)

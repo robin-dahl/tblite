@@ -161,8 +161,13 @@ if not get_option('libcint').disabled()
   libcint_dep = dependency('cint', required: false, method: 'pkg-config')
   if not libcint_dep.found()
     cmake = import('cmake')
+    libcint_options = cmake.subproject_options()
+    libcint_options.add_cmake_defines({
+      'PYPZPX': 'ON',
+    })
     libcint_project = cmake.subproject(
       'libcint',
+      options: libcint_options,
       required: get_option('libcint'),
     )
     if libcint_project.found()

@@ -17,6 +17,10 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/tblite-utils.cmake")
 
+# Match tblite's standard real-spherical ordering, m=-l,...,+l.  This cache
+# option is consumed when libcint is built as a subproject or with FetchContent.
+set(PYPZPX ON CACHE BOOL "Use py,pz,px ordering for libcint p orbitals" FORCE)
+
 tblite_find_package("${_lib}" "${${_pkg}_FIND_METHOD}" "${_url}" "${_rev}")
 
 if(DEFINED "_${_pkg}_FIND_METHOD")
