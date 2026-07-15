@@ -136,6 +136,7 @@ if install
       configuration: cmake_data,
     ),
     files('config'/'cmake'/'Finddftd4.cmake'),
+    files('config'/'cmake'/'Findcint.cmake'),
     files('config'/'cmake'/'Findmctc-lib.cmake'),
     files('config'/'cmake'/'Findmstore.cmake'),
     files('config'/'cmake'/'Findmulticharge.cmake'),

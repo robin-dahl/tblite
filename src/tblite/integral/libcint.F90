@@ -24,14 +24,16 @@ module tblite_integral_libcint
 
    public :: LIBCINT_1E_OVERLAP, LIBCINT_1E_KINETIC, LIBCINT_1E_NUCLEAR
    public :: LIBCINT_CARTESIAN, LIBCINT_SPHERICAL
-   public :: CHARGE_OF, PTR_COORD, NUC_MOD_OF, PTR_ZETA, ATM_SLOTS
+   public :: CHARGE_OF, PTR_COORD, NUC_MOD_OF, PTR_ZETA, PTR_FRAC_CHARGE, ATM_SLOTS
    public :: ATOM_OF, ANG_OF, NPRIM_OF, NCTR_OF, KAPPA_OF, PTR_EXP, PTR_COEFF, BAS_SLOTS
-   public :: PTR_ENV_START
+   public :: PTR_GRIDS, PTR_ENV_START
+   public :: POINT_NUC, GAUSSIAN_NUC, FRAC_CHARGE_NUC
    public :: libcint_cgto_cart, libcint_cgto_spheric
    public :: libcint_tot_cgto_cart, libcint_tot_cgto_spheric
    public :: libcint_gto_norm
    public :: libcint_shell_size
    public :: libcint_eval_1e
+   public :: libcint_eval_1e_grids
    public :: libcint_eval_eri
 
    ! libcint C arrays are flattened as slot + slots * item.  These Fortran
@@ -41,6 +43,7 @@ module tblite_integral_libcint
    integer, parameter :: PTR_COORD = 2
    integer, parameter :: NUC_MOD_OF = 3
    integer, parameter :: PTR_ZETA = 4
+   integer, parameter :: PTR_FRAC_CHARGE = 5
    integer, parameter :: ATM_SLOTS = 6
 
    integer, parameter :: ATOM_OF = 1
@@ -54,7 +57,12 @@ module tblite_integral_libcint
 
    ! env offsets stored in atm/bas are zero-based libcint offsets.  Fortran
    ! code should write env(offset+1:offset+n) for C locations offset:offset+n-1.
+   integer, parameter :: PTR_GRIDS = 12
    integer, parameter :: PTR_ENV_START = 20
+
+   integer, parameter :: POINT_NUC = 1
+   integer, parameter :: GAUSSIAN_NUC = 2
+   integer, parameter :: FRAC_CHARGE_NUC = 3
 
    integer, parameter :: LIBCINT_1E_OVERLAP = 1
    integer, parameter :: LIBCINT_1E_KINETIC = 2
@@ -170,6 +178,17 @@ module tblite_integral_libcint
          integer(c_int) :: stat
       end function int1e_nuc_sph
 
+      function int1e_grids_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int1e_grids_sph") result(stat)
+         import :: c_double, c_int, c_ptr
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
+         integer(c_int), value :: natm, nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt, cache
+         integer(c_int) :: stat
+      end function int1e_grids_sph
+
       function cint2e_cart(out, shls, atm, natm, bas, nbas, env, opt) &
             & bind(C, name="cint2e_cart") result(stat)
          import :: c_double, c_int, c_ptr
@@ -262,9 +281,9 @@ function libcint_eval_1e(kind, representation, out, shls, atm, bas, env) result(
    integer(c_int) :: cshls(2)
    integer :: di, dj
 
-   cshls = int(shls, c_int)
-   di = libcint_shell_size(shls(1), bas, representation)
-   dj = libcint_shell_size(shls(2), bas, representation)
+   cshls = int(shls, c_int) ! convert to C-int for libcint
+   di = libcint_shell_size(shls(1), bas, representation) ! determine output dimensions
+   dj = libcint_shell_size(shls(2), bas, representation) ! (how many spherical basis functions in each shell)
    if (di < 0 .or. dj < 0 .or. size(out, 1) < di .or. size(out, 2) < dj) then
       stat = -1
       return
@@ -304,6 +323,34 @@ function libcint_eval_1e(kind, representation, out, shls, atm, bas, env) result(
       stat = -2
    end select
 end function libcint_eval_1e
+
+function libcint_eval_1e_grids(out, shls, grid_range, atm, bas, env) result(stat)
+   real(c_double), contiguous, intent(out) :: out(:, :, :)
+   integer, intent(in) :: shls(2)
+   integer, intent(in) :: grid_range(2)
+   integer(c_int), contiguous, intent(in) :: atm(:, :)
+   integer(c_int), contiguous, intent(in) :: bas(:, :)
+   real(c_double), contiguous, intent(in) :: env(:)
+   integer :: stat
+
+   integer(c_int) :: cshls(4), dims(3)
+   integer :: di, dj, ngrids
+
+   di = libcint_shell_size(shls(1), bas, LIBCINT_SPHERICAL)
+   dj = libcint_shell_size(shls(2), bas, LIBCINT_SPHERICAL)
+   ngrids = grid_range(2) - grid_range(1)
+   if (di < 0 .or. dj < 0 .or. ngrids < 0 .or. &
+      & size(out, 1) < ngrids .or. size(out, 2) < di .or. size(out, 3) < dj) then
+      stat = -1
+      return
+   end if
+
+   cshls = int([shls(1), shls(2), grid_range(1), grid_range(2)], c_int)
+   dims = int([di, dj, max(ngrids, 1)], c_int)
+   out(:, :, :) = 0.0_c_double
+   stat = int(int1e_grids_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
+      & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
+end function libcint_eval_1e_grids
 
 function libcint_eval_eri(representation, out, shls, atm, bas, env) result(stat)
    integer, intent(in) :: representation

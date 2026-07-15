@@ -25,6 +25,7 @@ subroutine collect_integral_libcint(testsuite)
    testsuite = [ &
       new_unittest("overlap-kinetic-nuclear", test_one_electron), &
       new_unittest("eri-shell", test_eri_shell), &
+      new_unittest("grids-nuclear-consistency", test_grids_nuclear_consistency), &
       new_unittest("cartesian-spheric-dimensions", test_cart_sph_dimensions) &
       ]
 #else
@@ -139,6 +140,42 @@ subroutine test_eri_shell(error)
    if (allocated(error)) return
    call check(error, real(eri_0101(1, 1, 1, 1) - eri_1010(1, 1, 1, 1), wp), 0.0_wp, thr=thr)
 end subroutine test_eri_shell
+
+subroutine test_grids_nuclear_consistency(error)
+   type(error_type), allocatable, intent(out) :: error
+
+   integer(c_int), allocatable :: atm(:, :), bas(:, :), atm_frac(:, :)
+   real(c_double), allocatable :: env(:), env_frac(:)
+   real(c_double) :: grid_buf(1, 1, 1), nuc_buf(1, 1)
+   integer :: stat, off
+
+   call make_h2_basis(atm, bas, env)
+
+   allocate(atm_frac(ATM_SLOTS, 3), source=0_c_int)
+   allocate(env_frac(128), source=0.0_c_double)
+   atm_frac(:, 1:2) = atm
+   atm_frac(CHARGE_OF, 1:2) = 0_c_int
+   env_frac(:size(env)) = env
+
+   off = 40
+   env_frac(PTR_GRIDS+1) = real(off, c_double)
+   env_frac(off+1:off+3) = [0.2_c_double, -0.1_c_double, 0.4_c_double]
+
+   stat = libcint_eval_1e_grids(grid_buf, [0, 0], [0, 1], atm, bas, env_frac)
+   call check(error, stat >= 0)
+   if (allocated(error)) return
+
+   atm_frac(NUC_MOD_OF, 3) = FRAC_CHARGE_NUC
+   atm_frac(PTR_COORD, 3) = int(off, c_int)
+   atm_frac(PTR_FRAC_CHARGE, 3) = int(off+3, c_int)
+   env_frac(off+4) = 1.0_c_double
+
+   stat = libcint_eval_1e(LIBCINT_1E_NUCLEAR, LIBCINT_SPHERICAL, nuc_buf, &
+      & [0, 0], atm_frac, bas, env_frac)
+   call check(error, stat >= 0)
+   if (allocated(error)) return
+   call check(error, real(grid_buf(1, 1, 1) + nuc_buf(1, 1), wp), 0.0_wp, thr=thr)
+end subroutine test_grids_nuclear_consistency
 
 subroutine test_cart_sph_dimensions(error)
    type(error_type), allocatable, intent(out) :: error

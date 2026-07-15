@@ -160,15 +160,13 @@ libcint_dep = declare_dependency()
 if not get_option('libcint').disabled()
   libcint_dep = dependency('cint', required: false, method: 'pkg-config')
   if not libcint_dep.found()
-    local_libcint_build = meson.project_source_root() / '..' / 'libcint' / 'build'
-    if fs.exists(local_libcint_build / 'libcint.dylib') or fs.exists(local_libcint_build / 'libcint.so') or fs.exists(local_libcint_build / 'libcint.a')
-      local_libcint_dep = cc.find_library('cint', dirs: local_libcint_build, required: false)
-      if local_libcint_dep.found()
-        libcint_dep = declare_dependency(
-          dependencies: [local_libcint_dep],
-          link_args: ['-Wl,-rpath,' + local_libcint_build],
-        )
-      endif
+    cmake = import('cmake')
+    libcint_project = cmake.subproject(
+      'libcint',
+      required: get_option('libcint'),
+    )
+    if libcint_project.found()
+      libcint_dep = libcint_project.dependency('cint')
     endif
   endif
   libcint_found = libcint_dep.found()

@@ -62,6 +62,7 @@ foreach(t IN LISTS tests)
   string(MAKE_C_IDENTIFIER ${t} t) 
   if("${t}" STREQUAL "integral-libcint")
     list(APPEND test-srcs "test_integral_libcint.F90")
+    set_source_files_properties("test_integral_libcint.F90" PROPERTIES Fortran_PREPROCESS ON)
   else()
     list(APPEND test-srcs "test_${t}.f90")
   endif()
@@ -76,6 +77,11 @@ target_link_libraries(
   PRIVATE
   "${PROJECT_NAME}-lib"
   "mstore::mstore"
+)
+target_compile_options(
+  "${PROJECT_NAME}-tester"
+  PRIVATE
+  "$<$<COMPILE_LANG_AND_ID:Fortran,GNU>:-cpp>"
 )
 
 foreach(t IN LISTS tests)
