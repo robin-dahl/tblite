@@ -72,17 +72,23 @@ test_srcs = files(
   'main.f90',
 )
 foreach t : tests
-  if t == 'integral-libcint'
-    test_srcs += files('test_integral_libcint.F90')
-  else
-    test_srcs += files('test_@0@.f90'.format(t.underscorify()))
-  endif
+  test_srcs += files('test_@0@.f90'.format(t.underscorify()))
 endforeach
+
+test_fortran_args = []
+if fc_id == 'gcc'
+  test_fortran_args += '-cpp'
+elif fc_id == 'intel' or fc_id == 'intel-llvm'
+  test_fortran_args += '-fpp'
+elif fc_id == 'pgi' or fc_id == 'nvidia_hpc'
+  test_fortran_args += '-Mpreprocess'
+endif
 
 tester = executable(
   'tester',
   sources: test_srcs,
   dependencies: [tblite_dep, mstore_dep],
+  fortran_args: test_fortran_args,
   link_language: 'fortran',
 )
 

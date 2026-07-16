@@ -59,13 +59,8 @@ set(
   "main.f90"
 )
 foreach(t IN LISTS tests)
-  string(MAKE_C_IDENTIFIER ${t} t) 
-  if("${t}" STREQUAL "integral-libcint")
-    list(APPEND test-srcs "test_integral_libcint.F90")
-    set_source_files_properties("test_integral_libcint.F90" PROPERTIES Fortran_PREPROCESS ON)
-  else()
-    list(APPEND test-srcs "test_${t}.f90")
-  endif()
+  string(MAKE_C_IDENTIFIER "${t}" t_id)
+  list(APPEND test-srcs "test_${t_id}.f90")
 endforeach()
 
 add_executable(
