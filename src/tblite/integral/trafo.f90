@@ -33,7 +33,7 @@ module tblite_integral_trafo
 
    real(wp), parameter :: s3 = sqrt(3.0_wp)
    real(wp), parameter :: s3_4 = s3 * 0.5_wp
-   real(wp), parameter :: dtrafo(5, 6) = reshape([&
+   real(wp), parameter :: dtrafo_legacy(5, 6) = reshape([&
       ! -2      -1       0       1       2
       & 0.0_wp, 0.0_wp, -0.5_wp, 0.0_wp,   s3_4, & ! xx
       & 0.0_wp, 0.0_wp, -0.5_wp, 0.0_wp,  -s3_4, & ! yy
@@ -41,7 +41,8 @@ module tblite_integral_trafo
       &     s3, 0.0_wp,  0.0_wp, 0.0_wp, 0.0_wp, & ! xy
       & 0.0_wp, 0.0_wp,  0.0_wp,     s3, 0.0_wp, & ! xz
       & 0.0_wp,     s3,  0.0_wp, 0.0_wp, 0.0_wp],& ! yz
-      & shape(dtrafo))
+      & shape(dtrafo_legacy))
+   real(wp), parameter :: dtrafo(5, 6) = dtrafo_legacy(:, [1, 4, 5, 2, 6, 3])
 
    real(wp), parameter :: d32 = 3.0_wp/2.0_wp
    real(wp), parameter :: s3_8 = sqrt(3.0_wp/8.0_wp)
@@ -51,7 +52,7 @@ module tblite_integral_trafo
    real(wp), parameter :: s15_4 = sqrt(15.0_wp/4.0_wp)
    real(wp), parameter :: s45 = sqrt(45.0_wp)
    real(wp), parameter :: s45_8 = sqrt(45.0_wp/8.0_wp)
-   real(wp), parameter :: ftrafo(7, 10) = reshape([&
+   real(wp), parameter :: ftrafo_legacy(7, 10) = reshape([&
       ! -3       -2       -1       0        1         2         3
       &  0.0_wp,  0.0_wp,  0.0_wp, 0.0_wp,   -s3_8,   0.0_wp,     s5_8, & ! xxx
       &   -s5_8,  0.0_wp,   -s3_8, 0.0_wp,  0.0_wp,   0.0_wp,   0.0_wp, & ! yyy
@@ -63,7 +64,9 @@ module tblite_integral_trafo
       &  0.0_wp,  0.0_wp,  0.0_wp, 0.0_wp,      s6,   0.0_wp,   0.0_wp, & ! xzz
       &  0.0_wp,  0.0_wp,      s6, 0.0_wp,  0.0_wp,   0.0_wp,   0.0_wp, & ! yzz
       &  0.0_wp,     s15,  0.0_wp, 0.0_wp,  0.0_wp,   0.0_wp,   0.0_wp],& ! xyz
-      & shape(ftrafo))
+      & shape(ftrafo_legacy))
+   real(wp), parameter :: ftrafo(7, 10) = &
+      & ftrafo_legacy(:, [1, 4, 5, 6, 10, 8, 2, 7, 9, 3])
 
    real(wp), parameter :: d38 = 3.0_wp/8.0_wp
    real(wp), parameter :: d34 = 3.0_wp/4.0_wp
@@ -76,7 +79,7 @@ module tblite_integral_trafo
    real(wp), parameter :: s45_4 = sqrt(45.0_wp/4.0_wp)
    real(wp), parameter :: s315_8 = sqrt(315.0_wp/8.0_wp)
    real(wp), parameter :: s315_16 = sqrt(315.0_wp/16.0_wp)
-   real(wp), parameter :: gtrafo(9, 15) = reshape([&
+   real(wp), parameter :: gtrafo_legacy(9, 15) = reshape([&
       !  -4     -3     -2     -1       0    1      2       3        4
       &  0._wp, 0._wp, 0._wp, 0._wp,   d38, 0._wp,-s5_16,  0._wp,  s35_64, & ! xxxx
       &  0._wp, 0._wp, 0._wp, 0._wp,   d38, 0._wp, s5_16,  0._wp,  s35_64, & ! yyyy
@@ -93,14 +96,31 @@ module tblite_integral_trafo
       &  0._wp,s315_8, 0._wp,-s45_8, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! xxyz
       &  0._wp, 0._wp, 0._wp, 0._wp, 0._wp,-s45_8, 0._wp,-s315_8,   0._wp, & ! xyyz
       &  0._wp, 0._wp,   s45, 0._wp, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp],& ! xyzz
-      &  shape(gtrafo))
+      &  shape(gtrafo_legacy))
+   real(wp), parameter :: gtrafo(9, 15) = &
+      & gtrafo_legacy(:, [1, 4, 5, 10, 13, 11, 6, 14, 15, 8, 2, 7, 12, 9, 3])
 
 contains
 
 
+!> Transformation from CCA Cartesian ordering to tblite's spherical ordering.
+pure subroutine transform0(lj, li, cart, sphr, bra, ket)
+   integer, intent(in) :: li, lj
+   real(wp), intent(in) :: cart(:, :)
+   real(wp), intent(out) :: sphr(:, :)
+   logical, intent(in) :: bra, ket
+   real(wp) :: work(size(cart, 1), size(cart, 2))
+
+   work = cart
+   if (bra .and. lj == 1) work = work([2, 3, 1], :)
+   if (ket .and. li == 1) work = work(:, [2, 3, 1])
+   call transform0_core(lj, li, work, sphr, bra, ket)
+end subroutine transform0
+
+
 !> Transformation from the cartesian to the spherical harmonic basis 
 !> for a shell pair block.
-pure subroutine transform0(lj, li, cart, sphr, bra, ket)
+pure subroutine transform0_core(lj, li, cart, sphr, bra, ket)
    !> Angular momentum of ket shell i
    integer, intent(in) :: li
    !> Angular momentum of bra shell j
@@ -158,12 +178,7 @@ pure subroutine transform0(lj, li, cart, sphr, bra, ket)
       case(0, 1)
          sphr = cart
       case(2)
-         !sphr = matmul(dtrafo, cart)
-         sphr(3, :) = cart(3, :) - 0.5_wp * (cart(1, :) + cart(2, :))
-         sphr(4, :) = s3 * cart(5, :)
-         sphr(2, :) = s3 * cart(6, :)
-         sphr(5, :) = s3_4 * (cart(1, :) - cart(2, :))
-         sphr(1, :) = s3 * cart(4, :)
+         sphr = matmul(dtrafo, cart)
       case(3)
          sphr = matmul(ftrafo, cart)
       case(4)
@@ -175,34 +190,9 @@ pure subroutine transform0(lj, li, cart, sphr, bra, ket)
    case(2)
       select case(lj)
       case(0, 1)
-         !sphr = matmul(cart, transpose(dtrafo))
-         sphr(:, 3) = cart(:, 3) - 0.5_wp * (cart(:, 1) + cart(:, 2))
-         sphr(:, 4) = s3 * cart(:, 5)
-         sphr(:, 2) = s3 * cart(:, 6)
-         sphr(:, 5) = s3_4 * (cart(:, 1) - cart(:, 2))
-         sphr(:, 1) = s3 * cart(:, 4)
+         sphr = matmul(cart, transpose(dtrafo))
       case(2)
-         !sphr = matmul(dtrafo, matmul(cart, transpose(dtrafo)))
-         sphr(3, 3) = cart(3, 3) &
-            & - 0.5_wp * (cart(3, 1) + cart(3, 2) + cart(1, 3) + cart(2, 3)) &
-            & + 0.25_wp * (cart(1, 1) + cart(1, 2) + cart(2, 1) + cart(2, 2))
-         sphr([4, 2, 1], 3) = s3 * cart([5, 6, 4], 3) &
-            & - s3_4 * (cart([5, 6, 4], 1) + cart([5, 6, 4], 2))
-         sphr(5, 3) = s3_4 * (cart(1, 3) - cart(2, 3)) &
-            & - s3 * 0.25_wp * (cart(1, 1) - cart(2, 1) + cart(1, 2) - cart(2, 2))
-         sphr(3, 4) = s3 * cart(3, 5) - s3_4 * (cart(1, 5) + cart(2, 5))
-         sphr([4, 2, 1], 4) = 3 * cart([5, 6, 4], 5)
-         sphr(5, 4) = 1.5_wp * (cart(1, 5) - cart(2, 5))
-         sphr(3, 2) = s3 * cart(3, 6) - s3_4 * (cart(1, 6) + cart(2, 6))
-         sphr([4, 2, 1], 2) = 3 * cart([5, 6, 4], 6)
-         sphr(5, 2) = 1.5_wp * (cart(1, 6) - cart(2, 6))
-         sphr(3, 5) = s3_4 * (cart(3, 1) - cart(3, 2)) &
-            & - s3 * 0.25_wp * (cart(1, 1) - cart(1, 2) + cart(2, 1) - cart(2, 2))
-         sphr([4, 2, 1], 5) = 1.5_wp * (cart([5, 6, 4], 1) - cart([5, 6, 4], 2))
-         sphr(5, 5) = 0.75_wp * (cart(1, 1) - cart(2, 1) - cart(1, 2) + cart(2, 2))
-         sphr(3, 1) = s3 * cart(3, 4) - s3_4 * (cart(1, 4) + cart(2, 4))
-         sphr([4, 2, 1], 1) = 3 * cart([5, 6, 4], 4)
-         sphr(5, 1) = 1.5_wp * (cart(1, 4) - cart(2, 4))
+         sphr = matmul(dtrafo, matmul(cart, transpose(dtrafo)))
       case(3)
          sphr = matmul(ftrafo, matmul(cart, transpose(dtrafo)))
       case(4)
@@ -243,7 +233,7 @@ pure subroutine transform0(lj, li, cart, sphr, bra, ket)
       error stop "[Fatal] Moments higher than g are not supported"
    end select
 
-end subroutine transform0
+end subroutine transform0_core
 
 !> Transformation from the cartesian to the spherical harmonic basis 
 !> for a vector of shell pair block.
@@ -298,6 +288,20 @@ end subroutine transform2
 !> for a shell pair block. Applies quantities which behave contravariant w.r.t.
 !> the basis functions (i.e. MO expansion coefficients or the density matrix)
 pure subroutine adjoint_transform0(lj, li, sphr, cart, bra, ket)
+   integer, intent(in) :: li, lj
+   real(wp), intent(in) :: sphr(:, :)
+   real(wp), intent(out) :: cart(:, :)
+   logical, intent(in) :: bra, ket
+   real(wp) :: work(size(cart, 1), size(cart, 2))
+
+   call adjoint_transform0_core(lj, li, sphr, work, bra, ket)
+   cart = work
+   if (bra .and. lj == 1) cart = cart([3, 1, 2], :)
+   if (ket .and. li == 1) cart = cart(:, [3, 1, 2])
+end subroutine adjoint_transform0
+
+
+pure subroutine adjoint_transform0_core(lj, li, sphr, cart, bra, ket)
    !> Angular momentum of ket shell i
    integer, intent(in) :: li
    !> Angular momentum of bra shell j
@@ -412,7 +416,7 @@ pure subroutine adjoint_transform0(lj, li, sphr, cart, bra, ket)
       error stop "[Fatal] Moments higher than g are not supported"
    end select
 
-end subroutine adjoint_transform0
+end subroutine adjoint_transform0_core
 
 !> Adjoint transformation from the spherical harmonic to the cartesian basis
 !> for a vector of shell pair block. Applies quantities which behave contravariant

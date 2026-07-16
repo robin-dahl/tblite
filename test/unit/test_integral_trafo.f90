@@ -379,7 +379,7 @@ subroutine test_trafo_pcl(error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 
-   real(wp), parameter :: density_cart(20, 20, 1) = reshape([&
+   real(wp), parameter :: density_cart_legacy(20, 20, 1) = reshape([&
       &  1.96022219468921E+00_wp, -4.31628878279072E-16_wp, -3.69459754888647E-01_wp, &
       & -1.11098031904690E-16_wp,  4.71236654550718E-02_wp,  4.71236654550742E-02_wp, &
       & -9.42473309101460E-02_wp,  5.62965590903630E-16_wp, -4.06828497062294E-16_wp, &
@@ -513,15 +513,34 @@ subroutine test_trafo_pcl(error)
       &  9.94892415398064E-16_wp, -3.00207544958856E-02_wp,  2.85677087660719E-16_wp, &
       &  2.29937596740726E-15_wp,  1.53607452191457E-17_wp, -1.63261802835476E-19_wp, &
       & -1.51974834163102E-17_wp,  2.24806227067167E-17_wp,  2.74953670942324E-16_wp, &
-      &  5.53508929793114E-03_wp], shape(density_cart))
+      &  5.53508929793114E-03_wp], shape(density_cart_legacy))
 
    type(structure_type) :: mol
    type(xtb_calculator) :: calc
    type(wavefunction_type) :: wfn
+   real(wp) :: density_cart(20, 20, 1)
+   integer :: ish, ii, ni, map(20)
 
    call get_structure(mol, "MB16-43", "PCl")
    call new_gfn2_calculator(calc, mol, error)
    if (allocated(error)) return
+   do ish = 1, calc%bas%nsh
+      ii = calc%bas%iao_cart_sh(ish)
+      ni = calc%bas%nao_cart_sh(ish)
+      select case(ni)
+      case(1)
+         map(ii+1:ii+ni) = ii + [1]
+      case(3)
+         map(ii+1:ii+ni) = ii + [3, 1, 2]
+      case(6)
+         map(ii+1:ii+ni) = ii + [1, 4, 5, 2, 6, 3]
+      case(10)
+         map(ii+1:ii+ni) = ii + [1, 4, 5, 6, 10, 8, 2, 7, 9, 3]
+      case(15)
+         map(ii+1:ii+ni) = ii + [1, 4, 5, 10, 13, 11, 6, 14, 15, 8, 2, 7, 12, 9, 3]
+      end select
+   end do
+   density_cart(:, :, 1) = density_cart_legacy(map, map, 1)
    call new_wavefunction(wfn, mol%nat, calc%bas%nsh, calc%bas%nao, 1, kt)
    call test_density_trafo(mol, calc, wfn, density_cart, error, thr_in=thr*100.0_wp)
 

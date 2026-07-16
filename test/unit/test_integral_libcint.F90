@@ -12,7 +12,8 @@ module test_integral_libcint
    use tblite_integral_libcint
    use tblite_integral_dipole, only : dipole_cgto
    use tblite_integral_multipole, only : multipole_cgto, multipole_grad_cgto
-   use tblite_integral_overlap, only : get_overlap, overlap_grad_cgto
+   use tblite_integral_overlap, only : get_overlap, overlap_grad_cgto, &
+      & get_cartesian_exponents
 #endif
    implicit none
    private
@@ -31,6 +32,7 @@ subroutine collect_integral_libcint(testsuite)
       new_unittest("tblite-overlap-consistency", test_tblite_overlap_consistency), &
       new_unittest("tblite-overlap-gradient-consistency", &
          & test_tblite_overlap_gradient_consistency), &
+      new_unittest("cca-cartesian-ordering", test_cca_cartesian_ordering), &
       new_unittest("tblite-dipole-consistency", test_tblite_dipole_consistency), &
       new_unittest("tblite-quadrupole-consistency", test_tblite_quadrupole_consistency), &
       new_unittest("tblite-dipole-gradient-consistency", &
@@ -159,6 +161,30 @@ subroutine test_tblite_overlap_gradient_consistency(error)
       end do
    end do
 end subroutine test_tblite_overlap_gradient_consistency
+
+subroutine test_cca_cartesian_ordering(error)
+   type(error_type), allocatable, intent(out) :: error
+   integer :: exponents(3, 15)
+
+   call get_cartesian_exponents(1, exponents(:, 1:3))
+   call check(error, all(exponents(:, 1:3) == reshape([ &
+      & 1,0,0, 0,1,0, 0,0,1], [3, 3])))
+   if (allocated(error)) return
+   call get_cartesian_exponents(2, exponents(:, 1:6))
+   call check(error, all(exponents(:, 1:6) == reshape([ &
+      & 2,0,0, 1,1,0, 1,0,1, 0,2,0, 0,1,1, 0,0,2], [3, 6])))
+   if (allocated(error)) return
+   call get_cartesian_exponents(3, exponents(:, 1:10))
+   call check(error, all(exponents(:, 1:10) == reshape([ &
+      & 3,0,0, 2,1,0, 2,0,1, 1,2,0, 1,1,1, 1,0,2, &
+      & 0,3,0, 0,2,1, 0,1,2, 0,0,3], [3, 10])))
+   if (allocated(error)) return
+   call get_cartesian_exponents(4, exponents)
+   call check(error, all(exponents == reshape([ &
+      & 4,0,0, 3,1,0, 3,0,1, 2,2,0, 2,1,1, 2,0,2, &
+      & 1,3,0, 1,2,1, 1,1,2, 1,0,3, 0,4,0, 0,3,1, &
+      & 0,2,2, 0,1,3, 0,0,4], [3, 15])))
+end subroutine test_cca_cartesian_ordering
 
 subroutine test_tblite_dipole_consistency(error)
    type(error_type), allocatable, intent(out) :: error
