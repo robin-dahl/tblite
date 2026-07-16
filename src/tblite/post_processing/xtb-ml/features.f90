@@ -57,7 +57,7 @@ module tblite_post_processing_xtbml_features
          !> Wavefunction strcuture data
          type(wavefunction_type), intent(in) :: wfn
          !> Integral container
-         type(integral_type), intent(in) :: ints
+         class(integral_type), intent(in) :: ints
          !> Single-point calculator
          type(xtb_calculator), intent(in) :: calc
          !> Cache list for storing caches of various interactions
@@ -84,7 +84,7 @@ module tblite_post_processing_xtbml_features
          !> Wavefunction strcuture data
          type(wavefunction_type), intent(in) :: wfn
          !> Integral container
-         type(integral_type), intent(in) :: ints
+         class(integral_type), intent(in) :: ints
          !> Single-point calculator
          type(xtb_calculator), intent(in) :: calc
          !> Cache list for storing caches of various interactions

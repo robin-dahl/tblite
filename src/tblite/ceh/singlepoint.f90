@@ -78,7 +78,7 @@ contains
       ! Molecular dipole moment
       real(wp) :: dipole(3)
       ! Integral container
-      type(integral_type) :: ints
+      class(integral_type), allocatable :: ints
       ! Electronic solver
       class(solver_type), allocatable :: solver
       ! Adjacency list
@@ -163,8 +163,8 @@ contains
       end if
 
       ! Get Hamiltonian and integrals
-      call new_integral(ints, calc%bas%nao)
-      call get_hamiltonian(mol, lattr, list, calc%bas, calc%h0, selfenergy, &
+      call new_integral(ints, calc%integral, calc%bas%nao)
+      call get_hamiltonian(mol, lattr, list, calc%bas, ints, calc%h0, selfenergy, &
       & ints%overlap, ints%overlap_diat, ints%dipole, ints%hamiltonian)
       call timer%pop
 

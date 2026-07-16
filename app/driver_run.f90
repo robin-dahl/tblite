@@ -156,6 +156,11 @@ subroutine run_main(config, error)
    end if
    if (allocated(error)) return
 
+   if (config%libcint) then
+      call calc%add_integral_handler(mol, error, use_libcint=.true.)
+      if (allocated(error)) return
+   end if
+
    calc%mixer_input = config%mixer
 
    use_guess = .true.
@@ -180,6 +185,10 @@ subroutine run_main(config, error)
    if (use_guess .and. config%guess == "ceh") then
       call new_ceh_calculator(calc_ceh, mol, error)
       if (allocated(error)) return
+      if (config%libcint) then
+         call calc_ceh%add_integral_handler(mol, error, use_libcint=.true.)
+         if (allocated(error)) return
+      end if
       call new_wavefunction(wfn_ceh, mol%nat, calc_ceh%bas%nsh, calc_ceh%bas%nao, 1, config%etemp_guess * kt)
    end if
 

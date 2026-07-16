@@ -23,7 +23,9 @@ list(
   "${dir}/overlap.f90"
   "${dir}/trafo.f90"
   "${dir}/type.f90"
+  "${dir}/native.f90"
   "${dir}/diat_trafo.f90"
+  "${dir}/handler.F90"
 )
 
 if(TBLITE_WITH_LIBCINT)

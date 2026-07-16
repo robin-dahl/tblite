@@ -36,6 +36,8 @@ module tblite_xtb_calculator
    use tblite_coulomb_thirdorder, only : new_onsite_thirdorder
    use tblite_disp, only : dispersion_type, d4_dispersion, new_d4_dispersion, &
       & new_d4s_dispersion, d3_dispersion, new_d3_dispersion
+   use tblite_integral_handler, only : new_integral_handler
+   use tblite_integral_type, only : integral_type
    use tblite_param, only : param_record
    use tblite_repulsion, only : new_repulsion
    use tblite_repulsion_effective, only : tb_repulsion
@@ -55,6 +57,8 @@ module tblite_xtb_calculator
       type(basis_type) :: bas
       !> Core Hamiltonian
       type(tb_hamiltonian) :: h0
+      !> Selected Gaussian integral backend
+      class(integral_type), allocatable :: integral
       !> Coordination number for modifying the self-energies
       class(ncoord_type), allocatable :: ncoord
       !> Electronegativity-weighted coordination number for modifying the self-energies
@@ -86,6 +90,8 @@ module tblite_xtb_calculator
       procedure :: push_back
       !> Remove an interaction container
       procedure :: pop
+      !> Select and initialize the Gaussian integral backend
+      procedure :: add_integral_handler
    end type xtb_calculator
 
 
@@ -157,6 +163,8 @@ subroutine new_xtb_calculator(calc, mol, param, error, config)
    if (allocated(error)) return
 
    call add_basis(calc, mol, param, irc)
+   call calc%add_integral_handler(mol, error)
+   if (allocated(error)) return
    calc%max_iter = calc%mixer_input%max_iter
    call add_ncoord(calc, mol, param, error)
    if (allocated(error)) return
@@ -171,6 +179,16 @@ subroutine new_xtb_calculator(calc, mol, param, error, config)
    calc%method = "custom"
 
 end subroutine new_xtb_calculator
+
+!> Select the native (default) or libcint Gaussian integral backend.
+subroutine add_integral_handler(self, mol, error, use_libcint)
+   class(xtb_calculator), intent(inout) :: self
+   type(structure_type), intent(in) :: mol
+   type(error_type), allocatable, intent(out) :: error
+   logical, intent(in), optional :: use_libcint
+
+   call new_integral_handler(self%integral, mol, self%bas, error, use_libcint)
+end subroutine add_integral_handler
 
 
 subroutine add_basis(calc, mol, param, irc)

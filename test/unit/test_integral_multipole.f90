@@ -23,8 +23,8 @@ module test_integral_multipole
    use tblite_basis_type
    use tblite_basis_slater, only : slater_to_gauss
    use tblite_cutoff, only : get_lattice_points
-   use tblite_integral_dipole
-   use tblite_integral_multipole
+   use tblite_integral_native, only : dipole_cgto, multipole_cgto, &
+      & multipole_grad_cgto, get_dipole_integrals, get_multipole_integrals
    implicit none
    private
 

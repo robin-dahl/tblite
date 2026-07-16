@@ -123,7 +123,7 @@ subroutine add_pot_to_h1(bas, ints, pot, h1)
    !> Basis set information
    type(basis_type), intent(in) :: bas
    !> Integral container
-   type(integral_type), intent(in) :: ints
+   class(integral_type), intent(in) :: ints
    !> Density dependent potential-shifts
    type(potential_type), intent(inout) :: pot
    !> Effective Hamiltonian

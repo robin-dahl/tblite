@@ -922,6 +922,8 @@ contains
       end if
 
       call add_ceh_basis(calc, mol)
+      call calc%add_integral_handler(mol, error)
+      if (allocated(error)) return
       call add_ncoord(calc, mol, error)
       if(allocated(error)) return
       call add_ncoord_en(calc, mol, error)

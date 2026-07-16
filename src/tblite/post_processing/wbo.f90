@@ -63,7 +63,7 @@ subroutine compute(self, mol, wfn, ints, calc, caches, ctx, timer, prlevel, dict
    !> Wavefunction strcuture data
    type(wavefunction_type), intent(in) :: wfn
    !> Integral container
-   type(integral_type), intent(in) :: ints
+   class(integral_type), intent(in) :: ints
    !> Calculator instance
    type(xtb_calculator), intent(in) :: calc
    !> Cache list for storing caches of various interactions

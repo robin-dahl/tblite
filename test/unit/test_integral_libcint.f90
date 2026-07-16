@@ -8,10 +8,11 @@ module test_integral_libcint
    use mctc_io, only : structure_type, new
    use tblite_basis_type, only : basis_type, cgto_type, new_basis, new_cgto, get_cutoff
    use tblite_features, only : tblite_use_libcint
+   use tblite_integral_handler, only : new_integral_handler
+   use tblite_integral_type, only : integral_type
 #if TBLITE_HAS_LIBCINT
    use tblite_integral_libcint
-   use tblite_integral_dipole, only : dipole_cgto
-   use tblite_integral_multipole, only : multipole_cgto, multipole_grad_cgto
+   use tblite_integral_native, only : dipole_cgto, multipole_cgto, multipole_grad_cgto
    use tblite_integral_overlap, only : get_overlap, overlap_grad_cgto, &
       & get_cartesian_exponents
 #endif
@@ -33,6 +34,7 @@ subroutine collect_integral_libcint(testsuite)
       new_unittest("tblite-overlap-gradient-consistency", &
          & test_tblite_overlap_gradient_consistency), &
       new_unittest("cca-cartesian-ordering", test_cca_cartesian_ordering), &
+      new_unittest("backend-handler-consistency", test_backend_handler_consistency), &
       new_unittest("tblite-dipole-consistency", test_tblite_dipole_consistency), &
       new_unittest("tblite-quadrupole-consistency", test_tblite_quadrupole_consistency), &
       new_unittest("tblite-dipole-gradient-consistency", &
@@ -119,6 +121,59 @@ subroutine test_tblite_overlap_consistency(error)
       end do
    end do
 end subroutine test_tblite_overlap_consistency
+
+subroutine test_backend_handler_consistency(error)
+   type(error_type), allocatable, intent(out) :: error
+   type(error_type), allocatable :: backend_error
+   type(structure_type) :: mol
+   type(basis_type) :: basis
+   type(libcint_basis_type) :: cbasis
+   class(integral_type), allocatable :: native, cint
+   real(wp) :: sn(25), sc(25), dn(3, 25), dc(3, 25)
+   real(wp) :: qn(6, 25), qc(6, 25), vec(3), r2
+   real(wp) :: dsn(3, 25), dsc(3, 25)
+   real(wp) :: ddjn(3, 3, 25), ddjc(3, 3, 25)
+   real(wp) :: ddin(3, 3, 25), ddic(3, 3, 25)
+   real(wp) :: dqjn(3, 6, 25), dqjc(3, 6, 25)
+   real(wp) :: dqin(3, 6, 25), dqic(3, 6, 25)
+   integer :: ish, jsh, n
+
+   call make_comparison_basis(mol, basis, cbasis)
+   call new_integral_handler(native, mol, basis, backend_error)
+   call check(error, .not. allocated(backend_error))
+   if (allocated(error)) return
+   call new_integral_handler(cint, mol, basis, backend_error, use_libcint=.true.)
+   call check(error, .not. allocated(backend_error))
+   if (allocated(error)) return
+
+   ish = 2
+   jsh = 6
+   n = basis%nao_sh(ish)*basis%nao_sh(jsh)
+   vec = mol%xyz(:, basis%sh2at(ish)) - mol%xyz(:, basis%sh2at(jsh))
+   r2 = sum(vec**2)
+   call native%multipole_integral(mol, basis, jsh, ish, r2, vec, sn, dn, qn)
+   call cint%multipole_integral(mol, basis, jsh, ish, r2, vec, sc, dc, qc)
+   call check(error, all(abs(sn(:n) - sc(:n)) < thr))
+   if (allocated(error)) return
+   call check(error, all(abs(dn(:, :n) - dc(:, :n)) < thr))
+   if (allocated(error)) return
+   call check(error, all(abs(qn(:, :n) - qc(:, :n)) < thr))
+   if (allocated(error)) return
+
+   call native%multipole_gradient_integral(mol, basis, jsh, ish, r2, vec, sn, dn, qn, &
+      & dsn, ddjn, dqjn, ddin, dqin)
+   call cint%multipole_gradient_integral(mol, basis, jsh, ish, r2, vec, sc, dc, qc, &
+      & dsc, ddjc, dqjc, ddic, dqic)
+   call check(error, all(abs(dsn(:, :n) - dsc(:, :n)) < thr))
+   if (allocated(error)) return
+   call check(error, all(abs(ddjn(:, :, :n) - ddjc(:, :, :n)) < thr))
+   if (allocated(error)) return
+   call check(error, all(abs(ddin(:, :, :n) - ddic(:, :, :n)) < thr))
+   if (allocated(error)) return
+   call check(error, all(abs(dqjn(:, :, :n) - dqjc(:, :, :n)) < thr))
+   if (allocated(error)) return
+   call check(error, all(abs(dqin(:, :, :n) - dqic(:, :, :n)) < thr))
+end subroutine test_backend_handler_consistency
 
 subroutine test_tblite_overlap_gradient_consistency(error)
    type(error_type), allocatable, intent(out) :: error

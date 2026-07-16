@@ -83,7 +83,7 @@ subroutine compute_features(self, mol, wfn, ints, calc, caches, mlcache, &
    !> Wavefunction strcuture data
    type(wavefunction_type), intent(in) :: wfn
    !> Integral container
-   type(integral_type), intent(in) :: ints
+   class(integral_type), intent(in) :: ints
    !> Single-point calculator
    type(xtb_calculator), intent(in) :: calc
    !> Cache list for storing caches of various interactions
@@ -147,7 +147,7 @@ subroutine compute_extended(self, mol, wfn, ints, calc, caches, mlcache, &
    !> Wavefunction strcuture data
    type(wavefunction_type), intent(in) :: wfn
    !> Integral container
-   type(integral_type), intent(in) :: ints
+   class(integral_type), intent(in) :: ints
    !> Single-point calculator
    type(xtb_calculator), intent(in) :: calc
    !> Cache list for storing caches of various interactions

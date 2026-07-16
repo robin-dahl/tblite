@@ -20,7 +20,9 @@ srcs += files(
   'overlap.f90',
   'trafo.f90',
   'type.f90',
+  'native.f90',
   'diat_trafo.f90',
+  'handler.F90',
 )
 
 if libcint_found

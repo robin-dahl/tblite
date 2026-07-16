@@ -22,6 +22,7 @@ module tblite_integral_libcint
    use mctc_io, only : structure_type
    use mctc_io_constants, only : pi
    use tblite_basis_type, only : basis_type
+   use tblite_integral_type, only : integral_type
    implicit none
    private
 
@@ -42,7 +43,7 @@ module tblite_integral_libcint
    public :: libcint_eval_1e_grids
    public :: libcint_eval_eri
    public :: libcint_eval_3c2e, libcint_eval_3c1e_rinv
-   public :: libcint_basis_type, new_libcint_basis
+   public :: libcint_basis_type, libcint_integral_type, new_libcint_basis
 
    !> Libcint representation of a molecular Gaussian basis.  The integer
    !> tables contain zero-based offsets into env, as required by libcint.
@@ -51,6 +52,16 @@ module tblite_integral_libcint
       integer(c_int), allocatable :: bas(:, :)
       real(c_double), allocatable :: env(:)
    end type libcint_basis_type
+
+   !> Libcint-backed integral evaluator and cached basis conversion.
+   type, extends(integral_type) :: libcint_integral_type
+      type(libcint_basis_type) :: basis
+   contains
+      procedure :: initialize_integral => initialize_libcint
+      procedure :: multipole_integral => multipole_libcint
+      procedure :: multipole_gradient_integral => multipole_gradient_libcint
+      procedure :: dipole_integral => dipole_libcint
+   end type libcint_integral_type
 
    ! libcint C arrays are flattened as slot + slots * item.  These Fortran
    ! constants are shifted by one so normal arrays can be declared as
@@ -344,6 +355,131 @@ module tblite_integral_libcint
    end interface
 
 contains
+
+subroutine initialize_libcint(self, mol, basis)
+   class(libcint_integral_type), intent(inout) :: self
+   type(structure_type), intent(in) :: mol
+   type(basis_type), intent(in) :: basis
+
+   call new_libcint_basis(self%basis, mol, basis)
+end subroutine initialize_libcint
+
+subroutine dipole_libcint(self, mol, basis, jsh, ish, r2, vec, overlap, dipole)
+   class(libcint_integral_type), intent(in) :: self
+   type(structure_type), intent(in) :: mol
+   type(basis_type), intent(in) :: basis
+   integer, intent(in) :: jsh, ish
+   real(wp), intent(in) :: r2, vec(3)
+   real(wp), intent(out) :: overlap(:), dipole(:, :)
+   real(c_double), allocatable :: cdp(:, :, :), cov(:, :)
+   integer :: dj, di, jao, iao, ij, stat
+
+   dj = basis%nao_sh(jsh); di = basis%nao_sh(ish)
+   allocate(cdp(dj, di, 3), cov(dj, di))
+   stat = libcint_eval_1e(LIBCINT_1E_OVERLAP, LIBCINT_SPHERICAL, cov, &
+      & [jsh-1, ish-1], self%basis%atm, self%basis%bas, self%basis%env)
+   stat = libcint_eval_dipole(cdp, [jsh-1, ish-1], self%basis%atm, &
+      & self%basis%bas, self%basis%env)
+   do iao = 1, di
+      do jao = 1, dj
+         ij = jao + dj*(iao-1)
+         overlap(ij) = real(cov(jao, iao), wp)
+         dipole(:, ij) = real(cdp(jao, iao, :), wp)
+      end do
+   end do
+end subroutine dipole_libcint
+
+subroutine multipole_libcint(self, mol, basis, jsh, ish, r2, vec, overlap, &
+      & dipole, quadrupole)
+   class(libcint_integral_type), intent(in) :: self
+   type(structure_type), intent(in) :: mol
+   type(basis_type), intent(in) :: basis
+   integer, intent(in) :: jsh, ish
+   real(wp), intent(in) :: r2, vec(3)
+   real(wp), intent(out) :: overlap(:), dipole(:, :), quadrupole(:, :)
+   real(c_double), allocatable :: cqp(:, :, :)
+   real(wp) :: raw(6), trace
+   integer, parameter :: qmap(6) = [1, 2, 5, 3, 6, 9]
+   integer :: dj, di, jao, iao, ij, stat
+
+   call self%dipole_integral(mol, basis, jsh, ish, r2, vec, overlap, dipole)
+   dj = basis%nao_sh(jsh); di = basis%nao_sh(ish)
+   allocate(cqp(dj, di, 9))
+   stat = libcint_eval_quadrupole(cqp, [jsh-1, ish-1], self%basis%atm, &
+      & self%basis%bas, self%basis%env)
+   do iao = 1, di
+      do jao = 1, dj
+         ij = jao + dj*(iao-1)
+         raw = real(cqp(jao, iao, qmap), wp)
+         trace = 0.5_wp*(raw(1) + raw(3) + raw(6))
+         quadrupole(:, ij) = 1.5_wp*raw
+         quadrupole([1, 3, 6], ij) = quadrupole([1, 3, 6], ij) - trace
+      end do
+   end do
+end subroutine multipole_libcint
+
+subroutine multipole_gradient_libcint(self, mol, basis, jsh, ish, r2, vec, &
+      & overlap, dipole, quadrupole, doverlap, ddipole_j, dquadrupole_j, &
+      & ddipole_i, dquadrupole_i)
+   class(libcint_integral_type), intent(in) :: self
+   type(structure_type), intent(in) :: mol
+   type(basis_type), intent(in) :: basis
+   integer, intent(in) :: jsh, ish
+   real(wp), intent(in) :: r2, vec(3)
+   real(wp), intent(out) :: overlap(:), dipole(:, :), quadrupole(:, :)
+   real(wp), intent(out) :: doverlap(:, :)
+   real(wp), intent(out) :: ddipole_j(:, :, :), dquadrupole_j(:, :, :)
+   real(wp), intent(out) :: ddipole_i(:, :, :), dquadrupole_i(:, :, :)
+   real(c_double), allocatable :: covg(:, :, :)
+   real(c_double), allocatable :: cdj(:, :, :, :), cdi(:, :, :, :)
+   real(c_double), allocatable :: cqj(:, :, :, :), cqi(:, :, :, :)
+   real(c_double), allocatable :: sdj(:, :, :, :), sdi(:, :, :, :)
+   real(c_double), allocatable :: sqj(:, :, :, :), sqi(:, :, :, :)
+   real(wp) :: raw(6), trace
+   integer, parameter :: qmap(6) = [1, 2, 5, 3, 6, 9]
+   integer :: dj, di, jao, iao, ij, ic, ider, stat
+
+   call self%multipole_integral(mol, basis, jsh, ish, r2, vec, overlap, dipole, quadrupole)
+   dj = basis%nao_sh(jsh); di = basis%nao_sh(ish)
+   allocate(covg(dj, di, 3), cdj(dj, di, 3, 3), cdi(dj, di, 3, 3), &
+      & cqj(dj, di, 9, 3), cqi(dj, di, 9, 3), &
+      & sdj(di, dj, 3, 3), sdi(di, dj, 3, 3), &
+      & sqj(di, dj, 9, 3), sqi(di, dj, 9, 3))
+   stat = libcint_eval_overlap_gradient(covg, [jsh-1, ish-1], self%basis%atm, &
+      & self%basis%bas, self%basis%env)
+   stat = libcint_eval_dipole_gradient(cdj, cdi, [jsh-1, ish-1], self%basis%atm, &
+      & self%basis%bas, self%basis%env)
+   stat = libcint_eval_quadrupole_gradient(cqj, cqi, [jsh-1, ish-1], &
+      & self%basis%atm, self%basis%bas, self%basis%env)
+   stat = libcint_eval_dipole_gradient(sdi, sdj, [ish-1, jsh-1], self%basis%atm, &
+      & self%basis%bas, self%basis%env)
+   stat = libcint_eval_quadrupole_gradient(sqi, sqj, [ish-1, jsh-1], &
+      & self%basis%atm, self%basis%bas, self%basis%env)
+   do iao = 1, di
+      do jao = 1, dj
+         ij = jao + dj*(iao-1)
+         do ider = 1, 3
+            doverlap(ider, ij) = real(covg(jao, iao, ider), wp)
+            ddipole_i(ider, :, ij) = real(cdi(jao, iao, :, ider), wp)
+            ddipole_j(ider, :, ij) = real(sdi(iao, jao, :, ider), wp)
+            do ic = 1, 6
+               raw(ic) = real(cqi(jao, iao, qmap(ic), ider), wp)
+            end do
+            trace = 0.5_wp*(raw(1) + raw(3) + raw(6))
+            dquadrupole_i(ider, :, ij) = 1.5_wp*raw
+            dquadrupole_i(ider, [1, 3, 6], ij) = &
+               & dquadrupole_i(ider, [1, 3, 6], ij) - trace
+            do ic = 1, 6
+               raw(ic) = real(sqi(iao, jao, qmap(ic), ider), wp)
+            end do
+            trace = 0.5_wp*(raw(1) + raw(3) + raw(6))
+            dquadrupole_j(ider, :, ij) = 1.5_wp*raw
+            dquadrupole_j(ider, [1, 3, 6], ij) = &
+               & dquadrupole_j(ider, [1, 3, 6], ij) - trace
+         end do
+      end do
+   end do
+end subroutine multipole_gradient_libcint
 
 !> Pack a tblite structure and basis into libcint's atm/bas/env format.
 subroutine new_libcint_basis(self, mol, basis)

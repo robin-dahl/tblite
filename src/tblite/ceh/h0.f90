@@ -24,8 +24,7 @@ module tblite_ceh_h0
    use tblite_basis_type, only:  basis_type
    use tblite_xtb_spec, only : tb_h0spec
    use tblite_xtb_h0, only : tb_hamiltonian
-   use tblite_integral_dipole, only: get_dipole_integrals, dipole_cgto, &
-   & maxl, msao, smap
+   use tblite_integral_type, only : integral_type
    use tblite_adjlist, only : adjacency_list
    use tblite_integral_diat_trafo, only: diat_trafo
 
@@ -87,7 +86,7 @@ contains
    end subroutine get_scaled_selfenergy
 
 
-   subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, &
+   subroutine get_hamiltonian(mol, trans, list, bas, integral, h0, selfenergy, &
    & overlap, overlap_diat, dpint, hamiltonian)
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
@@ -97,6 +96,7 @@ contains
       type(adjacency_list), intent(in) :: list
       !> Basis set information
       type(basis_type), intent(in) :: bas
+      class(integral_type), intent(in) :: integral
       !> Hamiltonian interaction data
       type(tb_hamiltonian), intent(in) :: h0
       !> Diagonal elememts of the Hamiltonian
@@ -121,11 +121,11 @@ contains
       hamiltonian(:, :) = 0.0_wp
 
       ! Allocate temporary matrices for overlap, diatomic frame scaled overlap and dipole moment integrals
-      allocate(stmp(msao(bas%maxl)**2), dtmpi(3, msao(bas%maxl)**2), &
-      & block_overlap(smap(bas%maxl+1),smap(bas%maxl+1)))
+      allocate(stmp(maxval(bas%nao_sh)**2), dtmpi(3, maxval(bas%nao_sh)**2), &
+      & block_overlap((bas%maxl+1)**2, (bas%maxl+1)**2))
 
       !$omp parallel do schedule(runtime) default(none) &
-      !$omp shared(mol, bas, trans, list, overlap, overlap_diat, dpint, hamiltonian, h0, selfenergy) &
+      !$omp shared(mol, bas, integral, trans, list, overlap, overlap_diat, dpint, hamiltonian, h0, selfenergy) &
       !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao, ij, iaosh, jaosh) &
       !$omp private(r2, vec, stmp, block_overlap, dtmpi, dtmpj, hij, rr, inl, img)
       do iat = 1, mol%nat
@@ -145,17 +145,17 @@ contains
             block_overlap = 0.0_wp
             do ish = 1, bas%nsh_id(izp)
                ii = bas%iao_sh(is+ish)
-               iaosh = smap(ish-1) ! Offset for the block overlap matrix
+               iaosh = (ish-1)**2 ! Offset for the block overlap matrix
                do jsh = 1, bas%nsh_id(jzp)
                   jj = bas%iao_sh(js+jsh)
-                  jaosh = smap(jsh-1) ! Offset for the block overlap matrix
+                  jaosh = (jsh-1)**2 ! Offset for the block overlap matrix
 
-                  call dipole_cgto(bas%cgto(jsh,jzp), bas%cgto(ish,izp), &
-                  & r2, vec, bas%intcut, stmp, dtmpi)
+                  call integral%dipole_integral(mol, bas, js+jsh, is+ish, &
+                     & r2, vec, stmp, dtmpi)
 
                   ! Store the overlap and dipole matrix
-                  nao = msao(bas%cgto(jsh, jzp)%ang)
-                  do iao = 1, msao(bas%cgto(ish, izp)%ang)
+                  nao = bas%nao_sh(js+jsh)
+                  do iao = 1, bas%nao_sh(is+ish)
                      do jao = 1, nao
                         ij = jao + nao*(iao-1)
                         ! Shift dipole operator from Ket function (center i)
@@ -191,15 +191,15 @@ contains
             ! Setup the Hamiltonian and store the diatomic frame scaled overlap. 
             do ish = 1, bas%nsh_id(izp)
                ii = bas%iao_sh(is+ish)
-               iaosh = smap(ish-1) ! Offset for the block overlap matrix
+               iaosh = (ish-1)**2 ! Offset for the block overlap matrix
                do jsh = 1, bas%nsh_id(jzp)
                   jj = bas%iao_sh(js+jsh)
-                  jaosh = smap(jsh-1) ! Offset for the block overlap matrix
+                  jaosh = (jsh-1)**2 ! Offset for the block overlap matrix
                   
                   hij = 0.5_wp * h0%hscale(jsh, ish, jzp, izp) * (selfenergy(is+ish) + selfenergy(js+jsh)) 
 
-                  nao = msao(bas%cgto(jsh, jzp)%ang)
-                  do iao = 1, msao(bas%cgto(ish, izp)%ang)
+                  nao = bas%nao_sh(js+jsh)
+                  do iao = 1, bas%nao_sh(is+ish)
                      do jao = 1, nao
                         ij = jao + nao*(iao-1)
 
@@ -225,7 +225,7 @@ contains
       end do
 
       !$omp parallel do schedule(runtime) default(none) &
-      !$omp shared(mol, bas, trans, overlap, overlap_diat, dpint, hamiltonian, h0, selfenergy) &
+      !$omp shared(mol, bas, integral, trans, overlap, overlap_diat, dpint, hamiltonian, h0, selfenergy) &
       !$omp private(iat, izp, itr, is, ish, jsh, ii, jj, iao, jao, nao, ij) &
       !$omp private(r2, vec, stmp, dtmpi, hij, rr)
       do iat = 1, mol%nat
@@ -238,10 +238,10 @@ contains
             ii = bas%iao_sh(is+ish)
             do jsh = 1, bas%nsh_id(izp)
                jj = bas%iao_sh(is+jsh)
-               call dipole_cgto(bas%cgto(jsh,izp), bas%cgto(ish,izp), &
-               & r2, vec, bas%intcut, stmp, dtmpi)
-               nao = msao(bas%cgto(jsh, izp)%ang)
-               do iao = 1, msao(bas%cgto(ish, izp)%ang)
+               call integral%dipole_integral(mol, bas, is+jsh, is+ish, &
+                  & r2, vec, stmp, dtmpi)
+               nao = bas%nao_sh(is+jsh)
+               do iao = 1, bas%nao_sh(is+ish)
                   do jao = 1, nao
                      ij = jao + nao*(iao-1)
                      overlap(jj+jao, ii+iao) = overlap(jj+jao, ii+iao) &
@@ -256,7 +256,7 @@ contains
                end do
             end do
             ! diagonal term (AO(i) == AO(j)) as on-site off-diagonal the hamiltonian is zero
-            do iao = 1, msao(bas%cgto(ish, izp)%ang)
+            do iao = 1, bas%nao_sh(is+ish)
                hamiltonian(ii+iao, ii+iao) = selfenergy(is + ish)
             enddo
          end do

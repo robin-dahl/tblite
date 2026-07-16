@@ -23,7 +23,7 @@ module tblite_xtb_h0
    use mctc_io, only : structure_type
    use tblite_adjlist, only : adjacency_list
    use tblite_basis_type, only : basis_type
-   use tblite_integral_multipole, only : multipole_cgto, multipole_grad_cgto, maxl, msao
+   use tblite_integral_type, only : integral_type
    use tblite_scf_potential, only : potential_type
    use tblite_xtb_spec, only : tb_h0spec
    implicit none
@@ -169,7 +169,7 @@ subroutine get_selfenergy(h0, id, ish_at, nshell, cn, qat, selfenergy, dsedcn, d
 end subroutine get_selfenergy
 
 
-subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, dpint, qpint, &
+subroutine get_hamiltonian(mol, trans, list, bas, integral, h0, selfenergy, overlap, dpint, qpint, &
       & hamiltonian)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -179,6 +179,7 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, dpint
    type(adjacency_list), intent(in) :: list
    !> Basis set information
    type(basis_type), intent(in) :: bas
+   class(integral_type), intent(in) :: integral
    !> Hamiltonian interaction data
    type(tb_hamiltonian), intent(in) :: h0
    !> Diagonal elememts of the Hamiltonian
@@ -202,10 +203,11 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, dpint
    qpint(:, :, :) = 0.0_wp
    hamiltonian(:, :) = 0.0_wp
 
-   allocate(stmp(msao(bas%maxl)**2), dtmpi(3, msao(bas%maxl)**2), qtmpi(6, msao(bas%maxl)**2))
+   allocate(stmp(maxval(bas%nao_sh)**2), dtmpi(3, maxval(bas%nao_sh)**2), &
+      & qtmpi(6, maxval(bas%nao_sh)**2))
 
    !$omp parallel do schedule(runtime) default(none) &
-   !$omp shared(mol, bas, trans, list, overlap, dpint, qpint, hamiltonian, h0, selfenergy) &
+   !$omp shared(mol, bas, integral, trans, list, overlap, dpint, qpint, hamiltonian, h0, selfenergy) &
    !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao, ij) &
    !$omp private(r2, vec, stmp, dtmpi, qtmpi, dtmpj, qtmpj, hij, shpoly, rr, inl, img)
    do iat = 1, mol%nat
@@ -224,8 +226,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, dpint
             ii = bas%iao_sh(is+ish)
             do jsh = 1, bas%nsh_id(jzp)
                jj = bas%iao_sh(js+jsh)
-               call multipole_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                  & r2, vec, bas%intcut, stmp, dtmpi, qtmpi)
+               call integral%multipole_integral(mol, bas, js+jsh, is+ish, r2, vec, &
+                  & stmp, dtmpi, qtmpi)
 
                shpoly = (1.0_wp + h0%shpoly(ish, izp)*rr) &
                   * (1.0_wp + h0%shpoly(jsh, jzp)*rr)
@@ -233,8 +235,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, dpint
                hij = 0.5_wp * (selfenergy(is+ish) + selfenergy(js+jsh)) &
                   * h0%hscale(jsh, ish, jzp, izp) * shpoly
 
-               nao = msao(bas%cgto(jsh, jzp)%ang)
-               do iao = 1, msao(bas%cgto(ish, izp)%ang)
+               nao = bas%nao_sh(js+jsh)
+               do iao = 1, bas%nao_sh(is+ish)
                   do jao = 1, nao
                      ij = jao + nao*(iao-1)
                      call shift_operator(vec, stmp(ij), dtmpi(:, ij), qtmpi(:, ij), &
@@ -274,7 +276,7 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, dpint
    end do
 
    !$omp parallel do schedule(runtime) default(none) &
-   !$omp shared(mol, bas, overlap, dpint, qpint, hamiltonian, h0, selfenergy) &
+   !$omp shared(mol, bas, integral, overlap, dpint, qpint, hamiltonian, h0, selfenergy) &
    !$omp private(iat, izp, is, ish, jsh, ii, jj, iao, jao, nao, ij) &
    !$omp private(vec, stmp, dtmpi, qtmpi, hij)
    do iat = 1, mol%nat
@@ -285,14 +287,14 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, dpint
          ii = bas%iao_sh(is+ish)
          do jsh = 1, bas%nsh_id(izp)
             jj = bas%iao_sh(is+jsh)
-            call multipole_cgto(bas%cgto(jsh, izp), bas%cgto(ish, izp), &
-               & 0.0_wp, vec, bas%intcut, stmp, dtmpi, qtmpi)
+            call integral%multipole_integral(mol, bas, is+jsh, is+ish, 0.0_wp, vec, &
+               & stmp, dtmpi, qtmpi)
 
             ! shpoly is always 1.0, because rr is always 0.0
             hij = 0.5_wp * (selfenergy(is+ish) + selfenergy(is+jsh))
 
-            nao = msao(bas%cgto(jsh, izp)%ang)
-            do iao = 1, msao(bas%cgto(ish, izp)%ang)
+            nao = bas%nao_sh(is+jsh)
+            do iao = 1, bas%nao_sh(is+ish)
                do jao = 1, nao
                   ij = jao + nao*(iao-1)
                   overlap(jj+jao, ii+iao) = overlap(jj+jao, ii+iao) &
@@ -316,7 +318,7 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, dpint
 end subroutine get_hamiltonian
 
 
-subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedcn, &
+subroutine get_hamiltonian_gradient(mol, trans, list, bas, integral, h0, selfenergy, dsedcn, &
       & pot, pmat, xmat, dEdcn, gradient, sigma)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -326,6 +328,7 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedc
    type(adjacency_list), intent(in) :: list
    !> Basis set information
    type(basis_type), intent(in) :: bas
+   class(integral_type), intent(in) :: integral
    !> Hamiltonian interaction data
    type(tb_hamiltonian), intent(in) :: h0
    !> Diagonal elememts of the Hamiltonian
@@ -357,13 +360,13 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedc
 
    nspin = size(pmat, 3)
 
-   allocate(stmp(msao(bas%maxl)**2), dstmp(3, msao(bas%maxl)**2), &
-      & dtmp(3, msao(bas%maxl)**2), ddtmpi(3, 3, msao(bas%maxl)**2), &
-      & qtmp(6, msao(bas%maxl)**2), dqtmpi(3, 6, msao(bas%maxl)**2), &
-      & ddtmpj(3, 3, msao(bas%maxl)**2), dqtmpj(3, 6, msao(bas%maxl)**2))
+   allocate(stmp(maxval(bas%nao_sh)**2), dstmp(3, maxval(bas%nao_sh)**2), &
+      & dtmp(3, maxval(bas%nao_sh)**2), ddtmpi(3, 3, maxval(bas%nao_sh)**2), &
+      & qtmp(6, maxval(bas%nao_sh)**2), dqtmpi(3, 6, maxval(bas%nao_sh)**2), &
+      & ddtmpj(3, 3, maxval(bas%nao_sh)**2), dqtmpj(3, 6, maxval(bas%nao_sh)**2))
 
    !$omp parallel do schedule(runtime) default(none) reduction(+:dEdcn, gradient, sigma) &
-   !$omp shared(mol, bas, trans, h0, selfenergy, dsedcn, pot, pmat, xmat, list, nspin) &
+   !$omp shared(mol, bas, integral, trans, h0, selfenergy, dsedcn, pot, pmat, xmat, list, nspin) &
    !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao, ij, spin, &
    !$omp& r2, vec, stmp, dtmp, qtmp, dstmp, ddtmpi, dqtmpi, ddtmpj, dqtmpj, hij, &
    !$omp& dG, dcni, dcnj, dhdcni, dhdcnj, hpij, rr, sval, hscale, pij, inl, img, &
@@ -385,8 +388,8 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedc
             ii = bas%iao_sh(is+ish)
             do jsh = 1, bas%nsh_id(jzp)
                jj = bas%iao_sh(js+jsh)
-               call multipole_grad_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                  & r2, vec, bas%intcut, stmp, dtmp, qtmp, dstmp, ddtmpj, dqtmpj, &
+               call integral%multipole_gradient_integral(mol, bas, js+jsh, is+ish, &
+                  & r2, vec, stmp, dtmp, qtmp, dstmp, ddtmpj, dqtmpj, &
                   & ddtmpi, dqtmpi)
                
                shpolyi = 1.0_wp + h0%shpoly(ish, izp)*rr
@@ -406,8 +409,8 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedc
                dG(:) = 0.0_wp
                dcni = 0.0_wp
                dcnj = 0.0_wp
-               nao = msao(bas%cgto(jsh, jzp)%ang)
-               do iao = 1, msao(bas%cgto(ish, izp)%ang)
+               nao = bas%nao_sh(js+jsh)
+               do iao = 1, bas%nao_sh(is+ish)
                   do jao = 1, nao
                      ij = jao + nao*(iao-1)
                      do spin = 1, nspin
@@ -463,7 +466,7 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedc
          ii = bas%iao_sh(is+ish)
          dhdcni = dsedcn(is+ish)
          dcni = 0.0_wp
-         do iao = 1, msao(bas%cgto(ish, izp)%ang)
+         do iao = 1, bas%nao_sh(is+ish)
             dcni = dcni + dhdcni * pmat(ii+iao, ii+iao, 1)
          end do
          dEdcn(iat) = dEdcn(iat) + dcni

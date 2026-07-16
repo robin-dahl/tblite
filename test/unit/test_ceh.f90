@@ -35,6 +35,7 @@ module test_ceh
    use tblite_ceh_singlepoint, only : ceh_singlepoint
    use tblite_ceh_ceh, only : ceh_h0spec, new_ceh_calculator
    use tblite_ceh_h0, only : get_scaled_selfenergy, get_hamiltonian
+   use tblite_integral_native, only : native_integral_type
 
    use tblite_blas, only: gemv
 
@@ -47,6 +48,7 @@ module test_ceh
 
    real(wp), parameter :: kt = 4000.0_wp * 3.166808578545117e-06_wp
    real(wp), parameter :: thr2 = 1.0e2_wp*sqrt(epsilon(1.0_wp))
+   type(native_integral_type) :: integral
 
 contains
 
@@ -376,7 +378,7 @@ contains
       allocate(overlap(bas%nao, bas%nao), overlap_diat(bas%nao, bas%nao), &
       & dpint(3, bas%nao, bas%nao), hamiltonian(bas%nao, bas%nao))
 
-      call get_hamiltonian(mol, lattr, list, bas, h0, selfenergy, &
+      call get_hamiltonian(mol, lattr, list, bas, integral, h0, selfenergy, &
       & overlap, overlap_diat, dpint, hamiltonian)
 
       do ii = 1, size(hamiltonian, 2)
@@ -444,7 +446,7 @@ contains
       allocate(overlap(bas%nao, bas%nao), overlap_diat(bas%nao, bas%nao), &
       & dpint(3, bas%nao, bas%nao), hamiltonian(bas%nao, bas%nao))
 
-      call get_hamiltonian(mol, lattr, list, bas, h0, selfenergy, &
+      call get_hamiltonian(mol, lattr, list, bas, integral, h0, selfenergy, &
       & overlap, overlap_diat, dpint, hamiltonian)
 
       do ii = 1, size(overlap_diat, 2)
