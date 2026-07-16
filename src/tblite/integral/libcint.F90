@@ -37,9 +37,11 @@ module tblite_integral_libcint
    public :: libcint_shell_size
    public :: libcint_eval_1e
    public :: libcint_eval_dipole, libcint_eval_quadrupole
+   public :: libcint_eval_dipole_gradient, libcint_eval_quadrupole_gradient
    public :: libcint_eval_overlap_gradient
    public :: libcint_eval_1e_grids
    public :: libcint_eval_eri
+   public :: libcint_eval_3c2e, libcint_eval_3c1e_rinv
    public :: libcint_basis_type, new_libcint_basis
 
    !> Libcint representation of a molecular Gaussian basis.  The integer
@@ -229,6 +231,94 @@ module tblite_integral_libcint
          type(c_ptr), value :: opt, cache
          integer(c_int) :: stat
       end function int1e_ovlpip_sph
+
+      function int1e_ipr_origj_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int1e_ipr_origj_sph") result(stat)
+         import :: c_double, c_int, c_ptr
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
+         integer(c_int), value :: natm, nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt, cache
+         integer(c_int) :: stat
+      end function int1e_ipr_origj_sph
+
+      function int1e_r_origj_ip_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int1e_r_origj_ip_sph") result(stat)
+         import :: c_double, c_int, c_ptr
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
+         integer(c_int), value :: natm, nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt, cache
+         integer(c_int) :: stat
+      end function int1e_r_origj_ip_sph
+
+      function int1e_iprr_origj_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int1e_iprr_origj_sph") result(stat)
+         import :: c_double, c_int, c_ptr
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
+         integer(c_int), value :: natm, nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt, cache
+         integer(c_int) :: stat
+      end function int1e_iprr_origj_sph
+
+      function int1e_rr_origj_ip_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int1e_rr_origj_ip_sph") result(stat)
+         import :: c_double, c_int, c_ptr
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
+         integer(c_int), value :: natm, nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt, cache
+         integer(c_int) :: stat
+      end function int1e_rr_origj_ip_sph
+
+      function int3c2e_cart(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int3c2e_cart") result(stat)
+         import :: c_double, c_int, c_ptr
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
+         integer(c_int), value :: natm, nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt, cache
+         integer(c_int) :: stat
+      end function int3c2e_cart
+
+      function int3c2e_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int3c2e_sph") result(stat)
+         import :: c_double, c_int, c_ptr
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
+         integer(c_int), value :: natm, nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt, cache
+         integer(c_int) :: stat
+      end function int3c2e_sph
+
+      function int3c1e_rinv_cart(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int3c1e_rinv_cart") result(stat)
+         import :: c_double, c_int, c_ptr
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
+         integer(c_int), value :: natm, nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt, cache
+         integer(c_int) :: stat
+      end function int3c1e_rinv_cart
+
+      function int3c1e_rinv_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int3c1e_rinv_sph") result(stat)
+         import :: c_double, c_int, c_ptr
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
+         integer(c_int), value :: natm, nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt, cache
+         integer(c_int) :: stat
+      end function int3c1e_rinv_sph
 
       function cint2e_cart(out, shls, atm, natm, bas, nbas, env, opt) &
             & bind(C, name="cint2e_cart") result(stat)
@@ -471,6 +561,68 @@ function libcint_eval_quadrupole(out, shls, atm, bas, env) result(stat)
       & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
 end function libcint_eval_quadrupole
 
+function libcint_eval_dipole_gradient(out_bra, out_ket, shls, atm, bas, env) result(stat)
+   !> Complete nuclear-center derivatives of a ket-centered dipole integral.
+   real(c_double), contiguous, intent(out) :: out_bra(:, :, :, :), out_ket(:, :, :, :)
+   integer, intent(in) :: shls(2)
+   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
+   real(c_double), contiguous, intent(in) :: env(:)
+   integer :: stat
+   integer(c_int) :: cshls(2), dims(2)
+   integer :: di, dj, stat_bra
+
+   di = libcint_shell_size(shls(1), bas, LIBCINT_SPHERICAL)
+   dj = libcint_shell_size(shls(2), bas, LIBCINT_SPHERICAL)
+   if (size(out_bra, 1) < di .or. size(out_bra, 2) < dj .or. &
+      & size(out_bra, 3) < 3 .or. size(out_bra, 4) < 3 .or. &
+      & any(shape(out_ket) < shape(out_bra))) then
+      stat = -1
+      return
+   end if
+   cshls = int(shls, c_int)
+   dims = int([size(out_bra, 1), size(out_bra, 2)], c_int)
+   out_bra = 0.0_c_double
+   out_ket = 0.0_c_double
+   stat_bra = int(int1e_ipr_origj_sph(out_bra, dims, cshls, atm, &
+      & int(size(atm, 2), c_int), bas, int(size(bas, 2), c_int), env, &
+      & c_null_ptr, c_null_ptr))
+   stat = int(int1e_r_origj_ip_sph(out_ket, dims, cshls, atm, &
+      & int(size(atm, 2), c_int), bas, int(size(bas, 2), c_int), env, &
+      & c_null_ptr, c_null_ptr))
+   if (stat_bra < 0) stat = stat_bra
+end function libcint_eval_dipole_gradient
+
+function libcint_eval_quadrupole_gradient(out_bra, out_ket, shls, atm, bas, env) result(stat)
+   !> Complete nuclear-center derivatives of a ket-centered Cartesian second moment.
+   real(c_double), contiguous, intent(out) :: out_bra(:, :, :, :), out_ket(:, :, :, :)
+   integer, intent(in) :: shls(2)
+   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
+   real(c_double), contiguous, intent(in) :: env(:)
+   integer :: stat
+   integer(c_int) :: cshls(2), dims(2)
+   integer :: di, dj, stat_bra
+
+   di = libcint_shell_size(shls(1), bas, LIBCINT_SPHERICAL)
+   dj = libcint_shell_size(shls(2), bas, LIBCINT_SPHERICAL)
+   if (size(out_bra, 1) < di .or. size(out_bra, 2) < dj .or. &
+      & size(out_bra, 3) < 9 .or. size(out_bra, 4) < 3 .or. &
+      & any(shape(out_ket) < shape(out_bra))) then
+      stat = -1
+      return
+   end if
+   cshls = int(shls, c_int)
+   dims = int([size(out_bra, 1), size(out_bra, 2)], c_int)
+   out_bra = 0.0_c_double
+   out_ket = 0.0_c_double
+   stat_bra = int(int1e_iprr_origj_sph(out_bra, dims, cshls, atm, &
+      & int(size(atm, 2), c_int), bas, int(size(bas, 2), c_int), env, &
+      & c_null_ptr, c_null_ptr))
+   stat = int(int1e_rr_origj_ip_sph(out_ket, dims, cshls, atm, &
+      & int(size(atm, 2), c_int), bas, int(size(bas, 2), c_int), env, &
+      & c_null_ptr, c_null_ptr))
+   if (stat_bra < 0) stat = stat_bra
+end function libcint_eval_quadrupole_gradient
+
 function libcint_eval_overlap_gradient(out, shls, atm, bas, env) result(stat)
    !> Overlap derivative with respect to the nuclear centre of shls(2).
    real(c_double), contiguous, intent(out) :: out(:, :, :)
@@ -561,5 +713,71 @@ function libcint_eval_eri(representation, out, shls, atm, bas, env) result(stat)
       stat = -2
    end select
 end function libcint_eval_eri
+
+function libcint_eval_3c2e(representation, out, shls, atm, bas, env) result(stat)
+   integer, intent(in) :: representation
+   real(c_double), contiguous, intent(out) :: out(:, :, :)
+   integer, intent(in) :: shls(3)
+   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
+   real(c_double), contiguous, intent(in) :: env(:)
+   integer :: stat
+   integer(c_int) :: cshls(3), dims(3)
+   integer :: i, shell_dims(3)
+
+   do i = 1, 3
+      shell_dims(i) = libcint_shell_size(shls(i), bas, representation)
+   end do
+   if (any(shell_dims < 0) .or. any(shape(out) < shell_dims)) then
+      stat = -1
+      return
+   end if
+
+   cshls = int(shls, c_int)
+   dims = int(shape(out), c_int)
+   out = 0.0_c_double
+   select case(representation)
+   case(LIBCINT_CARTESIAN)
+      stat = int(int3c2e_cart(out, dims, cshls, atm, int(size(atm, 2), c_int), &
+         & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
+   case(LIBCINT_SPHERICAL)
+      stat = int(int3c2e_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
+         & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
+   case default
+      stat = -2
+   end select
+end function libcint_eval_3c2e
+
+function libcint_eval_3c1e_rinv(representation, out, shls, atm, bas, env) result(stat)
+   integer, intent(in) :: representation
+   real(c_double), contiguous, intent(out) :: out(:, :, :)
+   integer, intent(in) :: shls(3)
+   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
+   real(c_double), contiguous, intent(in) :: env(:)
+   integer :: stat
+   integer(c_int) :: cshls(3), dims(3)
+   integer :: i, shell_dims(3)
+
+   do i = 1, 3
+      shell_dims(i) = libcint_shell_size(shls(i), bas, representation)
+   end do
+   if (any(shell_dims < 0) .or. any(shape(out) < shell_dims)) then
+      stat = -1
+      return
+   end if
+
+   cshls = int(shls, c_int)
+   dims = int(shape(out), c_int)
+   out = 0.0_c_double
+   select case(representation)
+   case(LIBCINT_CARTESIAN)
+      stat = int(int3c1e_rinv_cart(out, dims, cshls, atm, int(size(atm, 2), c_int), &
+         & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
+   case(LIBCINT_SPHERICAL)
+      stat = int(int3c1e_rinv_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
+         & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
+   case default
+      stat = -2
+   end select
+end function libcint_eval_3c1e_rinv
 
 end module tblite_integral_libcint

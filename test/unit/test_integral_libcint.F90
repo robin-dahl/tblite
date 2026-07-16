@@ -11,7 +11,7 @@ module test_integral_libcint
 #if TBLITE_HAS_LIBCINT
    use tblite_integral_libcint
    use tblite_integral_dipole, only : dipole_cgto
-   use tblite_integral_multipole, only : multipole_cgto
+   use tblite_integral_multipole, only : multipole_cgto, multipole_grad_cgto
    use tblite_integral_overlap, only : get_overlap, overlap_grad_cgto
 #endif
    implicit none
@@ -32,7 +32,11 @@ subroutine collect_integral_libcint(testsuite)
       new_unittest("tblite-overlap-gradient-consistency", &
          & test_tblite_overlap_gradient_consistency), &
       new_unittest("tblite-dipole-consistency", test_tblite_dipole_consistency), &
-      new_unittest("tblite-quadrupole-consistency", test_tblite_quadrupole_consistency) &
+      new_unittest("tblite-quadrupole-consistency", test_tblite_quadrupole_consistency), &
+      new_unittest("tblite-dipole-gradient-consistency", &
+         & test_tblite_dipole_gradient_consistency), &
+      new_unittest("tblite-quadrupole-gradient-consistency", &
+         & test_tblite_quadrupole_gradient_consistency) &
       ]
 #else
    testsuite = [ &
@@ -244,6 +248,128 @@ subroutine test_tblite_quadrupole_consistency(error)
       end do
    end do
 end subroutine test_tblite_quadrupole_consistency
+
+subroutine test_tblite_dipole_gradient_consistency(error)
+   type(error_type), allocatable, intent(out) :: error
+   type(structure_type) :: mol
+   type(basis_type) :: basis
+   type(libcint_basis_type) :: cbasis
+   real(wp) :: ref_s(5, 5), ref_d(3, 5, 5), ref_q(6, 5, 5), ref_g(3, 5, 5)
+   real(wp) :: ref_dj(3, 3, 5, 5), ref_di(3, 3, 5, 5)
+   real(wp) :: ref_qj(3, 6, 5, 5), ref_qi(3, 6, 5, 5), vec(3), r2
+   real(c_double) :: cint_j(5, 5, 3, 3), cint_i(5, 5, 3, 3)
+   real(c_double) :: swap_i(5, 5, 3, 3), swap_j(5, 5, 3, 3)
+   integer :: ish, jsh, iat, jat, isp, jsp, ilsh, jlsh
+   integer :: di, dj, iao, jao, im, ider, stat
+
+   call make_comparison_basis(mol, basis, cbasis)
+   do ish = 1, basis%nsh
+      iat = basis%sh2at(ish); isp = mol%id(iat)
+      ilsh = ish - basis%ish_at(iat); di = basis%nao_sh(ish)
+      do jsh = 1, basis%nsh
+         jat = basis%sh2at(jsh); jsp = mol%id(jat)
+         jlsh = jsh - basis%ish_at(jat); dj = basis%nao_sh(jsh)
+         vec = mol%xyz(:, iat) - mol%xyz(:, jat); r2 = sum(vec**2)
+         call multipole_grad_cgto(basis%cgto(jlsh, jsp), basis%cgto(ilsh, isp), &
+            & r2, vec, basis%intcut, ref_s(1:dj, 1:di), ref_d(:, 1:dj, 1:di), &
+            & ref_q(:, 1:dj, 1:di), ref_g(:, 1:dj, 1:di), &
+            & ref_dj(:, :, 1:dj, 1:di), ref_qj(:, :, 1:dj, 1:di), &
+            & ref_di(:, :, 1:dj, 1:di), ref_qi(:, :, 1:dj, 1:di))
+         stat = libcint_eval_dipole_gradient(cint_j, cint_i, [jsh-1, ish-1], &
+            & cbasis%atm, cbasis%bas, cbasis%env)
+         call check(error, stat >= 0)
+         if (allocated(error)) return
+         stat = libcint_eval_dipole_gradient(swap_i, swap_j, [ish-1, jsh-1], &
+            & cbasis%atm, cbasis%bas, cbasis%env)
+         call check(error, stat >= 0)
+         if (allocated(error)) return
+         do ider = 1, 3; do im = 1, 3; do iao = 1, di; do jao = 1, dj
+            ! For origj=i, d/dRi=d/dvec and d/dRj=-d/dvec.
+            call check(error, real(cint_j(jao, iao, im, ider), wp), &
+               & -ref_di(ider, im, jao, iao), thr=thr)
+            if (allocated(error)) return
+            call check(error, real(cint_i(jao, iao, im, ider), wp), &
+               & ref_di(ider, im, jao, iao), thr=thr)
+            if (allocated(error)) return
+            ! For origj=j the reversed block provides tblite's j-centred operator.
+            call check(error, real(swap_i(iao, jao, im, ider), wp), &
+               & ref_dj(ider, im, jao, iao), thr=thr)
+            if (allocated(error)) return
+            call check(error, real(swap_j(iao, jao, im, ider), wp), &
+               & -ref_dj(ider, im, jao, iao), thr=thr)
+            if (allocated(error)) return
+         end do; end do; end do; end do
+      end do
+   end do
+end subroutine test_tblite_dipole_gradient_consistency
+
+subroutine test_tblite_quadrupole_gradient_consistency(error)
+   type(error_type), allocatable, intent(out) :: error
+   type(structure_type) :: mol
+   type(basis_type) :: basis
+   type(libcint_basis_type) :: cbasis
+   real(wp) :: ref_s(5, 5), ref_d(3, 5, 5), ref_q(6, 5, 5), ref_g(3, 5, 5)
+   real(wp) :: ref_dj(3, 3, 5, 5), ref_di(3, 3, 5, 5)
+   real(wp) :: ref_qj(3, 6, 5, 5), ref_qi(3, 6, 5, 5), raw(6), quad(6), trace
+   real(wp) :: vec(3), r2
+   real(c_double) :: cint_j(5, 5, 9, 3), cint_i(5, 5, 9, 3)
+   real(c_double) :: swap_i(5, 5, 9, 3), swap_j(5, 5, 9, 3)
+   integer :: ish, jsh, iat, jat, isp, jsp, ilsh, jlsh
+   integer :: di, dj, iao, jao, im, ider, stat, center
+   integer, parameter :: qmap(6) = [1, 2, 5, 3, 6, 9]
+
+   call make_comparison_basis(mol, basis, cbasis)
+   do ish = 1, basis%nsh
+      iat = basis%sh2at(ish); isp = mol%id(iat)
+      ilsh = ish - basis%ish_at(iat); di = basis%nao_sh(ish)
+      do jsh = 1, basis%nsh
+         jat = basis%sh2at(jsh); jsp = mol%id(jat)
+         jlsh = jsh - basis%ish_at(jat); dj = basis%nao_sh(jsh)
+         vec = mol%xyz(:, iat) - mol%xyz(:, jat); r2 = sum(vec**2)
+         call multipole_grad_cgto(basis%cgto(jlsh, jsp), basis%cgto(ilsh, isp), &
+            & r2, vec, basis%intcut, ref_s(1:dj, 1:di), ref_d(:, 1:dj, 1:di), &
+            & ref_q(:, 1:dj, 1:di), ref_g(:, 1:dj, 1:di), &
+            & ref_dj(:, :, 1:dj, 1:di), ref_qj(:, :, 1:dj, 1:di), &
+            & ref_di(:, :, 1:dj, 1:di), ref_qi(:, :, 1:dj, 1:di))
+         stat = libcint_eval_quadrupole_gradient(cint_j, cint_i, [jsh-1, ish-1], &
+            & cbasis%atm, cbasis%bas, cbasis%env)
+         call check(error, stat >= 0)
+         if (allocated(error)) return
+         stat = libcint_eval_quadrupole_gradient(swap_i, swap_j, [ish-1, jsh-1], &
+            & cbasis%atm, cbasis%bas, cbasis%env)
+         call check(error, stat >= 0)
+         if (allocated(error)) return
+         do center = 1, 4; do ider = 1, 3; do iao = 1, di; do jao = 1, dj
+            do im = 1, 6
+               if (center == 1) then
+                  raw(im) = real(cint_j(jao, iao, qmap(im), ider), wp)
+               else if (center == 2) then
+                  raw(im) = real(cint_i(jao, iao, qmap(im), ider), wp)
+               else if (center == 3) then
+                  raw(im) = real(swap_i(iao, jao, qmap(im), ider), wp)
+               else
+                  raw(im) = real(swap_j(iao, jao, qmap(im), ider), wp)
+               end if
+            end do
+            trace = 0.5_wp*(raw(1) + raw(3) + raw(6))
+            quad = 1.5_wp*raw
+            quad([1, 3, 6]) = quad([1, 3, 6]) - trace
+            do im = 1, 6
+               if (center == 1) then
+                  call check(error, quad(im), -ref_qi(ider, im, jao, iao), thr=thr)
+               else if (center == 2) then
+                  call check(error, quad(im), ref_qi(ider, im, jao, iao), thr=thr)
+               else if (center == 3) then
+                  call check(error, quad(im), ref_qj(ider, im, jao, iao), thr=thr)
+               else
+                  call check(error, quad(im), -ref_qj(ider, im, jao, iao), thr=thr)
+               end if
+               if (allocated(error)) return
+            end do
+         end do; end do; end do; end do
+      end do
+   end do
+end subroutine test_tblite_quadrupole_gradient_consistency
 
 #else
 subroutine test_disabled(error)
