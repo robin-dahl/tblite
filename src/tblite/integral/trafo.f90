@@ -33,16 +33,15 @@ module tblite_integral_trafo
 
    real(wp), parameter :: s3 = sqrt(3.0_wp)
    real(wp), parameter :: s3_4 = s3 * 0.5_wp
-   real(wp), parameter :: dtrafo_legacy(5, 6) = reshape([&
+   real(wp), parameter :: dtrafo(5, 6) = reshape([&
       ! -2      -1       0       1       2
       & 0.0_wp, 0.0_wp, -0.5_wp, 0.0_wp,   s3_4, & ! xx
-      & 0.0_wp, 0.0_wp, -0.5_wp, 0.0_wp,  -s3_4, & ! yy
-      & 0.0_wp, 0.0_wp,  1.0_wp, 0.0_wp, 0.0_wp, & ! zz
       &     s3, 0.0_wp,  0.0_wp, 0.0_wp, 0.0_wp, & ! xy
       & 0.0_wp, 0.0_wp,  0.0_wp,     s3, 0.0_wp, & ! xz
-      & 0.0_wp,     s3,  0.0_wp, 0.0_wp, 0.0_wp],& ! yz
-      & shape(dtrafo_legacy))
-   real(wp), parameter :: dtrafo(5, 6) = dtrafo_legacy(:, [1, 4, 5, 2, 6, 3])
+      & 0.0_wp, 0.0_wp, -0.5_wp, 0.0_wp,  -s3_4, & ! yy
+      & 0.0_wp,     s3,  0.0_wp, 0.0_wp, 0.0_wp, & ! yz
+      & 0.0_wp, 0.0_wp,  1.0_wp, 0.0_wp, 0.0_wp],& ! zz
+      & shape(dtrafo))
 
    real(wp), parameter :: d32 = 3.0_wp/2.0_wp
    real(wp), parameter :: s3_8 = sqrt(3.0_wp/8.0_wp)
@@ -52,21 +51,19 @@ module tblite_integral_trafo
    real(wp), parameter :: s15_4 = sqrt(15.0_wp/4.0_wp)
    real(wp), parameter :: s45 = sqrt(45.0_wp)
    real(wp), parameter :: s45_8 = sqrt(45.0_wp/8.0_wp)
-   real(wp), parameter :: ftrafo_legacy(7, 10) = reshape([&
+   real(wp), parameter :: ftrafo(7, 10) = reshape([&
       ! -3       -2       -1       0        1         2         3
       &  0.0_wp,  0.0_wp,  0.0_wp, 0.0_wp,   -s3_8,   0.0_wp,     s5_8, & ! xxx
-      &   -s5_8,  0.0_wp,   -s3_8, 0.0_wp,  0.0_wp,   0.0_wp,   0.0_wp, & ! yyy
-      &  0.0_wp,  0.0_wp,  0.0_wp, 1.0_wp,  0.0_wp,   0.0_wp,   0.0_wp, & ! zzz
       &   s45_8,  0.0_wp,   -s3_8, 0.0_wp,  0.0_wp,   0.0_wp,   0.0_wp, & ! xxy
       &  0.0_wp,  0.0_wp,  0.0_wp,   -d32,  0.0_wp,    s15_4,   0.0_wp, & ! xxz
       &  0.0_wp,  0.0_wp,  0.0_wp, 0.0_wp,   -s3_8,   0.0_wp,   -s45_8, & ! xyy
-      &  0.0_wp,  0.0_wp,  0.0_wp,   -d32,  0.0_wp,   -s15_4,   0.0_wp, & ! yyz
+      &  0.0_wp,     s15,  0.0_wp, 0.0_wp,  0.0_wp,   0.0_wp,   0.0_wp, & ! xyz
       &  0.0_wp,  0.0_wp,  0.0_wp, 0.0_wp,      s6,   0.0_wp,   0.0_wp, & ! xzz
+      &   -s5_8,  0.0_wp,   -s3_8, 0.0_wp,  0.0_wp,   0.0_wp,   0.0_wp, & ! yyy
+      &  0.0_wp,  0.0_wp,  0.0_wp,   -d32,  0.0_wp,   -s15_4,   0.0_wp, & ! yyz
       &  0.0_wp,  0.0_wp,      s6, 0.0_wp,  0.0_wp,   0.0_wp,   0.0_wp, & ! yzz
-      &  0.0_wp,     s15,  0.0_wp, 0.0_wp,  0.0_wp,   0.0_wp,   0.0_wp],& ! xyz
-      & shape(ftrafo_legacy))
-   real(wp), parameter :: ftrafo(7, 10) = &
-      & ftrafo_legacy(:, [1, 4, 5, 6, 10, 8, 2, 7, 9, 3])
+      &  0.0_wp,  0.0_wp,  0.0_wp, 1.0_wp,  0.0_wp,   0.0_wp,   0.0_wp],& ! zzz
+      & shape(ftrafo))
 
    real(wp), parameter :: d38 = 3.0_wp/8.0_wp
    real(wp), parameter :: d34 = 3.0_wp/4.0_wp
@@ -79,31 +76,29 @@ module tblite_integral_trafo
    real(wp), parameter :: s45_4 = sqrt(45.0_wp/4.0_wp)
    real(wp), parameter :: s315_8 = sqrt(315.0_wp/8.0_wp)
    real(wp), parameter :: s315_16 = sqrt(315.0_wp/16.0_wp)
-   real(wp), parameter :: gtrafo_legacy(9, 15) = reshape([&
+   real(wp), parameter :: gtrafo(9, 15) = reshape([&
       !  -4     -3     -2     -1       0    1      2       3        4
       &  0._wp, 0._wp, 0._wp, 0._wp,   d38, 0._wp,-s5_16,  0._wp,  s35_64, & ! xxxx
-      &  0._wp, 0._wp, 0._wp, 0._wp,   d38, 0._wp, s5_16,  0._wp,  s35_64, & ! yyyy
-      &  0._wp, 0._wp, 0._wp, 0._wp, 1._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! zzzz
       &  s35_4, 0._wp,-s10_8, 0._wp, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! xxxy
       &  0._wp, 0._wp, 0._wp, 0._wp, 0._wp,-s45_8, 0._wp,  s35_8,   0._wp, & ! xxxz
-      & -s35_4, 0._wp,-s10_8, 0._wp, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! xyyy
-      &  0._wp,-s35_8, 0._wp,-s45_8, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! yyyz
-      &  0._wp, 0._wp, 0._wp, 0._wp, 0._wp,   s10, 0._wp,  0._wp,   0._wp, & ! xzzz
-      &  0._wp, 0._wp, 0._wp,   s10, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! yzzz
       &  0._wp, 0._wp, 0._wp, 0._wp,   d34, 0._wp, 0._wp,  0._wp,-s315_16, & ! xxyy
-      &  0._wp, 0._wp, 0._wp, 0._wp,-3._wp, 0._wp, s45_4,  0._wp,   0._wp, & ! xxzz
-      &  0._wp, 0._wp, 0._wp, 0._wp,-3._wp, 0._wp,-s45_4,  0._wp,   0._wp, & ! yyzz
       &  0._wp,s315_8, 0._wp,-s45_8, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! xxyz
+      &  0._wp, 0._wp, 0._wp, 0._wp,-3._wp, 0._wp, s45_4,  0._wp,   0._wp, & ! xxzz
+      & -s35_4, 0._wp,-s10_8, 0._wp, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! xyyy
       &  0._wp, 0._wp, 0._wp, 0._wp, 0._wp,-s45_8, 0._wp,-s315_8,   0._wp, & ! xyyz
-      &  0._wp, 0._wp,   s45, 0._wp, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp],& ! xyzz
-      &  shape(gtrafo_legacy))
-   real(wp), parameter :: gtrafo(9, 15) = &
-      & gtrafo_legacy(:, [1, 4, 5, 10, 13, 11, 6, 14, 15, 8, 2, 7, 12, 9, 3])
+      &  0._wp, 0._wp,   s45, 0._wp, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! xyzz
+      &  0._wp, 0._wp, 0._wp, 0._wp, 0._wp,   s10, 0._wp,  0._wp,   0._wp, & ! xzzz
+      &  0._wp, 0._wp, 0._wp, 0._wp,   d38, 0._wp, s5_16,  0._wp,  s35_64, & ! yyyy
+      &  0._wp,-s35_8, 0._wp,-s45_8, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! yyyz
+      &  0._wp, 0._wp, 0._wp, 0._wp,-3._wp, 0._wp,-s45_4,  0._wp,   0._wp, & ! yyzz
+      &  0._wp, 0._wp, 0._wp,   s10, 0._wp, 0._wp, 0._wp,  0._wp,   0._wp, & ! yzzz
+      &  0._wp, 0._wp, 0._wp, 0._wp, 1._wp, 0._wp, 0._wp,  0._wp,   0._wp],& ! zzzz
+      & shape(gtrafo))
 
 contains
 
 
-!> Transformation from CCA Cartesian ordering to tblite's spherical ordering.
+!> Transformation from Cartesian ordering to spherical ordering.
 pure subroutine transform0(lj, li, cart, sphr, bra, ket)
    integer, intent(in) :: li, lj
    real(wp), intent(in) :: cart(:, :)

@@ -21,8 +21,8 @@ module tblite_integral_libcint
    use mctc_env, only : wp
    use mctc_io, only : structure_type
    use mctc_io_constants, only : pi
-   use tblite_basis_type, only : basis_type
-   use tblite_integral_type, only : integral_type
+   use tblite_basis_type, only : basis_type, cgto_type
+   use tblite_integral_handler, only : integral_handler
    implicit none
    private
 
@@ -46,26 +46,26 @@ module tblite_integral_libcint
    public :: libcint_basis_type, libcint_integral_type, new_libcint_basis
 
    !> Libcint representation of a molecular Gaussian basis.  The integer
-   !> tables contain zero-based offsets into env, as required by libcint.
+   !> tables contain zero-based offsets into env, as required by libcint
    type :: libcint_basis_type
       integer(c_int), allocatable :: atm(:, :)
       integer(c_int), allocatable :: bas(:, :)
       real(c_double), allocatable :: env(:)
    end type libcint_basis_type
 
-   !> Libcint-backed integral evaluator and cached basis conversion.
-   type, extends(integral_type) :: libcint_integral_type
+   !> Libcint-backed integral evaluator and cached basis conversion
+   type, extends(integral_handler) :: libcint_integral_type
       type(libcint_basis_type) :: basis
    contains
       procedure :: initialize_integral => initialize_libcint
-      procedure :: multipole_integral => multipole_libcint
-      procedure :: multipole_gradient_integral => multipole_gradient_libcint
-      procedure :: dipole_integral => dipole_libcint
+      procedure :: multipole_cgto => multipole_libcint
+      procedure :: multipole_grad_cgto => multipole_gradient_libcint
+      procedure :: dipole_cgto => dipole_libcint
    end type libcint_integral_type
 
    ! libcint C arrays are flattened as slot + slots * item.  These Fortran
    ! constants are shifted by one so normal arrays can be declared as
-   ! atm(ATM_SLOTS,natm), bas(BAS_SLOTS,nbas).
+   ! atm(ATM_SLOTS,natm), bas(BAS_SLOTS,nbas)
    integer, parameter :: CHARGE_OF = 1
    integer, parameter :: PTR_COORD = 2
    integer, parameter :: NUC_MOD_OF = 3
@@ -83,7 +83,7 @@ module tblite_integral_libcint
    integer, parameter :: BAS_SLOTS = 8
 
    ! env offsets stored in atm/bas are zero-based libcint offsets.  Fortran
-   ! code should write env(offset+1:offset+n) for C locations offset:offset+n-1.
+   ! code should write env(offset+1:offset+n) for C locations offset:offset+n-1
    integer, parameter :: PTR_GRIDS = 12
    integer, parameter :: PTR_ENV_START = 20
 
@@ -356,25 +356,46 @@ module tblite_integral_libcint
 
 contains
 
+!> Convert and cache the complete tblite basis for libcint evaluations
 subroutine initialize_libcint(self, mol, basis)
+   !> Libcint integral evaluator
    class(libcint_integral_type), intent(inout) :: self
+   !> Molecular structure data
    type(structure_type), intent(in) :: mol
+   !> Basis set information
    type(basis_type), intent(in) :: basis
 
    call new_libcint_basis(self%basis, mol, basis)
 end subroutine initialize_libcint
 
-subroutine dipole_libcint(self, mol, basis, jsh, ish, r2, vec, overlap, dipole)
+!> Evaluate overlap and dipole integrals using cached libcint shells
+subroutine dipole_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dipole)
+   !> Libcint integral evaluator
    class(libcint_integral_type), intent(in) :: self
-   type(structure_type), intent(in) :: mol
-   type(basis_type), intent(in) :: basis
-   integer, intent(in) :: jsh, ish
-   real(wp), intent(in) :: r2, vec(3)
-   real(wp), intent(out) :: overlap(:), dipole(:, :)
+   !> Description of contracted Gaussian function on center j
+   type(cgto_type), intent(in) :: cgtoj
+   !> Description of contracted Gaussian function on center i
+   type(cgto_type), intent(in) :: cgtoi
+   !> Global shell index of the contracted Gaussian function on center j
+   integer, intent(in) :: jsh
+   !> Global shell index of the contracted Gaussian function on center i
+   integer, intent(in) :: ish
+   !> Square distance between center i and j
+   real(wp), intent(in) :: r2
+   !> Distance vector between center i and j, ri - rj
+   real(wp), intent(in) :: vec(3)
+   !> Maximum value of integral prefactor to consider
+   real(wp), intent(in) :: intcut
+   !> Overlap integrals for the given pair i and j
+   real(wp), intent(out) :: overlap(:)
+   !> Dipole moment integrals for the given pair i and j
+   real(wp), intent(out) :: dipole(:, :)
    real(c_double), allocatable :: cdp(:, :, :), cov(:, :)
    integer :: dj, di, jao, iao, ij, stat
 
-   dj = basis%nao_sh(jsh); di = basis%nao_sh(ish)
+   ! Query libcint so scratch dimensions agree with its cached shell representation
+   dj = cint_cgto_spheric(jsh - 1, self%basis%bas)
+   di = cint_cgto_spheric(ish - 1, self%basis%bas)
    allocate(cdp(dj, di, 3), cov(dj, di))
    stat = libcint_eval_1e(LIBCINT_1E_OVERLAP, LIBCINT_SPHERICAL, cov, &
       & [jsh-1, ish-1], self%basis%atm, self%basis%bas, self%basis%env)
@@ -389,21 +410,40 @@ subroutine dipole_libcint(self, mol, basis, jsh, ish, r2, vec, overlap, dipole)
    end do
 end subroutine dipole_libcint
 
-subroutine multipole_libcint(self, mol, basis, jsh, ish, r2, vec, overlap, &
+!> Evaluate overlap, dipole, and traceless quadrupole integrals with libcint
+subroutine multipole_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, &
       & dipole, quadrupole)
+   !> Libcint integral evaluator
    class(libcint_integral_type), intent(in) :: self
-   type(structure_type), intent(in) :: mol
-   type(basis_type), intent(in) :: basis
-   integer, intent(in) :: jsh, ish
-   real(wp), intent(in) :: r2, vec(3)
-   real(wp), intent(out) :: overlap(:), dipole(:, :), quadrupole(:, :)
+   !> Description of contracted Gaussian function on center j
+   type(cgto_type), intent(in) :: cgtoj
+   !> Description of contracted Gaussian function on center i
+   type(cgto_type), intent(in) :: cgtoi
+   !> Global shell index of the contracted Gaussian function on center j
+   integer, intent(in) :: jsh
+   !> Global shell index of the contracted Gaussian function on center i
+   integer, intent(in) :: ish
+   !> Square distance between center i and j
+   real(wp), intent(in) :: r2
+   !> Distance vector between center i and j, ri - rj
+   real(wp), intent(in) :: vec(3)
+   !> Maximum value of integral prefactor to consider
+   real(wp), intent(in) :: intcut
+   !> Overlap integrals for the given pair i and j
+   real(wp), intent(out) :: overlap(:)
+   !> Dipole moment integrals for the given pair i and j
+   real(wp), intent(out) :: dipole(:, :)
+   !> Quadrupole moment integrals for the given pair i and j
+   real(wp), intent(out) :: quadrupole(:, :)
    real(c_double), allocatable :: cqp(:, :, :)
    real(wp) :: raw(6), trace
    integer, parameter :: qmap(6) = [1, 2, 5, 3, 6, 9]
    integer :: dj, di, jao, iao, ij, stat
 
-   call self%dipole_integral(mol, basis, jsh, ish, r2, vec, overlap, dipole)
-   dj = basis%nao_sh(jsh); di = basis%nao_sh(ish)
+   call self%dipole_cgto(cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dipole)
+   dj = cint_cgto_spheric(jsh - 1, self%basis%bas)
+   di = cint_cgto_spheric(ish - 1, self%basis%bas)
+
    allocate(cqp(dj, di, 9))
    stat = libcint_eval_quadrupole(cqp, [jsh-1, ish-1], self%basis%atm, &
       & self%basis%bas, self%basis%env)
@@ -418,18 +458,42 @@ subroutine multipole_libcint(self, mol, basis, jsh, ish, r2, vec, overlap, &
    end do
 end subroutine multipole_libcint
 
-subroutine multipole_gradient_libcint(self, mol, basis, jsh, ish, r2, vec, &
+!> Evaluate multipole integrals and derivatives with respect to both centers
+subroutine multipole_gradient_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, &
       & overlap, dipole, quadrupole, doverlap, ddipole_j, dquadrupole_j, &
       & ddipole_i, dquadrupole_i)
+   !> Libcint integral evaluator
    class(libcint_integral_type), intent(in) :: self
-   type(structure_type), intent(in) :: mol
-   type(basis_type), intent(in) :: basis
-   integer, intent(in) :: jsh, ish
-   real(wp), intent(in) :: r2, vec(3)
-   real(wp), intent(out) :: overlap(:), dipole(:, :), quadrupole(:, :)
+   !> Description of contracted Gaussian function on center j
+   type(cgto_type), intent(in) :: cgtoj
+   !> Description of contracted Gaussian function on center i
+   type(cgto_type), intent(in) :: cgtoi
+   !> Global shell index of the contracted Gaussian function on center j
+   integer, intent(in) :: jsh
+   !> Global shell index of the contracted Gaussian function on center i
+   integer, intent(in) :: ish
+   !> Square distance between center i and j
+   real(wp), intent(in) :: r2
+   !> Distance vector between center i and j, ri - rj
+   real(wp), intent(in) :: vec(3)
+   !> Maximum value of integral prefactor to consider
+   real(wp), intent(in) :: intcut
+   !> Overlap integrals for the given pair i and j
+   real(wp), intent(out) :: overlap(:)
+   !> Dipole moment integrals for the given pair i and j
+   real(wp), intent(out) :: dipole(:, :)
+   !> Quadrupole moment integrals for the given pair i and j
+   real(wp), intent(out) :: quadrupole(:, :)
+   !> Overlap integral gradient for the given pair i and j
    real(wp), intent(out) :: doverlap(:, :)
-   real(wp), intent(out) :: ddipole_j(:, :, :), dquadrupole_j(:, :, :)
-   real(wp), intent(out) :: ddipole_i(:, :, :), dquadrupole_i(:, :, :)
+   !> Dipole moment integral gradient with respect to center j
+   real(wp), intent(out) :: ddipole_j(:, :, :)
+   !> Quadrupole moment integral gradient with respect to center j
+   real(wp), intent(out) :: dquadrupole_j(:, :, :)
+   !> Dipole moment integral gradient with respect to center i
+   real(wp), intent(out) :: ddipole_i(:, :, :)
+   !> Quadrupole moment integral gradient with respect to center i
+   real(wp), intent(out) :: dquadrupole_i(:, :, :)
    real(c_double), allocatable :: covg(:, :, :)
    real(c_double), allocatable :: cdj(:, :, :, :), cdi(:, :, :, :)
    real(c_double), allocatable :: cqj(:, :, :, :), cqi(:, :, :, :)
@@ -439,8 +503,9 @@ subroutine multipole_gradient_libcint(self, mol, basis, jsh, ish, r2, vec, &
    integer, parameter :: qmap(6) = [1, 2, 5, 3, 6, 9]
    integer :: dj, di, jao, iao, ij, ic, ider, stat
 
-   call self%multipole_integral(mol, basis, jsh, ish, r2, vec, overlap, dipole, quadrupole)
-   dj = basis%nao_sh(jsh); di = basis%nao_sh(ish)
+   call self%multipole_cgto(cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dipole, quadrupole)
+   dj = cint_cgto_spheric(jsh - 1, self%basis%bas)
+   di = cint_cgto_spheric(ish - 1, self%basis%bas)
    allocate(covg(dj, di, 3), cdj(dj, di, 3, 3), cdi(dj, di, 3, 3), &
       & cqj(dj, di, 9, 3), cqi(dj, di, 9, 3), &
       & sdj(di, dj, 3, 3), sdi(di, dj, 3, 3), &

@@ -540,7 +540,7 @@ subroutine new_gfn1_calculator(calc, mol, error, config)
    end if
 
    call add_basis(calc, mol)
-   call calc%add_integral_handler(mol, error)
+   call calc%set_integral_handler(mol, error)
    if (allocated(error)) return
    call add_ncoord(calc, mol, error)
    if (allocated(error)) return

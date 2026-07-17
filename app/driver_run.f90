@@ -40,7 +40,8 @@ module tblite_driver_run
    use tblite_wavefunction, only : wavefunction_type, new_wavefunction, &
       & sad_guess, eeq_guess, eeqbc_guess, shell_partition, &
       & load_wavefunction, save_wavefunction
-   use tblite_xtb_calculator, only : xtb_calculator, new_xtb_calculator
+   use tblite_xtb_calculator, only : xtb_calculator, new_xtb_calculator, &
+      & integral_handler_libcint
    use tblite_xtb_gfn2, only : new_gfn2_calculator, export_gfn2_param
    use tblite_xtb_gfn1, only : new_gfn1_calculator, export_gfn1_param
    use tblite_xtb_ipea1, only : new_ipea1_calculator, export_ipea1_param
@@ -157,7 +158,7 @@ subroutine run_main(config, error)
    if (allocated(error)) return
 
    if (config%libcint) then
-      call calc%add_integral_handler(mol, error, use_libcint=.true.)
+      call calc%set_integral_handler(mol, error, integral_handler_libcint)
       if (allocated(error)) return
    end if
 
@@ -186,7 +187,7 @@ subroutine run_main(config, error)
       call new_ceh_calculator(calc_ceh, mol, error)
       if (allocated(error)) return
       if (config%libcint) then
-         call calc_ceh%add_integral_handler(mol, error, use_libcint=.true.)
+         call calc_ceh%set_integral_handler(mol, error, integral_handler_libcint)
          if (allocated(error)) return
       end if
       call new_wavefunction(wfn_ceh, mol%nat, calc_ceh%bas%nsh, calc_ceh%bas%nao, 1, config%etemp_guess * kt)
@@ -501,6 +502,5 @@ subroutine read_file(filename, val, error)
    close(io, iostat=stat)
 
 end subroutine read_file
-
 
 end module tblite_driver_run

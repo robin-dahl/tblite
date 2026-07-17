@@ -13,7 +13,7 @@ module test_xtbml
    use tblite_data_spin, only : get_spin_constant
    use tblite_double_dictionary, only : double_dictionary_type
    use tblite_features, only : get_tblite_feature
-   use tblite_integral_native, only : native_integral_type
+   use tblite_integral_type, only : integral_type
    use tblite_param_post_processing, only : post_processing_record_list, &
       & post_processing_record, xtbml_record
    use tblite_post_processing_list, only : add_post_processing, post_processing_list
@@ -194,7 +194,7 @@ subroutine test_dipm_shell_co2(error)
    type(structure_type) :: mol
    type(xtb_calculator) :: calc
    type(wavefunction_type) :: wfn
-   type(native_integral_type) :: ints
+   type(integral_type) :: ints
    type(results_type) :: res
    type(post_processing_list), allocatable :: pproc
    type(xtbml_record), allocatable :: xtbml_param
@@ -287,7 +287,7 @@ subroutine test_qp_shell_benz(error)
    type(structure_type) :: mol
    type(xtb_calculator) :: calc
    type(wavefunction_type) :: wfn
-   type(native_integral_type) :: ints
+   type(integral_type) :: ints
    type(results_type) :: res
    type(post_processing_list), allocatable :: pproc
    type(xtbml_record), allocatable :: xtbml_param
@@ -435,7 +435,7 @@ subroutine test_qp_shell_benz_high_a(error)
    type(structure_type) :: mol
    type(xtb_calculator) :: calc
    type(wavefunction_type) :: wfn
-   type(native_integral_type) :: ints
+   type(integral_type) :: ints
    type(results_type) :: res
    type(post_processing_list), allocatable :: pproc
    type(xtbml_record), allocatable :: xtbml_param
@@ -1034,7 +1034,7 @@ subroutine test_energy_sum_up_gfn2(error)
    type(structure_type) :: mol
    type(xtb_calculator) :: calc
    type(wavefunction_type) :: wfn
-   type(native_integral_type) :: ints
+   type(integral_type) :: ints
    type(results_type) :: res
    type(post_processing_list), allocatable :: pproc
    type(xtbml_record), allocatable :: xtbml_param
@@ -1140,7 +1140,7 @@ subroutine test_energy_sum_up_gfn1(error)
    type(structure_type) :: mol
    type(xtb_calculator) :: calc
    type(wavefunction_type) :: wfn
-   type(native_integral_type) :: ints
+   type(integral_type) :: ints
    type(results_type) :: res
    type(post_processing_list), allocatable :: pproc
    type(xtbml_record), allocatable :: xtbml_param
@@ -1233,7 +1233,7 @@ subroutine test_high_spin(error)
    type(structure_type) :: mol
    type(xtb_calculator) :: calc
    type(wavefunction_type) :: wfn
-   type(native_integral_type) :: ints
+   type(integral_type) :: ints
    type(results_type) :: res
    type(post_processing_list), allocatable :: pproc
    type(xtbml_record), allocatable :: xtbml_param

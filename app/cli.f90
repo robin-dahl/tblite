@@ -98,7 +98,7 @@ module tblite_cli
       real(wp), allocatable :: efield(:)
       !> Spin polarization
       logical :: spin_polarized = .false.
-      !> Use libcint rather than tblite's native Gaussian integral backend
+      !> Use libcint rather than tblite's native Gaussian integral handler
       logical :: libcint = .false.
       !> Algorithm for electronic solver
       integer :: solver = lapack_algorithm%gvd

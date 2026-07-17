@@ -104,7 +104,7 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
    real(wp), allocatable :: energies(:), edisp(:), erep(:), exbond(:), eint(:), eelec(:)
    real(wp), allocatable :: cn(:), dcndr(:, :, :), dcndL(:, :, :), dEdcn(:)
    real(wp), allocatable :: selfenergy(:), dsedcn(:), lattr(:, :), wdensity(:, :, :)
-   class(integral_type), allocatable :: ints
+   type(integral_type) :: ints
    type(potential_type) :: pot
    type(container_cache), allocatable :: ccache, dcache, icache, hcache, rcache
    class(mixer_type), allocatable :: mixer
@@ -232,8 +232,8 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
       call ctx%message("")
    end if
 
-   call new_integral(ints, calc%integral, calc%bas%nao)
-   call get_hamiltonian(mol, lattr, list, calc%bas, ints, calc%h0, selfenergy, &
+   call new_integral(ints, calc%bas%nao)
+   call get_hamiltonian(mol, lattr, list, calc%bas, calc%integral_handler, calc%h0, selfenergy, &
       & ints%overlap, ints%dipole, ints%quadrupole, ints%hamiltonian)
 
    call ctx%new_solver(solver, ints%overlap, wfn%nel, wfn%kt)
@@ -362,7 +362,7 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
       call solver%get_wdensity(wfn%coeff, ints%overlap, wfn%emo, wfn%focc, wdensity, error)
       call updown_to_magnet(wfn%density)
       call updown_to_magnet(wdensity)
-      call get_hamiltonian_gradient(mol, lattr, list, calc%bas, ints, calc%h0, selfenergy, &
+      call get_hamiltonian_gradient(mol, lattr, list, calc%bas, calc%integral_handler, calc%h0, selfenergy, &
          & dsedcn, pot, wfn%density, wdensity, dEdcn, gradient, sigma)
       call magnet_to_updown(wfn%density)
 

@@ -43,6 +43,12 @@ module tblite_integral_dipole
    real(wp), parameter :: sqrtpi3 = sqrtpi**3
 
    ! Cartesian components in CCA ordering.
+   ! For angular momentum l, components are ordered by decreasing lx,
+   ! and for equal lx by decreasing ly; lz = l - lx - ly.
+   ! p: x, y, z
+   ! d: xx, xy, xz, yy, yz, zz
+   ! f: xxx, xxy, xxz, xyy, xyz, xzz, yyy, yyz, yzz, zzz
+   ! and for equal lx by decreasing ly; lz = l - lx - ly.
    integer, parameter :: lx(3, 84) = reshape([&
       & 0, &
       & 1,0,0, &
