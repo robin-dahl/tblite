@@ -26,13 +26,11 @@ module tblite_integral_handler
    use mctc_env, only : wp
    use mctc_io, only : structure_type
    use tblite_basis_type, only : basis_type, cgto_type
+   use tblite_integral_shell, only : msao
    implicit none
    private
 
-   public :: enum_integral_handler, integral_handler, msao
-
-   integer, parameter :: maxl = 6
-   integer, parameter :: msao(0:maxl) = [1, 3, 5, 7, 9, 11, 13]
+   public :: enum_integral_handler, integral_handler
 
    !> Possible Gaussian integral evaluation implementations
    type :: enum_integral_handler_type

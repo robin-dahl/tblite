@@ -24,7 +24,7 @@ module tblite_integral_libcint
    use mctc_io, only : structure_type
    use mctc_io_constants, only : pi
    use tblite_basis_type, only : basis_type, cgto_type
-   use tblite_integral_multipole, only : msao
+   use tblite_integral_shell, only : msao
    use tblite_integral_handler, only : integral_handler
    implicit none
    private

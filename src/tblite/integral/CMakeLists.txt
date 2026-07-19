@@ -18,6 +18,7 @@ set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
 list(
   APPEND srcs
+  "${dir}/shell.f90"
   "${dir}/native/dipole.f90"
   "${dir}/native/multipole.f90"
   "${dir}/native/overlap.f90"

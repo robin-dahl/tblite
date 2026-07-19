@@ -15,6 +15,7 @@
 # along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
 srcs += files(
+  'shell.f90',
   'native/dipole.f90',
   'native/multipole.f90',
   'native/overlap.f90',

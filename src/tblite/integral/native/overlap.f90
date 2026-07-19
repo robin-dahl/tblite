@@ -23,6 +23,7 @@ module tblite_integral_overlap
    use mctc_io, only : structure_type
    use mctc_io_constants, only : pi
    use tblite_basis_type, only : basis_type, cgto_type
+   use tblite_integral_shell, only : maxl, maxl2, msao, mlao, smap, lmap, sdim, lx
    use tblite_integral_diat_trafo, only: diat_trafo, diat_trafo_grad
    use tblite_integral_trafo, only : transform0, transform1
    implicit none
@@ -31,53 +32,14 @@ module tblite_integral_overlap
    public :: overlap_cgto, overlap_cgto_diat, overlap_grad_cgto, overlap_grad_cgto_diat
    public :: get_overlap
    public :: get_cartesian_exponents
-   public :: maxl, msao, smap
 
    interface get_overlap
       module procedure :: get_overlap_lat
       module procedure :: get_overlap_diat_lat
    end interface get_overlap
 
-   integer, parameter :: maxl = 6
-   integer, parameter :: maxl2 = maxl*2
-   integer, parameter :: msao(0:maxl) = [1, 3, 5, 7, 9, 11, 13]
-   integer, parameter :: mlao(0:maxl) = [1, 3, 6, 10, 15, 21, 28]
-   integer, parameter :: smap(0:maxl) = [0, 1, 4, 9, 16, 25, 36]
-   integer, parameter :: lmap(0:maxl) = [0, 1, 4, 10, 20, 35, 56]
-   integer, parameter :: sdim(0:maxl) = [1, 4, 9, 16, 25, 36, 49]
    real(wp), parameter :: sqrtpi = sqrt(pi)
    real(wp), parameter :: sqrtpi3 = sqrtpi**3
-
-   ! Cartesian components in CCA ordering.
-   ! For angular momentum l, components are ordered by decreasing lx,
-   ! and for equal lx by decreasing ly; lz = l - lx - ly.
-   ! p: x, y, z
-   ! d: xx, xy, xz, yy, yz, zz
-   ! f: xxx, xxy, xxz, xyy, xyz, xzz, yyy, yyz, yzz, zzz
-   ! and for equal lx by decreasing ly; lz = l - lx - ly.
-   integer, parameter :: lx(3, 84) = reshape([&
-      & 0, &
-      & 1,0,0, &
-      & 2,1,1,0,0,0, &
-      & 3,2,2,1,1,1,0,0,0,0, &
-      & 4,3,3,2,2,2,1,1,1,1,0,0,0,0,0, &
-      & 5,4,4,3,3,3,2,2,2,2,1,1,1,1,1,0,0,0,0,0,0, &
-      & 6,5,5,4,4,4,3,3,3,3,2,2,2,2,2,1,1,1,1,1,1,0,0,0,0,0,0,0, &
-      & 0, &
-      & 0,1,0, &
-      & 0,1,0,2,1,0, &
-      & 0,1,0,2,1,0,3,2,1,0, &
-      & 0,1,0,2,1,0,3,2,1,0,4,3,2,1,0, &
-      & 0,1,0,2,1,0,3,2,1,0,4,3,2,1,0,5,4,3,2,1,0, &
-      & 0,1,0,2,1,0,3,2,1,0,4,3,2,1,0,5,4,3,2,1,0,6,5,4,3,2,1,0, &
-      & 0, &
-      & 0,0,1, &
-      & 0,0,1,0,1,2, &
-      & 0,0,1,0,1,2,0,1,2,3, &
-      & 0,0,1,0,1,2,0,1,2,3,0,1,2,3,4, &
-      & 0,0,1,0,1,2,0,1,2,3,0,1,2,3,4,0,1,2,3,4,5, &
-      & 0,0,1,0,1,2,0,1,2,3,0,1,2,3,4,0,1,2,3,4,5,0,1,2,3,4,5,6], &
-      & shape(lx), order=[2, 1])
 
 
 contains

@@ -19,14 +19,12 @@
 module tblite_integral_diat_trafo
    use mctc_env, only : wp
    use tblite_blas, only: gemm
+   use tblite_integral_shell, only : sdim
 
    implicit none
    private
 
    public :: diat_trafo, diat_trafo_grad
-
-   !> Dimension of trafo matrix for highest angular momentum.
-   integer, parameter :: sdim(0:6) = [1, 4, 9, 16, 25, 36, 49]
 
 contains
 
