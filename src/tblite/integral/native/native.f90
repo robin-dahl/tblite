@@ -27,7 +27,7 @@ module tblite_integral_native
    use tblite_integral_multipole, only : overlap_1d, multipole_3d, &
       & multipole_grad_3d, shift_operator, multipole_cgto_diat
    use tblite_integral_trafo, only : transform0, transform1, transform2
-   use tblite_integral_handler, only : integral_handler
+   use tblite_integral_handler, only : integral_handler, msao
    implicit none
    private
 
@@ -36,7 +36,6 @@ module tblite_integral_native
 
    integer, parameter :: maxl = 6
    integer, parameter :: maxl2 = maxl*2
-   integer, parameter :: msao(0:maxl) = [1, 3, 5, 7, 9, 11, 13]
    integer, parameter :: mlao(0:maxl) = [1, 3, 6, 10, 15, 21, 28]
    integer, parameter :: lmap(0:maxl) = [0, 1, 4, 10, 20, 35, 56]
    real(wp), parameter :: sqrtpi = sqrt(pi)
