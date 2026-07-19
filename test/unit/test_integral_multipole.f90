@@ -28,8 +28,6 @@ module test_integral_multipole
    implicit none
    private
 
-   type(native_integral_type) :: native
-
    public :: collect_integral_multipole
 
    real(wp), parameter :: thr = 5e+6_wp*epsilon(1.0_wp)
@@ -113,6 +111,7 @@ subroutine test_dipole_ss(error)
    integer, parameter :: ng = 6
    integer :: stat, i
    type(cgto_type) :: cgtoi, cgtoj
+   type(native_integral_type) :: native
    real(wp) :: vec(3), r2
    real(wp) :: overlap(1, 1), dipolei(3, 1, 1), dipolej(3, 1, 1)
 
@@ -148,6 +147,7 @@ subroutine test_dipole_pp(error)
 
    integer :: stat, i, j, k
    type(cgto_type) :: cgtoi, cgtoj
+   type(native_integral_type) :: native
    real(wp) :: vec(3), r2
    real(wp) :: overlap(3, 3), dipolei(3, 3, 3), dipolej(3, 3, 3)
 
@@ -188,6 +188,7 @@ subroutine test_dipole_dd(error)
 
    integer :: stat, i, j, k
    type(cgto_type) :: cgtoi, cgtoj
+   type(native_integral_type) :: native
    real(wp) :: vec(3), r2
    real(wp) :: overlap(5, 5), dipolei(3, 5, 5), dipolej(3, 5, 5)
 
@@ -227,6 +228,7 @@ subroutine test_dipole_grad_ss(error)
    integer, parameter :: ng = 6
    integer :: stat, i, j
    type(cgto_type) :: cgtoi, cgtoj
+   type(native_integral_type) :: native
    real(wp) :: vec(3), r2, zero(3)
    real(wp) :: overlap(1, 1), doverlapi(3, 1, 1)
    real(wp) :: dipole(3, 1, 1), ddipolei(3, 3, 1, 1), ddipolej(3, 3, 1, 1)
