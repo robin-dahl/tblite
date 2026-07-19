@@ -18,20 +18,20 @@ set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
 list(
   APPEND srcs
-  "${dir}/dipole.f90"
-  "${dir}/multipole.f90"
-  "${dir}/overlap.f90"
+  "${dir}/native/dipole.f90"
+  "${dir}/native/multipole.f90"
+  "${dir}/native/overlap.f90"
+  "${dir}/native/native.f90"
   "${dir}/trafo.f90"
   "${dir}/type.f90"
   "${dir}/handler.F90"
-  "${dir}/native.f90"
   "${dir}/diat_trafo.f90"
 )
 
 if(TBLITE_WITH_LIBCINT)
   list(
     APPEND srcs
-    "${dir}/libcint.F90"
+    "${dir}/libcint/libcint.F90"
   )
 endif()
 
