@@ -27,6 +27,7 @@ module tblite_driver_run
    use tblite_context, only : context_type, context_terminal, escape
    use tblite_data_spin, only : get_spin_constant
    use tblite_external_field, only : electric_field
+   use tblite_integral_handler, only : enum_integral_handler
    use tblite_io_molden, only : save_molden
    use tblite_io_trexio, only : save_trexio
    use tblite_lapack_solver, only : lapack_solver
@@ -40,8 +41,7 @@ module tblite_driver_run
    use tblite_wavefunction, only : wavefunction_type, new_wavefunction, &
       & sad_guess, eeq_guess, eeqbc_guess, shell_partition, &
       & load_wavefunction, save_wavefunction
-   use tblite_xtb_calculator, only : xtb_calculator, new_xtb_calculator, &
-      & integral_handler_libcint
+   use tblite_xtb_calculator, only : xtb_calculator, new_xtb_calculator
    use tblite_xtb_gfn2, only : new_gfn2_calculator, export_gfn2_param
    use tblite_xtb_gfn1, only : new_gfn1_calculator, export_gfn1_param
    use tblite_xtb_ipea1, only : new_ipea1_calculator, export_ipea1_param
@@ -158,7 +158,7 @@ subroutine run_main(config, error)
    if (allocated(error)) return
 
    if (config%libcint) then
-      call calc%set_integral_handler(mol, error, integral_handler_libcint)
+      call calc%set_integral_handler(mol, error, enum_integral_handler%libcint)
       if (allocated(error)) return
    end if
 
@@ -187,7 +187,7 @@ subroutine run_main(config, error)
       call new_ceh_calculator(calc_ceh, mol, error)
       if (allocated(error)) return
       if (config%libcint) then
-         call calc_ceh%set_integral_handler(mol, error, integral_handler_libcint)
+         call calc_ceh%set_integral_handler(mol, error, enum_integral_handler%libcint)
          if (allocated(error)) return
       end if
       call new_wavefunction(wfn_ceh, mol%nat, calc_ceh%bas%nsh, calc_ceh%bas%nao, 1, config%etemp_guess * kt)

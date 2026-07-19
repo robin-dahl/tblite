@@ -129,7 +129,7 @@ subroutine compute(self, mol, wfn, ints, calc, caches, ctx, timer, &
    !> Wavefunction strcuture data
    type(wavefunction_type), intent(in) :: wfn
    !> Integral container
-   class(integral_type), intent(in) :: ints
+   type(integral_type), intent(in) :: ints
    !> Single-point calculator conatiner
    type(xtb_calculator), intent(in) :: calc
    !> Context container for writing to stdout

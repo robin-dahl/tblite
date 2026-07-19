@@ -1,23 +1,77 @@
 ! This file is part of tblite.
 ! SPDX-Identifier: LGPL-3.0-or-later
+!
+! tblite is free software: you can redistribute it and/or modify it under
+! the terms of the GNU Lesser General Public License as published by
+! the Free Software Foundation, either version 3 of the License, or
+! (at your option) any later version.
+!
+! tblite is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+! GNU Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public License
+! along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
-!> Native tblite integral implementation.
+!> @file tblite/integral/native/native.f90
+!> Provides native evaluation of Gaussian integrals.
+
+!> Native implementation of Gaussian integrals.
 module tblite_integral_native
    use mctc_env, only : wp
    use mctc_io, only : structure_type
+   use mctc_io_constants, only : pi
    use tblite_basis_type, only : basis_type, cgto_type
    use tblite_integral_dipole, only : dipole_3d, dipole_cgto_diat
-   use tblite_integral_multipole, only : maxl2, msao, mlao, lmap, smap, sqrtpi3, lx, &
-      & overlap_1d, multipole_3d, multipole_grad_3d, shift_operator, &
-      & multipole_cgto_diat
+   use tblite_integral_multipole, only : overlap_1d, multipole_3d, &
+      & multipole_grad_3d, shift_operator, multipole_cgto_diat
    use tblite_integral_trafo, only : transform0, transform1, transform2
    use tblite_integral_handler, only : integral_handler
    implicit none
    private
 
    public :: native_integral_type
-   public :: dipole_cgto, multipole_cgto, multipole_grad_cgto
    public :: get_dipole_integrals, get_multipole_integrals
+
+   integer, parameter :: maxl = 6
+   integer, parameter :: maxl2 = maxl*2
+   integer, parameter :: msao(0:maxl) = [1, 3, 5, 7, 9, 11, 13]
+   integer, parameter :: mlao(0:maxl) = [1, 3, 6, 10, 15, 21, 28]
+   integer, parameter :: lmap(0:maxl) = [0, 1, 4, 10, 20, 35, 56]
+   real(wp), parameter :: sqrtpi = sqrt(pi)
+   real(wp), parameter :: sqrtpi3 = sqrtpi**3
+
+   ! Cartesian components in CCA ordering.
+   ! For angular momentum l, components are ordered by decreasing lx,
+   ! and for equal lx by decreasing ly; lz = l - lx - ly.
+   ! p: x, y, z
+   ! d: xx, xy, xz, yy, yz, zz
+   ! f: xxx, xxy, xxz, xyy, xyz, xzz, yyy, yyz, yzz, zzz
+   ! and for equal lx by decreasing ly; lz = l - lx - ly.
+   integer, parameter :: lx(3, 84) = reshape([&
+      & 0, &
+      & 1,0,0, &
+      & 2,1,1,0,0,0, &
+      & 3,2,2,1,1,1,0,0,0,0, &
+      & 4,3,3,2,2,2,1,1,1,1,0,0,0,0,0, &
+      & 5,4,4,3,3,3,2,2,2,2,1,1,1,1,1,0,0,0,0,0,0, &
+      & 6,5,5,4,4,4,3,3,3,3,2,2,2,2,2,1,1,1,1,1,1,0,0,0,0,0,0,0, &
+      & 0, &
+      & 0,1,0, &
+      & 0,1,0,2,1,0, &
+      & 0,1,0,2,1,0,3,2,1,0, &
+      & 0,1,0,2,1,0,3,2,1,0,4,3,2,1,0, &
+      & 0,1,0,2,1,0,3,2,1,0,4,3,2,1,0,5,4,3,2,1,0, &
+      & 0,1,0,2,1,0,3,2,1,0,4,3,2,1,0,5,4,3,2,1,0,6,5,4,3,2,1,0, &
+      & 0, &
+      & 0,0,1, &
+      & 0,0,1,0,1,2, &
+      & 0,0,1,0,1,2,0,1,2,3, &
+      & 0,0,1,0,1,2,0,1,2,3,0,1,2,3,4, &
+      & 0,0,1,0,1,2,0,1,2,3,0,1,2,3,4,0,1,2,3,4,5, &
+      & 0,0,1,0,1,2,0,1,2,3,0,1,2,3,4,0,1,2,3,4,5,0,1,2,3,4,5,6], &
+      & shape(lx), order=[2, 1])
 
    interface get_dipole_integrals
       module procedure :: get_dipole_integrals_lat
@@ -31,19 +85,30 @@ module tblite_integral_native
 
    type, extends(integral_handler) :: native_integral_type
    contains
+      !> Initialize the native integral evaluator
       procedure :: initialize_integral => initialize_native
-      procedure :: multipole_cgto => multipole_native
-      procedure :: multipole_grad_cgto => multipole_gradient_native
-      procedure :: dipole_cgto => dipole_native
+      !> Evaluate overlap, dipole, and quadrupole integrals
+      procedure :: multipole_cgto
+      !> Evaluate multipole integrals and their nuclear derivatives
+      procedure :: multipole_grad_cgto
+      !> Evaluate overlap and dipole integrals
+      procedure :: dipole_cgto
    end type native_integral_type
 
 contains
 
-pure subroutine dipole_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dpint)
-   !> Description of contracted Gaussian function on center i
-   type(cgto_type), intent(in) :: cgtoi
+!> Evaluate overlap and dipole integrals for a shell pair
+pure subroutine dipole_cgto(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dpint)
+   !> Native integral evaluator
+   class(native_integral_type), intent(in) :: self
    !> Description of contracted Gaussian function on center j
    type(cgto_type), intent(in) :: cgtoj
+   !> Description of contracted Gaussian function on center i
+   type(cgto_type), intent(in) :: cgtoi
+   !> Global shell index of the contracted Gaussian function on center j
+   integer, intent(in) :: jsh
+   !> Global shell index of the contracted Gaussian function on center i
+   integer, intent(in) :: ish
    !> Square distance between center i and j
    real(wp), intent(in) :: r2
    !> Distance vector between center i and j, ri - rj
@@ -93,11 +158,19 @@ pure subroutine dipole_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dpint)
 
 end subroutine dipole_cgto
 
-pure subroutine multipole_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dpint, qpint)
-   !> Description of contracted Gaussian function on center i
-   type(cgto_type), intent(in) :: cgtoi
+!> Evaluate overlap, dipole, and quadrupole integrals for a shell pair
+pure subroutine multipole_cgto(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, &
+      & overlap, dpint, qpint)
+   !> Native integral evaluator
+   class(native_integral_type), intent(in) :: self
    !> Description of contracted Gaussian function on center j
    type(cgto_type), intent(in) :: cgtoj
+   !> Description of contracted Gaussian function on center i
+   type(cgto_type), intent(in) :: cgtoi
+   !> Global shell index of the contracted Gaussian function on center j
+   integer, intent(in) :: jsh
+   !> Global shell index of the contracted Gaussian function on center i
+   integer, intent(in) :: ish
    !> Square distance between center i and j
    real(wp), intent(in) :: r2
    !> Distance vector between center i and j, ri - rj
@@ -166,12 +239,19 @@ pure subroutine multipole_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dpint, qp
 
 end subroutine multipole_cgto
 
-pure subroutine multipole_grad_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dpint, qpint, &
-      & doverlap, ddpintj, dqpintj, ddpinti, dqpinti)
-   !> Description of contracted Gaussian function on center i
-   type(cgto_type), intent(in) :: cgtoi
+!> Evaluate multipole integrals and their nuclear derivatives for a shell pair
+pure subroutine multipole_grad_cgto(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, &
+      & overlap, dpint, qpint, doverlap, ddpintj, dqpintj, ddpinti, dqpinti)
+   !> Native integral evaluator
+   class(native_integral_type), intent(in) :: self
    !> Description of contracted Gaussian function on center j
    type(cgto_type), intent(in) :: cgtoj
+   !> Description of contracted Gaussian function on center i
+   type(cgto_type), intent(in) :: cgtoi
+   !> Global shell index of the contracted Gaussian function on center j
+   integer, intent(in) :: jsh
+   !> Global shell index of the contracted Gaussian function on center i
+   integer, intent(in) :: ish
    !> Square distance between center i and j
    real(wp), intent(in) :: r2
    !> Distance vector between center i and j, ri - rj
@@ -320,6 +400,7 @@ subroutine get_dipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint)
    !> Dipole moment integral matrix
    real(wp), intent(out) :: dpint(:, :, :)
 
+   type(native_integral_type) :: native_integral
    integer :: iat, jat, izp, jzp, itr, is, js
    integer :: ish, jsh, ii, jj, iao, jao, nao
    real(wp) :: r2, vec(3), cutoff2
@@ -332,7 +413,8 @@ subroutine get_dipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint)
    cutoff2 = cutoff**2
 
    !$omp parallel do schedule(runtime) default(none) &
-   !$omp shared(mol, bas, trans, cutoff2, overlap, dpint) private(r2, vec, stmp, dtmp) &
+   !$omp shared(mol, bas, trans, cutoff2, overlap, dpint, native_integral) &
+   !$omp private(r2, vec, stmp, dtmp) &
    !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao)
    do iat = 1, mol%nat
       izp = mol%id(iat)
@@ -348,8 +430,9 @@ subroutine get_dipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint)
                ii = bas%iao_sh(is+ish)
                do jsh = 1, bas%nsh_id(jzp)
                   jj = bas%iao_sh(js+jsh)
-                  call dipole_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                     & r2, vec, bas%intcut, stmp, dtmp)
+                  call native_integral%dipole_cgto(bas%cgto(jsh, jzp), &
+                     & bas%cgto(ish, izp), js+jsh, is+ish, r2, vec, bas%intcut, &
+                     & stmp, dtmp)
 
                   nao = msao(bas%cgto(jsh, jzp)%ang)
                   !$omp simd collapse(2)
@@ -396,6 +479,7 @@ subroutine get_dipole_integrals_diat_lat(mol, &
    !> (sigma, pi, delta)
    real(wp) :: ksig, kpi, kdel
 
+   type(native_integral_type) :: native_integral
    integer :: iat, jat, izp, jzp, itr, is, js
    integer :: ish, jsh, ii, jj, iao, jao, nao
    real(wp) :: r2, vec(3), cutoff2
@@ -415,7 +499,8 @@ subroutine get_dipole_integrals_diat_lat(mol, &
    cutoff2 = cutoff**2
 
    !$omp parallel do schedule(runtime) default(none) &
-   !$omp shared(mol, bas, trans, cutoff2, overlap, overlap_diat, dpint, scal_fac) &
+   !$omp shared(mol, bas, trans, cutoff2, overlap, overlap_diat, dpint, &
+   !$omp& scal_fac, native_integral) &
    !$omp private(r2, vec, stmp, dtmp, stmp_diat) &
    !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao) &
    !$omp private(ksig, kpi, kdel)
@@ -450,8 +535,9 @@ subroutine get_dipole_integrals_diat_lat(mol, &
                         & r2, vec, bas%intcut, ksig, kpi, kdel, &
                         & stmp, stmp_diat, dtmp)
                   else
-                     call dipole_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                        & r2, vec, bas%intcut, stmp, dtmp)
+                     call native_integral%dipole_cgto(bas%cgto(jsh, jzp), &
+                        & bas%cgto(ish, izp), js+jsh, is+ish, r2, vec, bas%intcut, &
+                        & stmp, dtmp)
                      stmp_diat = stmp
                   endif
                   
@@ -497,6 +583,7 @@ subroutine get_multipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint, 
    !> Quadrupole moment integral matrix
    real(wp), intent(out) :: qpint(:, :, :)
 
+   type(native_integral_type) :: native_integral
    integer :: iat, jat, izp, jzp, itr, is, js
    integer :: ish, jsh, ii, jj, iao, jao, nao
    real(wp) :: r2, vec(3), cutoff2
@@ -510,7 +597,7 @@ subroutine get_multipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint, 
    cutoff2 = cutoff**2
 
    !$omp parallel do schedule(runtime) default(none) &
-   !$omp shared(mol, bas, trans, cutoff2, overlap, dpint, qpint) &
+   !$omp shared(mol, bas, trans, cutoff2, overlap, dpint, qpint, native_integral) &
    !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao) &
    !$omp private(r2, vec, stmp, dtmp, qtmp)
    do iat = 1, mol%nat
@@ -527,8 +614,9 @@ subroutine get_multipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint, 
                ii = bas%iao_sh(is+ish)
                do jsh = 1, bas%nsh_id(jzp)
                   jj = bas%iao_sh(js+jsh)
-                  call multipole_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                     & r2, vec, bas%intcut, stmp, dtmp, qtmp)
+                  call native_integral%multipole_cgto(bas%cgto(jsh, jzp), &
+                     & bas%cgto(ish, izp), js+jsh, is+ish, r2, vec, bas%intcut, &
+                     & stmp, dtmp, qtmp)
 
                   nao = msao(bas%cgto(jsh, jzp)%ang)
                   !$omp simd collapse(2)
@@ -581,6 +669,7 @@ subroutine get_multipole_integrals_diat_lat(mol, &
    !> Scaling factors for the diatomic frame for sigma-, pi-, delta-bonding
    real(wp) :: ksig, kpi, kdel
 
+   type(native_integral_type) :: native_integral
    integer :: iat, jat, izp, jzp, itr, is, js
    integer :: ish, jsh, ii, jj, iao, jao, nao
    real(wp) :: r2, vec(3), cutoff2
@@ -601,7 +690,8 @@ subroutine get_multipole_integrals_diat_lat(mol, &
    cutoff2 = cutoff**2
 
    !$omp parallel do schedule(runtime) default(none) &
-   !$omp shared(mol, bas, trans, cutoff2, overlap, overlap_diat, dpint, qpint, scal_fac) &
+   !$omp shared(mol, bas, trans, cutoff2, overlap, overlap_diat, dpint, &
+   !$omp& qpint, scal_fac, native_integral) &
    !$omp private(r2, vec, stmp, dtmp, qtmp, stmp_diat) &
    !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao) &
    !$omp private(ksig, kpi, kdel)
@@ -637,8 +727,9 @@ subroutine get_multipole_integrals_diat_lat(mol, &
                         & r2, vec, bas%intcut, ksig, kpi, kdel, stmp, &
                         & stmp_diat, dtmp, qtmp)
                   else
-                     call multipole_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                        & r2, vec, bas%intcut, stmp, dtmp, qtmp)
+                     call native_integral%multipole_cgto(bas%cgto(jsh, jzp), &
+                        & bas%cgto(ish, izp), js+jsh, is+ish, r2, vec, bas%intcut, &
+                        & stmp, dtmp, qtmp)
                      stmp_diat = stmp
                   endif
 
@@ -669,6 +760,7 @@ subroutine get_multipole_integrals_diat_lat(mol, &
 
 end subroutine get_multipole_integrals_diat_lat
 
+!> Initialize the native integral evaluator
 subroutine initialize_native(self, mol, basis)
    !> Native integral evaluator
    class(native_integral_type), intent(inout) :: self
@@ -677,97 +769,5 @@ subroutine initialize_native(self, mol, basis)
    !> Basis set information
    type(basis_type), intent(in) :: basis
 end subroutine initialize_native
-
-subroutine multipole_native(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dipole, quadrupole)
-   !> Native integral evaluator
-   class(native_integral_type), intent(in) :: self
-   !> Description of contracted Gaussian function on center j
-   type(cgto_type), intent(in) :: cgtoj
-   !> Description of contracted Gaussian function on center i
-   type(cgto_type), intent(in) :: cgtoi
-   !> Global shell index of the contracted Gaussian function on center j
-   integer, intent(in) :: jsh
-   !> Global shell index of the contracted Gaussian function on center i
-   integer, intent(in) :: ish
-   !> Square distance between center i and j
-   real(wp), intent(in) :: r2
-   !> Distance vector between center i and j, ri - rj
-   real(wp), intent(in) :: vec(3)
-   !> Maximum value of integral prefactor to consider
-   real(wp), intent(in) :: intcut
-   !> Overlap integrals for the given pair i and j
-   real(wp), intent(out) :: overlap(:)
-   !> Dipole moment integrals for the given pair i and j
-   real(wp), intent(out) :: dipole(:, :)
-   !> Quadrupole moment integrals for the given pair i and j
-   real(wp), intent(out) :: quadrupole(:, :)
-   
-   call multipole_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dipole, quadrupole)
-end subroutine multipole_native
-
-subroutine multipole_gradient_native(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, &
-      & dipole, quadrupole, doverlap, ddipole_j, dquadrupole_j, ddipole_i, &
-      & dquadrupole_i)
-   !> Native integral evaluator
-   class(native_integral_type), intent(in) :: self
-   !> Description of contracted Gaussian function on center j
-   type(cgto_type), intent(in) :: cgtoj
-   !> Description of contracted Gaussian function on center i
-   type(cgto_type), intent(in) :: cgtoi
-   !> Global shell index of the contracted Gaussian function on center j
-   integer, intent(in) :: jsh
-   !> Global shell index of the contracted Gaussian function on center i
-   integer, intent(in) :: ish
-   !> Square distance between center i and j
-   real(wp), intent(in) :: r2
-   !> Distance vector between center i and j, ri - rj
-   real(wp), intent(in) :: vec(3)
-   !> Maximum value of integral prefactor to consider
-   real(wp), intent(in) :: intcut
-   !> Overlap integrals for the given pair i and j
-   real(wp), intent(out) :: overlap(:)
-   !> Dipole moment integrals for the given pair i and j
-   real(wp), intent(out) :: dipole(:, :)
-   !> Quadrupole moment integrals for the given pair i and j
-   real(wp), intent(out) :: quadrupole(:, :)
-   !> Overlap integral gradient for the given pair i and j
-   real(wp), intent(out) :: doverlap(:, :)
-   !> Dipole moment integral gradient with respect to center j
-   real(wp), intent(out) :: ddipole_j(:, :, :)
-   !> Quadrupole moment integral gradient with respect to center j
-   real(wp), intent(out) :: dquadrupole_j(:, :, :)
-   !> Dipole moment integral gradient with respect to center i
-   real(wp), intent(out) :: ddipole_i(:, :, :)
-   !> Quadrupole moment integral gradient with respect to center i
-   real(wp), intent(out) :: dquadrupole_i(:, :, :)
-   
-   call multipole_grad_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dipole, quadrupole, doverlap, &
-      & ddipole_j, dquadrupole_j, ddipole_i, dquadrupole_i)
-end subroutine multipole_gradient_native
-
-subroutine dipole_native(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dipole)
-   !> Native integral evaluator
-   class(native_integral_type), intent(in) :: self
-   !> Description of contracted Gaussian function on center j
-   type(cgto_type), intent(in) :: cgtoj
-   !> Description of contracted Gaussian function on center i
-   type(cgto_type), intent(in) :: cgtoi
-   !> Global shell index of the contracted Gaussian function on center j
-   integer, intent(in) :: jsh
-   !> Global shell index of the contracted Gaussian function on center i
-   integer, intent(in) :: ish
-   !> Square distance between center i and j
-   real(wp), intent(in) :: r2
-   !> Distance vector between center i and j, ri - rj
-   real(wp), intent(in) :: vec(3)
-   !> Maximum value of integral prefactor to consider
-   real(wp), intent(in) :: intcut
-   !> Overlap integrals for the given pair i and j
-   real(wp), intent(out) :: overlap(:)
-   !> Dipole moment integrals for the given pair i and j
-   real(wp), intent(out) :: dipole(:, :)
-   
-   call dipole_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dipole)
-end subroutine dipole_native
 
 end module tblite_integral_native

@@ -170,7 +170,8 @@ subroutine get_selfenergy(h0, id, ish_at, nshell, cn, qat, selfenergy, dsedcn, d
 end subroutine get_selfenergy
 
 
-subroutine get_hamiltonian(mol, trans, list, bas, handler, h0, selfenergy, overlap, dpint, qpint, &
+subroutine get_hamiltonian(mol, trans, list, bas, handler, h0, selfenergy, &
+      & overlap, dpint, qpint, &
       & hamiltonian)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -180,6 +181,7 @@ subroutine get_hamiltonian(mol, trans, list, bas, handler, h0, selfenergy, overl
    type(adjacency_list), intent(in) :: list
    !> Basis set information
    type(basis_type), intent(in) :: bas
+   !> Gaussian integral evaluator
    class(integral_handler), intent(in) :: handler
    !> Hamiltonian interaction data
    type(tb_hamiltonian), intent(in) :: h0
@@ -207,7 +209,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, handler, h0, selfenergy, overl
    allocate(stmp(msao(bas%maxl)**2), dtmpi(3, msao(bas%maxl)**2), qtmpi(6, msao(bas%maxl)**2))
 
    !$omp parallel do schedule(runtime) default(none) &
-   !$omp shared(mol, bas, handler, trans, list, overlap, dpint, qpint, hamiltonian, h0, selfenergy) &
+   !$omp shared(mol, bas, handler, trans, list, overlap, dpint, qpint, &
+   !$omp& hamiltonian, h0, selfenergy) &
    !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao, ij) &
    !$omp private(r2, vec, stmp, dtmpi, qtmpi, dtmpj, qtmpj, hij, shpoly, rr, inl, img)
    do iat = 1, mol%nat
@@ -226,8 +229,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, handler, h0, selfenergy, overl
             ii = bas%iao_sh(is+ish)
             do jsh = 1, bas%nsh_id(jzp)
                jj = bas%iao_sh(js+jsh)
-               call handler%multipole_cgto(bas%cgto(jsh,jzp), bas%cgto(ish,izp), js+jsh, is+ish, r2, vec, bas%intcut, &
-                  & stmp, dtmpi, qtmpi)
+               call handler%multipole_cgto(bas%cgto(jsh,jzp), bas%cgto(ish,izp), &
+                  & js+jsh, is+ish, r2, vec, bas%intcut, stmp, dtmpi, qtmpi)
 
                shpoly = (1.0_wp + h0%shpoly(ish, izp)*rr) &
                   * (1.0_wp + h0%shpoly(jsh, jzp)*rr)
@@ -287,8 +290,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, handler, h0, selfenergy, overl
          ii = bas%iao_sh(is+ish)
          do jsh = 1, bas%nsh_id(izp)
             jj = bas%iao_sh(is+jsh)
-            call handler%multipole_cgto(bas%cgto(jsh, izp), bas%cgto(ish, izp), is+jsh, is+ish, 0.0_wp, vec, bas%intcut, &
-               & stmp, dtmpi, qtmpi)
+            call handler%multipole_cgto(bas%cgto(jsh, izp), bas%cgto(ish, izp), &
+               & is+jsh, is+ish, 0.0_wp, vec, bas%intcut, stmp, dtmpi, qtmpi)
 
             ! shpoly is always 1.0, because rr is always 0.0
             hij = 0.5_wp * (selfenergy(is+ish) + selfenergy(is+jsh))
@@ -318,7 +321,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, handler, h0, selfenergy, overl
 end subroutine get_hamiltonian
 
 
-subroutine get_hamiltonian_gradient(mol, trans, list, bas, handler, h0, selfenergy, dsedcn, &
+subroutine get_hamiltonian_gradient(mol, trans, list, bas, handler, h0, &
+      & selfenergy, dsedcn, &
       & pot, pmat, xmat, dEdcn, gradient, sigma)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -328,6 +332,7 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, handler, h0, selfener
    type(adjacency_list), intent(in) :: list
    !> Basis set information
    type(basis_type), intent(in) :: bas
+   !> Gaussian integral evaluator
    class(integral_handler), intent(in) :: handler
    !> Hamiltonian interaction data
    type(tb_hamiltonian), intent(in) :: h0
@@ -366,7 +371,8 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, handler, h0, selfener
       & ddtmpj(3, 3, msao(bas%maxl)**2), dqtmpj(3, 6, msao(bas%maxl)**2))
 
    !$omp parallel do schedule(runtime) default(none) reduction(+:dEdcn, gradient, sigma) &
-   !$omp shared(mol, bas, handler, trans, h0, selfenergy, dsedcn, pot, pmat, xmat, list, nspin) &
+   !$omp shared(mol, bas, handler, trans, h0, selfenergy, dsedcn, pot, &
+   !$omp& pmat, xmat, list, nspin) &
    !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao, ij, spin, &
    !$omp& r2, vec, stmp, dtmp, qtmp, dstmp, ddtmpi, dqtmpi, ddtmpj, dqtmpj, hij, &
    !$omp& dG, dcni, dcnj, dhdcni, dhdcnj, hpij, rr, sval, hscale, pij, inl, img, &
@@ -388,9 +394,9 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, handler, h0, selfener
             ii = bas%iao_sh(is+ish)
             do jsh = 1, bas%nsh_id(jzp)
                jj = bas%iao_sh(js+jsh)
-               call handler%multipole_grad_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), js+jsh, is+ish, &
-                  & r2, vec, bas%intcut, stmp, dtmp, qtmp, dstmp, ddtmpj, dqtmpj, &
-                  & ddtmpi, dqtmpi)
+               call handler%multipole_grad_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
+                  & js+jsh, is+ish, r2, vec, bas%intcut, stmp, dtmp, qtmp, dstmp, &
+                  & ddtmpj, dqtmpj, ddtmpi, dqtmpi)
                
                shpolyi = 1.0_wp + h0%shpoly(ish, izp)*rr
                shpolyj = 1.0_wp + h0%shpoly(jsh, jzp)*rr

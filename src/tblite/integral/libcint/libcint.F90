@@ -16,50 +16,52 @@
 
 !> @file tblite/integral/libcint.f90
 !> Provides an optional libcint-backed Gaussian integral interface.
+
+!> Interface to Libcint Gaussian integral evaluation.
 module tblite_integral_libcint
    use, intrinsic :: iso_c_binding, only : c_double, c_int, c_null_ptr, c_ptr
    use mctc_env, only : wp
    use mctc_io, only : structure_type
    use mctc_io_constants, only : pi
    use tblite_basis_type, only : basis_type, cgto_type
+   use tblite_integral_multipole, only : msao
    use tblite_integral_handler, only : integral_handler
    implicit none
    private
 
-   public :: LIBCINT_1E_OVERLAP, LIBCINT_1E_KINETIC, LIBCINT_1E_NUCLEAR
-   public :: LIBCINT_CARTESIAN, LIBCINT_SPHERICAL
    public :: CHARGE_OF, PTR_COORD, NUC_MOD_OF, PTR_ZETA, PTR_FRAC_CHARGE, ATM_SLOTS
    public :: ATOM_OF, ANG_OF, NPRIM_OF, NCTR_OF, KAPPA_OF, PTR_EXP, PTR_COEFF, BAS_SLOTS
    public :: PTR_GRIDS, PTR_ENV_START
    public :: POINT_NUC, GAUSSIAN_NUC, FRAC_CHARGE_NUC
-   public :: libcint_cgto_cart, libcint_cgto_spheric
-   public :: libcint_tot_cgto_cart, libcint_tot_cgto_spheric
-   public :: libcint_gto_norm
-   public :: libcint_shell_size
    public :: libcint_eval_1e
    public :: libcint_eval_dipole, libcint_eval_quadrupole
    public :: libcint_eval_dipole_gradient, libcint_eval_quadrupole_gradient
    public :: libcint_eval_overlap_gradient
-   public :: libcint_eval_1e_grids
-   public :: libcint_eval_eri
-   public :: libcint_eval_3c2e, libcint_eval_3c1e_rinv
-   public :: libcint_basis_type, libcint_integral_type, new_libcint_basis
+   public :: libcint_basis_type, libcint_integral_type
 
    !> Libcint representation of a molecular Gaussian basis.  The integer
    !> tables contain zero-based offsets into env, as required by libcint
    type :: libcint_basis_type
+      !> Libcint atom table
       integer(c_int), allocatable :: atm(:, :)
+      !> Libcint basis-shell table
       integer(c_int), allocatable :: bas(:, :)
+      !> Libcint floating-point environment array
       real(c_double), allocatable :: env(:)
    end type libcint_basis_type
 
    !> Libcint-backed integral evaluator and cached basis conversion
    type, extends(integral_handler) :: libcint_integral_type
+      !> Molecular basis represented in libcint data structures
       type(libcint_basis_type) :: basis
    contains
+      !> Convert and cache the molecular basis for libcint evaluations
       procedure :: initialize_integral => initialize_libcint
+      !> Evaluate overlap, dipole, and quadrupole integrals
       procedure :: multipole_cgto => multipole_libcint
-      procedure :: multipole_grad_cgto => multipole_gradient_libcint
+      !> Evaluate multipole integrals and their nuclear derivatives
+      procedure :: multipole_grad_cgto => multipole_grad_libcint
+      !> Evaluate overlap and dipole integrals
       procedure :: dipole_cgto => dipole_libcint
    end type libcint_integral_type
 
@@ -91,272 +93,254 @@ module tblite_integral_libcint
    integer, parameter :: GAUSSIAN_NUC = 2
    integer, parameter :: FRAC_CHARGE_NUC = 3
 
-   integer, parameter :: LIBCINT_1E_OVERLAP = 1
-   integer, parameter :: LIBCINT_1E_KINETIC = 2
-   integer, parameter :: LIBCINT_1E_NUCLEAR = 3
-   integer, parameter :: LIBCINT_CARTESIAN = 1
-   integer, parameter :: LIBCINT_SPHERICAL = 2
-
+   ! In the notation below, r is measured from the center of the
+   ! second shell and nabla is an electronic-coordinate derivative.
    interface
-      function cint_cgto_cart(bas_id, bas) bind(C, name="CINTcgto_cart") result(nao)
-         import :: c_int
-         integer(c_int), value :: bas_id
-         integer(c_int), intent(in) :: bas(*)
-         integer(c_int) :: nao
-      end function cint_cgto_cart
-
+      !> Return the number of spherical atomic orbitals in a libcint shell
       function cint_cgto_spheric(bas_id, bas) bind(C, name="CINTcgto_spheric") result(nao)
          import :: c_int
+         !> Zero-based index of the shell
          integer(c_int), value :: bas_id
+         !> Flattened libcint basis-shell table
          integer(c_int), intent(in) :: bas(*)
+         !> Number of spherical atomic orbitals in the shell
          integer(c_int) :: nao
       end function cint_cgto_spheric
 
-      function cint_tot_cgto_cart(bas, nbas) bind(C, name="CINTtot_cgto_cart") result(nao)
-         import :: c_int
-         integer(c_int), intent(in) :: bas(*)
-         integer(c_int), value :: nbas
-         integer(c_int) :: nao
-      end function cint_tot_cgto_cart
-
-      function cint_tot_cgto_spheric(bas, nbas) bind(C, name="CINTtot_cgto_spheric") result(nao)
-         import :: c_int
-         integer(c_int), intent(in) :: bas(*)
-         integer(c_int), value :: nbas
-         integer(c_int) :: nao
-      end function cint_tot_cgto_spheric
-
-      function cint_gto_norm(n, alpha) bind(C, name="CINTgto_norm") result(norm)
-         import :: c_double, c_int
-         integer(c_int), value :: n
-         real(c_double), value :: alpha
-         real(c_double) :: norm
-      end function cint_gto_norm
-
-      function int1e_ovlp_cart(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int1e_ovlp_cart") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int1e_ovlp_cart
-
+      !> Evaluate <i| OVLP |j>
       function int1e_ovlp_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
             & bind(C, name="int1e_ovlp_sph") result(stat)
          import :: c_double, c_int, c_ptr
+         !> Flattened output buffer
          real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
+         !> Leading dimensions of the output buffer
+         integer(c_int), intent(in) :: dims(*)
+         !> Zero-based indices of the bra and ket shells
+         integer(c_int), intent(in) :: shls(*)
+         !> Flattened libcint atom table
+         integer(c_int), intent(in) :: atm(*)
+         !> Number of atoms in the atom table
+         integer(c_int), value :: natm
+         !> Flattened libcint basis-shell table
+         integer(c_int), intent(in) :: bas(*)
+         !> Number of shells in the basis-shell table
+         integer(c_int), value :: nbas
+         !> Libcint floating-point environment array
          real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
+         !> Libcint optimizer, or a null pointer
+         type(c_ptr), value :: opt
+         !> Libcint workspace cache, or a null pointer
+         type(c_ptr), value :: cache
+         !> Libcint return status
          integer(c_int) :: stat
       end function int1e_ovlp_sph
 
-      function int1e_kin_cart(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int1e_kin_cart") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int1e_kin_cart
-
-      function int1e_kin_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int1e_kin_sph") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int1e_kin_sph
-
-      function int1e_nuc_cart(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int1e_nuc_cart") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int1e_nuc_cart
-
-      function int1e_nuc_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int1e_nuc_sph") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int1e_nuc_sph
-
-      function int1e_grids_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int1e_grids_sph") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int1e_grids_sph
-
+      !> Evaluate <i| R |j>
       function int1e_r_origj_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
             & bind(C, name="int1e_r_origj_sph") result(stat)
          import :: c_double, c_int, c_ptr
+         !> Flattened output buffer
          real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
+         !> Leading dimensions of the output buffer
+         integer(c_int), intent(in) :: dims(*)
+         !> Zero-based indices of the bra and ket shells
+         integer(c_int), intent(in) :: shls(*)
+         !> Flattened libcint atom table
+         integer(c_int), intent(in) :: atm(*)
+         !> Number of atoms in the atom table
+         integer(c_int), value :: natm
+         !> Flattened libcint basis-shell table
+         integer(c_int), intent(in) :: bas(*)
+         !> Number of shells in the basis-shell table
+         integer(c_int), value :: nbas
+         !> Libcint floating-point environment array
          real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
+         !> Libcint optimizer, or a null pointer
+         type(c_ptr), value :: opt
+         !> Libcint workspace cache, or a null pointer
+         type(c_ptr), value :: cache
+         !> Libcint return status
          integer(c_int) :: stat
       end function int1e_r_origj_sph
 
-      function int1e_rr_origj_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+      !> Evaluate <i| R R |j>
+      function int1e_rr_origj_sph(out, dims, shls, atm, natm, bas, nbas, &
+            & env, opt, cache) &
             & bind(C, name="int1e_rr_origj_sph") result(stat)
          import :: c_double, c_int, c_ptr
+         !> Flattened output buffer
          real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
+         !> Leading dimensions of the output buffer
+         integer(c_int), intent(in) :: dims(*)
+         !> Zero-based indices of the bra and ket shells
+         integer(c_int), intent(in) :: shls(*)
+         !> Flattened libcint atom table
+         integer(c_int), intent(in) :: atm(*)
+         !> Number of atoms in the atom table
+         integer(c_int), value :: natm
+         !> Flattened libcint basis-shell table
+         integer(c_int), intent(in) :: bas(*)
+         !> Number of shells in the basis-shell table
+         integer(c_int), value :: nbas
+         !> Libcint floating-point environment array
          real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
+         !> Libcint optimizer, or a null pointer
+         type(c_ptr), value :: opt
+         !> Libcint workspace cache, or a null pointer
+         type(c_ptr), value :: cache
+         !> Libcint return status
          integer(c_int) :: stat
       end function int1e_rr_origj_sph
 
+      !> Evaluate <i| OVLP |NABLA j>
       function int1e_ovlpip_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
             & bind(C, name="int1e_ovlpip_sph") result(stat)
          import :: c_double, c_int, c_ptr
+         !> Flattened output buffer
          real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
+         !> Leading dimensions of the output buffer
+         integer(c_int), intent(in) :: dims(*)
+         !> Zero-based indices of the bra and ket shells
+         integer(c_int), intent(in) :: shls(*)
+         !> Flattened libcint atom table
+         integer(c_int), intent(in) :: atm(*)
+         !> Number of atoms in the atom table
+         integer(c_int), value :: natm
+         !> Flattened libcint basis-shell table
+         integer(c_int), intent(in) :: bas(*)
+         !> Number of shells in the basis-shell table
+         integer(c_int), value :: nbas
+         !> Libcint floating-point environment array
          real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
+         !> Libcint optimizer, or a null pointer
+         type(c_ptr), value :: opt
+         !> Libcint workspace cache, or a null pointer
+         type(c_ptr), value :: cache
+         !> Libcint return status
          integer(c_int) :: stat
       end function int1e_ovlpip_sph
 
-      function int1e_ipr_origj_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+      !> Evaluate <NABLA i| OVLP |R j>
+      function int1e_ipr_origj_sph(out, dims, shls, atm, natm, bas, nbas, &
+            & env, opt, cache) &
             & bind(C, name="int1e_ipr_origj_sph") result(stat)
          import :: c_double, c_int, c_ptr
+         !> Flattened output buffer
          real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
+         !> Leading dimensions of the output buffer
+         integer(c_int), intent(in) :: dims(*)
+         !> Zero-based indices of the bra and ket shells
+         integer(c_int), intent(in) :: shls(*)
+         !> Flattened libcint atom table
+         integer(c_int), intent(in) :: atm(*)
+         !> Number of atoms in the atom table
+         integer(c_int), value :: natm
+         !> Flattened libcint basis-shell table
+         integer(c_int), intent(in) :: bas(*)
+         !> Number of shells in the basis-shell table
+         integer(c_int), value :: nbas
+         !> Libcint floating-point environment array
          real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
+         !> Libcint optimizer, or a null pointer
+         type(c_ptr), value :: opt
+         !> Libcint workspace cache, or a null pointer
+         type(c_ptr), value :: cache
+         !> Libcint return status
          integer(c_int) :: stat
       end function int1e_ipr_origj_sph
 
-      function int1e_r_origj_ip_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+      !> Evaluate <i| OVLP |NABLA R j>
+      function int1e_r_origj_ip_sph(out, dims, shls, atm, natm, bas, nbas, &
+            & env, opt, cache) &
             & bind(C, name="int1e_r_origj_ip_sph") result(stat)
          import :: c_double, c_int, c_ptr
+         !> Flattened output buffer
          real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
+         !> Leading dimensions of the output buffer
+         integer(c_int), intent(in) :: dims(*)
+         !> Zero-based indices of the bra and ket shells
+         integer(c_int), intent(in) :: shls(*)
+         !> Flattened libcint atom table
+         integer(c_int), intent(in) :: atm(*)
+         !> Number of atoms in the atom table
+         integer(c_int), value :: natm
+         !> Flattened libcint basis-shell table
+         integer(c_int), intent(in) :: bas(*)
+         !> Number of shells in the basis-shell table
+         integer(c_int), value :: nbas
+         !> Libcint floating-point environment array
          real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
+         !> Libcint optimizer, or a null pointer
+         type(c_ptr), value :: opt
+         !> Libcint workspace cache, or a null pointer
+         type(c_ptr), value :: cache
+         !> Libcint return status
          integer(c_int) :: stat
       end function int1e_r_origj_ip_sph
 
-      function int1e_iprr_origj_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+      !> Evaluate <NABLA i| OVLP |R R j>
+      function int1e_iprr_origj_sph(out, dims, shls, atm, natm, bas, nbas, &
+            & env, opt, cache) &
             & bind(C, name="int1e_iprr_origj_sph") result(stat)
          import :: c_double, c_int, c_ptr
+         !> Flattened output buffer
          real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
+         !> Leading dimensions of the output buffer
+         integer(c_int), intent(in) :: dims(*)
+         !> Zero-based indices of the bra and ket shells
+         integer(c_int), intent(in) :: shls(*)
+         !> Flattened libcint atom table
+         integer(c_int), intent(in) :: atm(*)
+         !> Number of atoms in the atom table
+         integer(c_int), value :: natm
+         !> Flattened libcint basis-shell table
+         integer(c_int), intent(in) :: bas(*)
+         !> Number of shells in the basis-shell table
+         integer(c_int), value :: nbas
+         !> Libcint floating-point environment array
          real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
+         !> Libcint optimizer, or a null pointer
+         type(c_ptr), value :: opt
+         !> Libcint workspace cache, or a null pointer
+         type(c_ptr), value :: cache
+         !> Libcint return status
          integer(c_int) :: stat
       end function int1e_iprr_origj_sph
 
-      function int1e_rr_origj_ip_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+      !> Evaluate <i| OVLP |NABLA R R j>
+      function int1e_rr_origj_ip_sph(out, dims, shls, atm, natm, bas, nbas, &
+            & env, opt, cache) &
             & bind(C, name="int1e_rr_origj_ip_sph") result(stat)
          import :: c_double, c_int, c_ptr
+         !> Flattened output buffer
          real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
+         !> Leading dimensions of the output buffer
+         integer(c_int), intent(in) :: dims(*)
+         !> Zero-based indices of the bra and ket shells
+         integer(c_int), intent(in) :: shls(*)
+         !> Flattened libcint atom table
+         integer(c_int), intent(in) :: atm(*)
+         !> Number of atoms in the atom table
+         integer(c_int), value :: natm
+         !> Flattened libcint basis-shell table
+         integer(c_int), intent(in) :: bas(*)
+         !> Number of shells in the basis-shell table
+         integer(c_int), value :: nbas
+         !> Libcint floating-point environment array
          real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
+         !> Libcint optimizer, or a null pointer
+         type(c_ptr), value :: opt
+         !> Libcint workspace cache, or a null pointer
+         type(c_ptr), value :: cache
+         !> Libcint return status
          integer(c_int) :: stat
       end function int1e_rr_origj_ip_sph
 
-      function int3c2e_cart(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int3c2e_cart") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int3c2e_cart
-
-      function int3c2e_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int3c2e_sph") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int3c2e_sph
-
-      function int3c1e_rinv_cart(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int3c1e_rinv_cart") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int3c1e_rinv_cart
-
-      function int3c1e_rinv_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
-            & bind(C, name="int3c1e_rinv_sph") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: dims(*), shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt, cache
-         integer(c_int) :: stat
-      end function int3c1e_rinv_sph
-
-      function cint2e_cart(out, shls, atm, natm, bas, nbas, env, opt) &
-            & bind(C, name="cint2e_cart") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt
-         integer(c_int) :: stat
-      end function cint2e_cart
-
-      function cint2e_sph(out, shls, atm, natm, bas, nbas, env, opt) &
-            & bind(C, name="cint2e_sph") result(stat)
-         import :: c_double, c_int, c_ptr
-         real(c_double), intent(out) :: out(*)
-         integer(c_int), intent(in) :: shls(*), atm(*), bas(*)
-         integer(c_int), value :: natm, nbas
-         real(c_double), intent(in) :: env(*)
-         type(c_ptr), value :: opt
-         integer(c_int) :: stat
-      end function cint2e_sph
    end interface
 
 contains
 
-!> Convert and cache the complete tblite basis for libcint evaluations
+!> Convert and cache the complete basis for libcint evaluations
 subroutine initialize_libcint(self, mol, basis)
    !> Libcint integral evaluator
    class(libcint_integral_type), intent(inout) :: self
@@ -365,11 +349,62 @@ subroutine initialize_libcint(self, mol, basis)
    !> Basis set information
    type(basis_type), intent(in) :: basis
 
-   call new_libcint_basis(self%basis, mol, basis)
+   integer :: iat, isp, ish, lsh, ip, off, nenv, lang
+   real(wp) :: spherical_norm
+
+   nenv = PTR_ENV_START + 3*mol%nat
+   do ish = 1, basis%nsh
+      iat = basis%sh2at(ish)
+      isp = mol%id(iat)
+      lsh = ish - basis%ish_at(iat)
+      nenv = nenv + 2*basis%cgto(lsh, isp)%nprim
+   end do
+
+   allocate(self%basis%atm(ATM_SLOTS, mol%nat), source=0_c_int)
+   allocate(self%basis%bas(BAS_SLOTS, basis%nsh), source=0_c_int)
+   allocate(self%basis%env(nenv), source=0.0_c_double)
+
+   off = PTR_ENV_START
+   do iat = 1, mol%nat
+      isp = mol%id(iat)
+      self%basis%atm(CHARGE_OF, iat) = int(mol%num(isp), c_int)
+      self%basis%atm(PTR_COORD, iat) = int(off, c_int)
+      self%basis%atm(NUC_MOD_OF, iat) = POINT_NUC
+      self%basis%env(off+1:off+3) = real(mol%xyz(:, iat), c_double)
+      off = off + 3
+   end do
+
+   do ish = 1, basis%nsh
+      iat = basis%sh2at(ish)
+      isp = mol%id(iat)
+      lsh = ish - basis%ish_at(iat)
+
+      self%basis%bas(ATOM_OF, ish) = int(iat-1, c_int)
+      self%basis%bas(ANG_OF, ish) = int(basis%cgto(lsh, isp)%ang, c_int)
+      self%basis%bas(NPRIM_OF, ish) = int(basis%cgto(lsh, isp)%nprim, c_int)
+      self%basis%bas(NCTR_OF, ish) = 1_c_int
+      self%basis%bas(KAPPA_OF, ish) = 0_c_int
+
+      self%basis%bas(PTR_EXP, ish) = int(off, c_int)
+      do ip = 1, basis%cgto(lsh, isp)%nprim
+         self%basis%env(off+ip) = real(basis%cgto(lsh, isp)%alpha(ip), c_double)
+      end do
+      off = off + basis%cgto(lsh, isp)%nprim
+
+      self%basis%bas(PTR_COEFF, ish) = int(off, c_int)
+      lang = basis%cgto(lsh, isp)%ang
+      ! Tblite uses unnormalised real solid harmonics, whereas libcint's
+      ! spherical functions contain a normalized angular factor.
+      spherical_norm = sqrt(4.0_wp*pi/real(2*lang+1, wp))
+      do ip = 1, basis%cgto(lsh, isp)%nprim
+         self%basis%env(off+ip) = real(spherical_norm*basis%cgto(lsh, isp)%coeff(ip), c_double)
+      end do
+      off = off + basis%cgto(lsh, isp)%nprim
+   end do
 end subroutine initialize_libcint
 
-!> Evaluate overlap and dipole integrals using cached libcint shells
-subroutine dipole_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dipole)
+!> Evaluate overlap and dipole integrals for a shell pair
+subroutine dipole_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dpint)
    !> Libcint integral evaluator
    class(libcint_integral_type), intent(in) :: self
    !> Description of contracted Gaussian function on center j
@@ -387,32 +422,31 @@ subroutine dipole_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap
    !> Maximum value of integral prefactor to consider
    real(wp), intent(in) :: intcut
    !> Overlap integrals for the given pair i and j
-   real(wp), intent(out) :: overlap(:)
+   real(wp), intent(out) :: overlap(msao(cgtoj%ang), msao(cgtoi%ang))
    !> Dipole moment integrals for the given pair i and j
-   real(wp), intent(out) :: dipole(:, :)
+   real(wp), intent(out) :: dpint(3, msao(cgtoj%ang), msao(cgtoi%ang))
    real(c_double), allocatable :: cdp(:, :, :), cov(:, :)
-   integer :: dj, di, jao, iao, ij, stat
+   integer :: dj, di, jao, iao, stat
 
    ! Query libcint so scratch dimensions agree with its cached shell representation
-   dj = cint_cgto_spheric(jsh - 1, self%basis%bas)
-   di = cint_cgto_spheric(ish - 1, self%basis%bas)
+   dj = int(cint_cgto_spheric(int(jsh - 1, c_int), self%basis%bas))
+   di = int(cint_cgto_spheric(int(ish - 1, c_int), self%basis%bas))
    allocate(cdp(dj, di, 3), cov(dj, di))
-   stat = libcint_eval_1e(LIBCINT_1E_OVERLAP, LIBCINT_SPHERICAL, cov, &
+   stat = libcint_eval_1e(cov, &
       & [jsh-1, ish-1], self%basis%atm, self%basis%bas, self%basis%env)
    stat = libcint_eval_dipole(cdp, [jsh-1, ish-1], self%basis%atm, &
       & self%basis%bas, self%basis%env)
    do iao = 1, di
       do jao = 1, dj
-         ij = jao + dj*(iao-1)
-         overlap(ij) = real(cov(jao, iao), wp)
-         dipole(:, ij) = real(cdp(jao, iao, :), wp)
+         overlap(jao, iao) = real(cov(jao, iao), wp)
+         dpint(:, jao, iao) = real(cdp(jao, iao, :), wp)
       end do
    end do
 end subroutine dipole_libcint
 
-!> Evaluate overlap, dipole, and traceless quadrupole integrals with libcint
+!> Evaluate overlap, dipole, and quadrupole integrals for a shell pair
 subroutine multipole_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, &
-      & dipole, quadrupole)
+      & dpint, qpint)
    !> Libcint integral evaluator
    class(libcint_integral_type), intent(in) :: self
    !> Description of contracted Gaussian function on center j
@@ -430,38 +464,36 @@ subroutine multipole_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, over
    !> Maximum value of integral prefactor to consider
    real(wp), intent(in) :: intcut
    !> Overlap integrals for the given pair i and j
-   real(wp), intent(out) :: overlap(:)
+   real(wp), intent(out) :: overlap(msao(cgtoj%ang), msao(cgtoi%ang))
    !> Dipole moment integrals for the given pair i and j
-   real(wp), intent(out) :: dipole(:, :)
+   real(wp), intent(out) :: dpint(3, msao(cgtoj%ang), msao(cgtoi%ang))
    !> Quadrupole moment integrals for the given pair i and j
-   real(wp), intent(out) :: quadrupole(:, :)
+   real(wp), intent(out) :: qpint(6, msao(cgtoj%ang), msao(cgtoi%ang))
    real(c_double), allocatable :: cqp(:, :, :)
    real(wp) :: raw(6), trace
    integer, parameter :: qmap(6) = [1, 2, 5, 3, 6, 9]
-   integer :: dj, di, jao, iao, ij, stat
+   integer :: dj, di, jao, iao, stat
 
-   call self%dipole_cgto(cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dipole)
-   dj = cint_cgto_spheric(jsh - 1, self%basis%bas)
-   di = cint_cgto_spheric(ish - 1, self%basis%bas)
+   call self%dipole_cgto(cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dpint)
+   dj = int(cint_cgto_spheric(int(jsh - 1, c_int), self%basis%bas))
+   di = int(cint_cgto_spheric(int(ish - 1, c_int), self%basis%bas))
 
    allocate(cqp(dj, di, 9))
    stat = libcint_eval_quadrupole(cqp, [jsh-1, ish-1], self%basis%atm, &
       & self%basis%bas, self%basis%env)
    do iao = 1, di
       do jao = 1, dj
-         ij = jao + dj*(iao-1)
          raw = real(cqp(jao, iao, qmap), wp)
          trace = 0.5_wp*(raw(1) + raw(3) + raw(6))
-         quadrupole(:, ij) = 1.5_wp*raw
-         quadrupole([1, 3, 6], ij) = quadrupole([1, 3, 6], ij) - trace
+         qpint(:, jao, iao) = 1.5_wp*raw
+         qpint([1, 3, 6], jao, iao) = qpint([1, 3, 6], jao, iao) - trace
       end do
    end do
 end subroutine multipole_libcint
 
-!> Evaluate multipole integrals and derivatives with respect to both centers
-subroutine multipole_gradient_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, &
-      & overlap, dipole, quadrupole, doverlap, ddipole_j, dquadrupole_j, &
-      & ddipole_i, dquadrupole_i)
+!> Evaluate multipole integrals and their nuclear derivatives for a shell pair
+subroutine multipole_grad_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, &
+      & overlap, dpint, qpint, doverlap, ddpintj, dqpintj, ddpinti, dqpinti)
    !> Libcint integral evaluator
    class(libcint_integral_type), intent(in) :: self
    !> Description of contracted Gaussian function on center j
@@ -479,21 +511,21 @@ subroutine multipole_gradient_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, int
    !> Maximum value of integral prefactor to consider
    real(wp), intent(in) :: intcut
    !> Overlap integrals for the given pair i and j
-   real(wp), intent(out) :: overlap(:)
+   real(wp), intent(out) :: overlap(msao(cgtoj%ang), msao(cgtoi%ang))
    !> Dipole moment integrals for the given pair i and j
-   real(wp), intent(out) :: dipole(:, :)
+   real(wp), intent(out) :: dpint(3, msao(cgtoj%ang), msao(cgtoi%ang))
    !> Quadrupole moment integrals for the given pair i and j
-   real(wp), intent(out) :: quadrupole(:, :)
+   real(wp), intent(out) :: qpint(6, msao(cgtoj%ang), msao(cgtoi%ang))
    !> Overlap integral gradient for the given pair i and j
-   real(wp), intent(out) :: doverlap(:, :)
+   real(wp), intent(out) :: doverlap(3, msao(cgtoj%ang), msao(cgtoi%ang))
    !> Dipole moment integral gradient with respect to center j
-   real(wp), intent(out) :: ddipole_j(:, :, :)
+   real(wp), intent(out) :: ddpintj(3, 3, msao(cgtoj%ang), msao(cgtoi%ang))
    !> Quadrupole moment integral gradient with respect to center j
-   real(wp), intent(out) :: dquadrupole_j(:, :, :)
+   real(wp), intent(out) :: dqpintj(3, 6, msao(cgtoj%ang), msao(cgtoi%ang))
    !> Dipole moment integral gradient with respect to center i
-   real(wp), intent(out) :: ddipole_i(:, :, :)
+   real(wp), intent(out) :: ddpinti(3, 3, msao(cgtoj%ang), msao(cgtoi%ang))
    !> Quadrupole moment integral gradient with respect to center i
-   real(wp), intent(out) :: dquadrupole_i(:, :, :)
+   real(wp), intent(out) :: dqpinti(3, 6, msao(cgtoj%ang), msao(cgtoi%ang))
    real(c_double), allocatable :: covg(:, :, :)
    real(c_double), allocatable :: cdj(:, :, :, :), cdi(:, :, :, :)
    real(c_double), allocatable :: cqj(:, :, :, :), cqi(:, :, :, :)
@@ -501,11 +533,12 @@ subroutine multipole_gradient_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, int
    real(c_double), allocatable :: sqj(:, :, :, :), sqi(:, :, :, :)
    real(wp) :: raw(6), trace
    integer, parameter :: qmap(6) = [1, 2, 5, 3, 6, 9]
-   integer :: dj, di, jao, iao, ij, ic, ider, stat
+   integer :: dj, di, jao, iao, ic, ider, stat
 
-   call self%multipole_cgto(cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dipole, quadrupole)
-   dj = cint_cgto_spheric(jsh - 1, self%basis%bas)
-   di = cint_cgto_spheric(ish - 1, self%basis%bas)
+   call self%multipole_cgto(cgtoj, cgtoi, jsh, ish, r2, vec, intcut, &
+      & overlap, dpint, qpint)
+   dj = int(cint_cgto_spheric(int(jsh - 1, c_int), self%basis%bas))
+   di = int(cint_cgto_spheric(int(ish - 1, c_int), self%basis%bas))
    allocate(covg(dj, di, 3), cdj(dj, di, 3, 3), cdi(dj, di, 3, 3), &
       & cqj(dj, di, 9, 3), cqi(dj, di, 9, 3), &
       & sdj(di, dj, 3, 3), sdi(di, dj, 3, 3), &
@@ -522,153 +555,42 @@ subroutine multipole_gradient_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, int
       & self%basis%atm, self%basis%bas, self%basis%env)
    do iao = 1, di
       do jao = 1, dj
-         ij = jao + dj*(iao-1)
          do ider = 1, 3
-            doverlap(ider, ij) = real(covg(jao, iao, ider), wp)
-            ddipole_i(ider, :, ij) = real(cdi(jao, iao, :, ider), wp)
-            ddipole_j(ider, :, ij) = real(sdi(iao, jao, :, ider), wp)
+            doverlap(ider, jao, iao) = real(covg(jao, iao, ider), wp)
+            ddpinti(ider, :, jao, iao) = real(cdi(jao, iao, :, ider), wp)
+            ddpintj(ider, :, jao, iao) = real(sdi(iao, jao, :, ider), wp)
             do ic = 1, 6
                raw(ic) = real(cqi(jao, iao, qmap(ic), ider), wp)
             end do
             trace = 0.5_wp*(raw(1) + raw(3) + raw(6))
-            dquadrupole_i(ider, :, ij) = 1.5_wp*raw
-            dquadrupole_i(ider, [1, 3, 6], ij) = &
-               & dquadrupole_i(ider, [1, 3, 6], ij) - trace
+            dqpinti(ider, :, jao, iao) = 1.5_wp*raw
+            dqpinti(ider, [1, 3, 6], jao, iao) = &
+               & dqpinti(ider, [1, 3, 6], jao, iao) - trace
             do ic = 1, 6
                raw(ic) = real(sqi(iao, jao, qmap(ic), ider), wp)
             end do
             trace = 0.5_wp*(raw(1) + raw(3) + raw(6))
-            dquadrupole_j(ider, :, ij) = 1.5_wp*raw
-            dquadrupole_j(ider, [1, 3, 6], ij) = &
-               & dquadrupole_j(ider, [1, 3, 6], ij) - trace
+            dqpintj(ider, :, jao, iao) = 1.5_wp*raw
+            dqpintj(ider, [1, 3, 6], jao, iao) = &
+               & dqpintj(ider, [1, 3, 6], jao, iao) - trace
          end do
       end do
    end do
-end subroutine multipole_gradient_libcint
+end subroutine multipole_grad_libcint
 
-!> Pack a tblite structure and basis into libcint's atm/bas/env format.
-subroutine new_libcint_basis(self, mol, basis)
-   type(libcint_basis_type), intent(out) :: self
-   type(structure_type), intent(in) :: mol
-   type(basis_type), intent(in) :: basis
-
-   integer :: iat, isp, ish, lsh, ip, off, nenv, lang
-   real(wp) :: spherical_norm
-
-   nenv = PTR_ENV_START + 3*mol%nat
-   do ish = 1, basis%nsh
-      iat = basis%sh2at(ish)
-      isp = mol%id(iat)
-      lsh = ish - basis%ish_at(iat)
-      nenv = nenv + 2*basis%cgto(lsh, isp)%nprim
-   end do
-
-   allocate(self%atm(ATM_SLOTS, mol%nat), source=0_c_int)
-   allocate(self%bas(BAS_SLOTS, basis%nsh), source=0_c_int)
-   allocate(self%env(nenv), source=0.0_c_double)
-
-   off = PTR_ENV_START
-   do iat = 1, mol%nat
-      isp = mol%id(iat)
-      self%atm(CHARGE_OF, iat) = int(mol%num(isp), c_int)
-      self%atm(PTR_COORD, iat) = int(off, c_int)
-      self%atm(NUC_MOD_OF, iat) = POINT_NUC
-      self%env(off+1:off+3) = real(mol%xyz(:, iat), c_double)
-      off = off + 3
-   end do
-
-   do ish = 1, basis%nsh
-      iat = basis%sh2at(ish)
-      isp = mol%id(iat)
-      lsh = ish - basis%ish_at(iat)
-
-      self%bas(ATOM_OF, ish) = int(iat-1, c_int)
-      self%bas(ANG_OF, ish) = int(basis%cgto(lsh, isp)%ang, c_int)
-      self%bas(NPRIM_OF, ish) = int(basis%cgto(lsh, isp)%nprim, c_int)
-      self%bas(NCTR_OF, ish) = 1_c_int
-      self%bas(KAPPA_OF, ish) = 0_c_int
-
-      self%bas(PTR_EXP, ish) = int(off, c_int)
-      do ip = 1, basis%cgto(lsh, isp)%nprim
-         self%env(off+ip) = real(basis%cgto(lsh, isp)%alpha(ip), c_double)
-      end do
-      off = off + basis%cgto(lsh, isp)%nprim
-
-      self%bas(PTR_COEFF, ish) = int(off, c_int)
-      lang = basis%cgto(lsh, isp)%ang
-      ! Tblite uses unnormalised real solid harmonics, whereas libcint's
-      ! spherical functions contain a normalized angular factor.
-      spherical_norm = sqrt(4.0_wp*pi/real(2*lang+1, wp))
-      do ip = 1, basis%cgto(lsh, isp)%nprim
-         self%env(off+ip) = real(spherical_norm*basis%cgto(lsh, isp)%coeff(ip), c_double)
-      end do
-      off = off + basis%cgto(lsh, isp)%nprim
-
-   end do
-end subroutine new_libcint_basis
-
-function libcint_cgto_cart(shell, bas) result(nao)
-   integer, intent(in) :: shell
-   integer(c_int), contiguous, intent(in) :: bas(:, :)
-   integer :: nao
-
-   nao = int(cint_cgto_cart(int(shell, c_int), bas))
-end function libcint_cgto_cart
-
-function libcint_cgto_spheric(shell, bas) result(nao)
-   integer, intent(in) :: shell
-   integer(c_int), contiguous, intent(in) :: bas(:, :)
-   integer :: nao
-
-   nao = int(cint_cgto_spheric(int(shell, c_int), bas))
-end function libcint_cgto_spheric
-
-function libcint_tot_cgto_cart(bas) result(nao)
-   integer(c_int), contiguous, intent(in) :: bas(:, :)
-   integer :: nao
-
-   nao = int(cint_tot_cgto_cart(bas, int(size(bas, 2), c_int)))
-end function libcint_tot_cgto_cart
-
-function libcint_tot_cgto_spheric(bas) result(nao)
-   integer(c_int), contiguous, intent(in) :: bas(:, :)
-   integer :: nao
-
-   nao = int(cint_tot_cgto_spheric(bas, int(size(bas, 2), c_int)))
-end function libcint_tot_cgto_spheric
-
-function libcint_gto_norm(ang_mom, exponent) result(norm)
-   integer, intent(in) :: ang_mom
-   real(wp), intent(in) :: exponent
-   real(wp) :: norm
-
-   norm = real(cint_gto_norm(int(ang_mom, c_int), real(exponent, c_double)), wp)
-end function libcint_gto_norm
-
-function libcint_shell_size(shell, bas, representation) result(nao)
-   integer, intent(in) :: shell
-   integer(c_int), contiguous, intent(in) :: bas(:, :)
-   integer, intent(in) :: representation
-   integer :: nao
-
-   select case(representation)
-   case(LIBCINT_CARTESIAN)
-      nao = libcint_cgto_cart(shell, bas)
-   case(LIBCINT_SPHERICAL)
-      nao = libcint_cgto_spheric(shell, bas)
-   case default
-      nao = -1
-   end select
-end function libcint_shell_size
-
-function libcint_eval_1e(kind, representation, out, shls, atm, bas, env) result(stat)
-   integer, intent(in) :: kind
-   integer, intent(in) :: representation
+!> Evaluate <i| OVLP |j>
+function libcint_eval_1e(out, shls, atm, bas, env) result(stat)
+   !> Overlap-integral block
    real(c_double), contiguous, intent(out) :: out(:, :)
+   !> Zero-based indices of the bra and ket shells
    integer, intent(in) :: shls(2)
+   !> Libcint atom table
    integer(c_int), contiguous, intent(in) :: atm(:, :)
+   !> Libcint basis-shell table
    integer(c_int), contiguous, intent(in) :: bas(:, :)
+   !> Libcint floating-point environment array
    real(c_double), contiguous, intent(in) :: env(:)
+   !> Libcint return status
    integer :: stat
 
    integer(c_int) :: cshls(2), dims(2)
@@ -676,59 +598,38 @@ function libcint_eval_1e(kind, representation, out, shls, atm, bas, env) result(
 
    cshls = int(shls, c_int) ! convert to C-int for libcint
    dims = int([size(out, 1), size(out, 2)], c_int)
-   di = libcint_shell_size(shls(1), bas, representation) ! determine output dimensions
-   dj = libcint_shell_size(shls(2), bas, representation) ! (how many spherical basis functions in each shell)
+   ! Determine how many spherical basis functions are in each shell
+   di = int(cint_cgto_spheric(int(shls(1), c_int), bas))
+   dj = int(cint_cgto_spheric(int(shls(2), c_int), bas))
    if (di < 0 .or. dj < 0 .or. size(out, 1) < di .or. size(out, 2) < dj) then
       stat = -1
       return
    end if
 
    out(:, :) = 0.0_c_double
-   select case(representation)
-   case(LIBCINT_CARTESIAN)
-      select case(kind)
-      case(LIBCINT_1E_OVERLAP)
-         stat = int(int1e_ovlp_cart(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-            & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-      case(LIBCINT_1E_KINETIC)
-         stat = int(int1e_kin_cart(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-            & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-      case(LIBCINT_1E_NUCLEAR)
-         stat = int(int1e_nuc_cart(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-            & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-      case default
-         stat = -2
-      end select
-   case(LIBCINT_SPHERICAL)
-      select case(kind)
-      case(LIBCINT_1E_OVERLAP)
-         stat = int(int1e_ovlp_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-            & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-      case(LIBCINT_1E_KINETIC)
-         stat = int(int1e_kin_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-            & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-      case(LIBCINT_1E_NUCLEAR)
-         stat = int(int1e_nuc_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-            & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-      case default
-         stat = -2
-      end select
-   case default
-      stat = -2
-   end select
+   stat = int(int1e_ovlp_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
+      & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
 end function libcint_eval_1e
 
+!> Evaluate <i| R |j>
 function libcint_eval_dipole(out, shls, atm, bas, env) result(stat)
+   !> Dipole-integral block, with Cartesian operator component last
    real(c_double), contiguous, intent(out) :: out(:, :, :)
+   !> Zero-based indices of the bra and ket shells
    integer, intent(in) :: shls(2)
-   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
+   !> Libcint atom table
+   integer(c_int), contiguous, intent(in) :: atm(:, :)
+   !> Libcint basis-shell table
+   integer(c_int), contiguous, intent(in) :: bas(:, :)
+   !> Libcint floating-point environment array
    real(c_double), contiguous, intent(in) :: env(:)
+   !> Libcint return status
    integer :: stat
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj
 
-   di = libcint_shell_size(shls(1), bas, LIBCINT_SPHERICAL)
-   dj = libcint_shell_size(shls(2), bas, LIBCINT_SPHERICAL)
+   di = int(cint_cgto_spheric(int(shls(1), c_int), bas))
+   dj = int(cint_cgto_spheric(int(shls(2), c_int), bas))
    if (size(out, 1) < di .or. size(out, 2) < dj .or. size(out, 3) < 3) then
       stat = -1
       return
@@ -740,17 +641,25 @@ function libcint_eval_dipole(out, shls, atm, bas, env) result(stat)
       & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
 end function libcint_eval_dipole
 
+!> Evaluate <i| R R |j>
 function libcint_eval_quadrupole(out, shls, atm, bas, env) result(stat)
+   !> Quadrupole-integral block, with Cartesian operator component last
    real(c_double), contiguous, intent(out) :: out(:, :, :)
+   !> Zero-based indices of the bra and ket shells
    integer, intent(in) :: shls(2)
-   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
+   !> Libcint atom table
+   integer(c_int), contiguous, intent(in) :: atm(:, :)
+   !> Libcint basis-shell table
+   integer(c_int), contiguous, intent(in) :: bas(:, :)
+   !> Libcint floating-point environment array
    real(c_double), contiguous, intent(in) :: env(:)
+   !> Libcint return status
    integer :: stat
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj
 
-   di = libcint_shell_size(shls(1), bas, LIBCINT_SPHERICAL)
-   dj = libcint_shell_size(shls(2), bas, LIBCINT_SPHERICAL)
+   di = int(cint_cgto_spheric(int(shls(1), c_int), bas))
+   dj = int(cint_cgto_spheric(int(shls(2), c_int), bas))
    if (size(out, 1) < di .or. size(out, 2) < dj .or. size(out, 3) < 9) then
       stat = -1
       return
@@ -762,18 +671,27 @@ function libcint_eval_quadrupole(out, shls, atm, bas, env) result(stat)
       & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
 end function libcint_eval_quadrupole
 
+!> Evaluate <NABLA i| OVLP |R j> and <i| OVLP |NABLA R j>
 function libcint_eval_dipole_gradient(out_bra, out_ket, shls, atm, bas, env) result(stat)
-   !> Complete nuclear-center derivatives of a ket-centered dipole integral.
-   real(c_double), contiguous, intent(out) :: out_bra(:, :, :, :), out_ket(:, :, :, :)
+   !> Dipole derivative with respect to the bra center
+   real(c_double), contiguous, intent(out) :: out_bra(:, :, :, :)
+   !> Dipole derivative with respect to the ket center
+   real(c_double), contiguous, intent(out) :: out_ket(:, :, :, :)
+   !> Zero-based indices of the bra and ket shells
    integer, intent(in) :: shls(2)
-   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
+   !> Libcint atom table
+   integer(c_int), contiguous, intent(in) :: atm(:, :)
+   !> Libcint basis-shell table
+   integer(c_int), contiguous, intent(in) :: bas(:, :)
+   !> Libcint floating-point environment array
    real(c_double), contiguous, intent(in) :: env(:)
+   !> Libcint return status
    integer :: stat
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj, stat_bra
 
-   di = libcint_shell_size(shls(1), bas, LIBCINT_SPHERICAL)
-   dj = libcint_shell_size(shls(2), bas, LIBCINT_SPHERICAL)
+   di = int(cint_cgto_spheric(int(shls(1), c_int), bas))
+   dj = int(cint_cgto_spheric(int(shls(2), c_int), bas))
    if (size(out_bra, 1) < di .or. size(out_bra, 2) < dj .or. &
       & size(out_bra, 3) < 3 .or. size(out_bra, 4) < 3 .or. &
       & any(shape(out_ket) < shape(out_bra))) then
@@ -793,18 +711,28 @@ function libcint_eval_dipole_gradient(out_bra, out_ket, shls, atm, bas, env) res
    if (stat_bra < 0) stat = stat_bra
 end function libcint_eval_dipole_gradient
 
-function libcint_eval_quadrupole_gradient(out_bra, out_ket, shls, atm, bas, env) result(stat)
-   !> Complete nuclear-center derivatives of a ket-centered Cartesian second moment.
-   real(c_double), contiguous, intent(out) :: out_bra(:, :, :, :), out_ket(:, :, :, :)
+!> Evaluate <NABLA i| OVLP |R R j> and <i| OVLP |NABLA R R j>
+function libcint_eval_quadrupole_gradient(out_bra, out_ket, shls, atm, bas, &
+      & env) result(stat)
+   !> Quadrupole derivative with respect to the bra center
+   real(c_double), contiguous, intent(out) :: out_bra(:, :, :, :)
+   !> Quadrupole derivative with respect to the ket center
+   real(c_double), contiguous, intent(out) :: out_ket(:, :, :, :)
+   !> Zero-based indices of the bra and ket shells
    integer, intent(in) :: shls(2)
-   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
+   !> Libcint atom table
+   integer(c_int), contiguous, intent(in) :: atm(:, :)
+   !> Libcint basis-shell table
+   integer(c_int), contiguous, intent(in) :: bas(:, :)
+   !> Libcint floating-point environment array
    real(c_double), contiguous, intent(in) :: env(:)
+   !> Libcint return status
    integer :: stat
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj, stat_bra
 
-   di = libcint_shell_size(shls(1), bas, LIBCINT_SPHERICAL)
-   dj = libcint_shell_size(shls(2), bas, LIBCINT_SPHERICAL)
+   di = int(cint_cgto_spheric(int(shls(1), c_int), bas))
+   dj = int(cint_cgto_spheric(int(shls(2), c_int), bas))
    if (size(out_bra, 1) < di .or. size(out_bra, 2) < dj .or. &
       & size(out_bra, 3) < 9 .or. size(out_bra, 4) < 3 .or. &
       & any(shape(out_ket) < shape(out_bra))) then
@@ -824,18 +752,25 @@ function libcint_eval_quadrupole_gradient(out_bra, out_ket, shls, atm, bas, env)
    if (stat_bra < 0) stat = stat_bra
 end function libcint_eval_quadrupole_gradient
 
+!> Evaluate <i| OVLP |NABLA j>
 function libcint_eval_overlap_gradient(out, shls, atm, bas, env) result(stat)
-   !> Overlap derivative with respect to the nuclear centre of shls(2).
+   !> Overlap derivative with respect to the ket center
    real(c_double), contiguous, intent(out) :: out(:, :, :)
+   !> Zero-based indices of the bra and ket shells
    integer, intent(in) :: shls(2)
-   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
+   !> Libcint atom table
+   integer(c_int), contiguous, intent(in) :: atm(:, :)
+   !> Libcint basis-shell table
+   integer(c_int), contiguous, intent(in) :: bas(:, :)
+   !> Libcint floating-point environment array
    real(c_double), contiguous, intent(in) :: env(:)
+   !> Libcint return status
    integer :: stat
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj
 
-   di = libcint_shell_size(shls(1), bas, LIBCINT_SPHERICAL)
-   dj = libcint_shell_size(shls(2), bas, LIBCINT_SPHERICAL)
+   di = int(cint_cgto_spheric(int(shls(1), c_int), bas))
+   dj = int(cint_cgto_spheric(int(shls(2), c_int), bas))
    if (size(out, 1) < di .or. size(out, 2) < dj .or. size(out, 3) < 3) then
       stat = -1
       return
@@ -849,136 +784,5 @@ function libcint_eval_overlap_gradient(out, shls, atm, bas, env) result(stat)
    ! tblite differentiates its nuclear centre, which has the opposite sign.
    if (stat >= 0) out = -out
 end function libcint_eval_overlap_gradient
-
-function libcint_eval_1e_grids(out, shls, grid_range, atm, bas, env) result(stat)
-   real(c_double), contiguous, intent(out) :: out(:, :, :)
-   integer, intent(in) :: shls(2)
-   integer, intent(in) :: grid_range(2)
-   integer(c_int), contiguous, intent(in) :: atm(:, :)
-   integer(c_int), contiguous, intent(in) :: bas(:, :)
-   real(c_double), contiguous, intent(in) :: env(:)
-   integer :: stat
-
-   integer(c_int) :: cshls(4), dims(3)
-   integer :: di, dj, ngrids
-
-   di = libcint_shell_size(shls(1), bas, LIBCINT_SPHERICAL)
-   dj = libcint_shell_size(shls(2), bas, LIBCINT_SPHERICAL)
-   ngrids = grid_range(2) - grid_range(1)
-   if (di < 0 .or. dj < 0 .or. ngrids < 0 .or. &
-      & size(out, 1) < ngrids .or. size(out, 2) < di .or. size(out, 3) < dj) then
-      stat = -1
-      return
-   end if
-
-   cshls = int([shls(1), shls(2), grid_range(1), grid_range(2)], c_int)
-   dims = int([di, dj, max(ngrids, 1)], c_int)
-   out(:, :, :) = 0.0_c_double
-   stat = int(int1e_grids_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-      & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-end function libcint_eval_1e_grids
-
-function libcint_eval_eri(representation, out, shls, atm, bas, env) result(stat)
-   integer, intent(in) :: representation
-   real(c_double), contiguous, intent(out) :: out(:, :, :, :)
-   integer, intent(in) :: shls(4)
-   integer(c_int), contiguous, intent(in) :: atm(:, :)
-   integer(c_int), contiguous, intent(in) :: bas(:, :)
-   real(c_double), contiguous, intent(in) :: env(:)
-   integer :: stat
-
-   integer(c_int) :: cshls(4)
-   integer :: di, dj, dk, dl
-
-   cshls = int(shls, c_int)
-   di = libcint_shell_size(shls(1), bas, representation)
-   dj = libcint_shell_size(shls(2), bas, representation)
-   dk = libcint_shell_size(shls(3), bas, representation)
-   dl = libcint_shell_size(shls(4), bas, representation)
-   if (di < 0 .or. dj < 0 .or. dk < 0 .or. dl < 0 .or. &
-      & size(out, 1) < di .or. size(out, 2) < dj .or. &
-      & size(out, 3) < dk .or. size(out, 4) < dl) then
-      stat = -1
-      return
-   end if
-
-   out(:, :, :, :) = 0.0_c_double
-   select case(representation)
-   case(LIBCINT_CARTESIAN)
-      stat = int(cint2e_cart(out, cshls, atm, int(size(atm, 2), c_int), &
-         & bas, int(size(bas, 2), c_int), env, c_null_ptr))
-   case(LIBCINT_SPHERICAL)
-      stat = int(cint2e_sph(out, cshls, atm, int(size(atm, 2), c_int), &
-         & bas, int(size(bas, 2), c_int), env, c_null_ptr))
-   case default
-      stat = -2
-   end select
-end function libcint_eval_eri
-
-function libcint_eval_3c2e(representation, out, shls, atm, bas, env) result(stat)
-   integer, intent(in) :: representation
-   real(c_double), contiguous, intent(out) :: out(:, :, :)
-   integer, intent(in) :: shls(3)
-   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
-   real(c_double), contiguous, intent(in) :: env(:)
-   integer :: stat
-   integer(c_int) :: cshls(3), dims(3)
-   integer :: i, shell_dims(3)
-
-   do i = 1, 3
-      shell_dims(i) = libcint_shell_size(shls(i), bas, representation)
-   end do
-   if (any(shell_dims < 0) .or. any(shape(out) < shell_dims)) then
-      stat = -1
-      return
-   end if
-
-   cshls = int(shls, c_int)
-   dims = int(shape(out), c_int)
-   out = 0.0_c_double
-   select case(representation)
-   case(LIBCINT_CARTESIAN)
-      stat = int(int3c2e_cart(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-         & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-   case(LIBCINT_SPHERICAL)
-      stat = int(int3c2e_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-         & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-   case default
-      stat = -2
-   end select
-end function libcint_eval_3c2e
-
-function libcint_eval_3c1e_rinv(representation, out, shls, atm, bas, env) result(stat)
-   integer, intent(in) :: representation
-   real(c_double), contiguous, intent(out) :: out(:, :, :)
-   integer, intent(in) :: shls(3)
-   integer(c_int), contiguous, intent(in) :: atm(:, :), bas(:, :)
-   real(c_double), contiguous, intent(in) :: env(:)
-   integer :: stat
-   integer(c_int) :: cshls(3), dims(3)
-   integer :: i, shell_dims(3)
-
-   do i = 1, 3
-      shell_dims(i) = libcint_shell_size(shls(i), bas, representation)
-   end do
-   if (any(shell_dims < 0) .or. any(shape(out) < shell_dims)) then
-      stat = -1
-      return
-   end if
-
-   cshls = int(shls, c_int)
-   dims = int(shape(out), c_int)
-   out = 0.0_c_double
-   select case(representation)
-   case(LIBCINT_CARTESIAN)
-      stat = int(int3c1e_rinv_cart(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-         & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-   case(LIBCINT_SPHERICAL)
-      stat = int(int3c1e_rinv_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
-         & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
-   case default
-      stat = -2
-   end select
-end function libcint_eval_3c1e_rinv
 
 end module tblite_integral_libcint

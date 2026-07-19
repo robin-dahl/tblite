@@ -233,8 +233,8 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
    end if
 
    call new_integral(ints, calc%bas%nao)
-   call get_hamiltonian(mol, lattr, list, calc%bas, calc%integral_handler, calc%h0, selfenergy, &
-      & ints%overlap, ints%dipole, ints%quadrupole, ints%hamiltonian)
+   call get_hamiltonian(mol, lattr, list, calc%bas, calc%integral_handler, &
+      & calc%h0, selfenergy, ints%overlap, ints%dipole, ints%quadrupole, ints%hamiltonian)
 
    call ctx%new_solver(solver, ints%overlap, wfn%nel, wfn%kt)
    target_kt = wfn%kt
@@ -362,8 +362,9 @@ subroutine xtb_singlepoint(ctx, mol, calc, wfn, accuracy, energy, gradient, sigm
       call solver%get_wdensity(wfn%coeff, ints%overlap, wfn%emo, wfn%focc, wdensity, error)
       call updown_to_magnet(wfn%density)
       call updown_to_magnet(wdensity)
-      call get_hamiltonian_gradient(mol, lattr, list, calc%bas, calc%integral_handler, calc%h0, selfenergy, &
-         & dsedcn, pot, wfn%density, wdensity, dEdcn, gradient, sigma)
+      call get_hamiltonian_gradient(mol, lattr, list, calc%bas, &
+         & calc%integral_handler, calc%h0, &
+         & selfenergy, dsedcn, pot, wfn%density, wdensity, dEdcn, gradient, sigma)
       call magnet_to_updown(wfn%density)
 
       if (allocated(dcndr)) then

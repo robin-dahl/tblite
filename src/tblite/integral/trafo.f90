@@ -98,24 +98,10 @@ module tblite_integral_trafo
 contains
 
 
-!> Transformation from Cartesian ordering to spherical ordering.
-pure subroutine transform0(lj, li, cart, sphr, bra, ket)
-   integer, intent(in) :: li, lj
-   real(wp), intent(in) :: cart(:, :)
-   real(wp), intent(out) :: sphr(:, :)
-   logical, intent(in) :: bra, ket
-   real(wp) :: work(size(cart, 1), size(cart, 2))
-
-   work = cart
-   if (bra .and. lj == 1) work = work([2, 3, 1], :)
-   if (ket .and. li == 1) work = work(:, [2, 3, 1])
-   call transform0_core(lj, li, work, sphr, bra, ket)
-end subroutine transform0
-
 
 !> Transformation from the cartesian to the spherical harmonic basis 
 !> for a shell pair block.
-pure subroutine transform0_core(lj, li, cart, sphr, bra, ket)
+pure subroutine transform0(lj, li, cart, sphr, bra, ket)
    !> Angular momentum of ket shell i
    integer, intent(in) :: li
    !> Angular momentum of bra shell j
@@ -128,9 +114,10 @@ pure subroutine transform0_core(lj, li, cart, sphr, bra, ket)
    logical, intent(in) :: bra
    !> Flag for transformation of the ket dimension
    logical, intent(in) :: ket
-
    if (.not. bra .and. .not. ket) then
       sphr = cart
+      if (bra .and. lj == 1) sphr = sphr([2, 3, 1], :)
+      if (ket .and. li == 1) sphr = sphr(:, [2, 3, 1])
       return
    end if
 
@@ -147,7 +134,9 @@ pure subroutine transform0_core(lj, li, cart, sphr, bra, ket)
        case default
           error stop "[Fatal] Moments higher than g are not supported"
        end select
-       return
+       if (bra .and. lj == 1) sphr = sphr([2, 3, 1], :)
+      if (ket .and. li == 1) sphr = sphr(:, [2, 3, 1])
+      return
    end if
 
    if (bra .and. .not. ket) then
@@ -163,7 +152,9 @@ pure subroutine transform0_core(lj, li, cart, sphr, bra, ket)
        case default
           error stop "[Fatal] Moments higher than g are not supported"
        end select
-       return
+       if (bra .and. lj == 1) sphr = sphr([2, 3, 1], :)
+      if (ket .and. li == 1) sphr = sphr(:, [2, 3, 1])
+      return
    end if
 
    ! Transform both dimensions
@@ -173,7 +164,12 @@ pure subroutine transform0_core(lj, li, cart, sphr, bra, ket)
       case(0, 1)
          sphr = cart
       case(2)
-         sphr = matmul(dtrafo, cart)
+         !sphr = matmul(dtrafo, cart)
+         sphr(3, :) = cart(6, :) - 0.5_wp * (cart(1, :) + cart(4, :))
+         sphr(4, :) = s3 * cart(3, :)
+         sphr(2, :) = s3 * cart(5, :)
+         sphr(5, :) = s3_4 * (cart(1, :) - cart(4, :))
+         sphr(1, :) = s3 * cart(2, :)
       case(3)
          sphr = matmul(ftrafo, cart)
       case(4)
@@ -185,9 +181,34 @@ pure subroutine transform0_core(lj, li, cart, sphr, bra, ket)
    case(2)
       select case(lj)
       case(0, 1)
-         sphr = matmul(cart, transpose(dtrafo))
+         !sphr = matmul(cart, transpose(dtrafo))
+         sphr(:, 3) = cart(:, 6) - 0.5_wp * (cart(:, 1) + cart(:, 4))
+         sphr(:, 4) = s3 * cart(:, 3)
+         sphr(:, 2) = s3 * cart(:, 5)
+         sphr(:, 5) = s3_4 * (cart(:, 1) - cart(:, 4))
+         sphr(:, 1) = s3 * cart(:, 2)
       case(2)
-         sphr = matmul(dtrafo, matmul(cart, transpose(dtrafo)))
+         !sphr = matmul(dtrafo, matmul(cart, transpose(dtrafo)))
+         sphr(3, 3) = cart(6, 6) &
+            & - 0.5_wp * (cart(6, 1) + cart(6, 4) + cart(1, 6) + cart(4, 6)) &
+            & + 0.25_wp * (cart(1, 1) + cart(1, 4) + cart(4, 1) + cart(4, 4))
+         sphr([4, 2, 1], 3) = s3 * cart([3, 5, 2], 6) &
+            & - s3_4 * (cart([3, 5, 2], 1) + cart([3, 5, 2], 4))
+         sphr(5, 3) = s3_4 * (cart(1, 6) - cart(4, 6)) &
+            & - s3 * 0.25_wp * (cart(1, 1) - cart(4, 1) + cart(1, 4) - cart(4, 4))
+         sphr(3, 4) = s3 * cart(6, 3) - s3_4 * (cart(1, 3) + cart(4, 3))
+         sphr([4, 2, 1], 4) = 3 * cart([3, 5, 2], 3)
+         sphr(5, 4) = 1.5_wp * (cart(1, 3) - cart(4, 3))
+         sphr(3, 2) = s3 * cart(6, 5) - s3_4 * (cart(1, 5) + cart(4, 5))
+         sphr([4, 2, 1], 2) = 3 * cart([3, 5, 2], 5)
+         sphr(5, 2) = 1.5_wp * (cart(1, 5) - cart(4, 5))
+         sphr(3, 5) = s3_4 * (cart(6, 1) - cart(6, 4)) &
+            & - s3 * 0.25_wp * (cart(1, 1) - cart(1, 4) + cart(4, 1) - cart(4, 4))
+         sphr([4, 2, 1], 5) = 1.5_wp * (cart([3, 5, 2], 1) - cart([3, 5, 2], 4))
+         sphr(5, 5) = 0.75_wp * (cart(1, 1) - cart(4, 1) - cart(1, 4) + cart(4, 4))
+         sphr(3, 1) = s3 * cart(6, 2) - s3_4 * (cart(1, 2) + cart(4, 2))
+         sphr([4, 2, 1], 1) = 3 * cart([3, 5, 2], 2)
+         sphr(5, 1) = 1.5_wp * (cart(1, 2) - cart(4, 2))
       case(3)
          sphr = matmul(ftrafo, matmul(cart, transpose(dtrafo)))
       case(4)
@@ -228,7 +249,10 @@ pure subroutine transform0_core(lj, li, cart, sphr, bra, ket)
       error stop "[Fatal] Moments higher than g are not supported"
    end select
 
-end subroutine transform0_core
+   if (bra .and. lj == 1) sphr = sphr([2, 3, 1], :)
+   if (ket .and. li == 1) sphr = sphr(:, [2, 3, 1])
+
+end subroutine transform0
 
 !> Transformation from the cartesian to the spherical harmonic basis 
 !> for a vector of shell pair block.
@@ -283,20 +307,6 @@ end subroutine transform2
 !> for a shell pair block. Applies quantities which behave contravariant w.r.t.
 !> the basis functions (i.e. MO expansion coefficients or the density matrix)
 pure subroutine adjoint_transform0(lj, li, sphr, cart, bra, ket)
-   integer, intent(in) :: li, lj
-   real(wp), intent(in) :: sphr(:, :)
-   real(wp), intent(out) :: cart(:, :)
-   logical, intent(in) :: bra, ket
-   real(wp) :: work(size(cart, 1), size(cart, 2))
-
-   call adjoint_transform0_core(lj, li, sphr, work, bra, ket)
-   cart = work
-   if (bra .and. lj == 1) cart = cart([3, 1, 2], :)
-   if (ket .and. li == 1) cart = cart(:, [3, 1, 2])
-end subroutine adjoint_transform0
-
-
-pure subroutine adjoint_transform0_core(lj, li, sphr, cart, bra, ket)
    !> Angular momentum of ket shell i
    integer, intent(in) :: li
    !> Angular momentum of bra shell j
@@ -309,9 +319,10 @@ pure subroutine adjoint_transform0_core(lj, li, sphr, cart, bra, ket)
    logical, intent(in) :: bra
    !> Flag for transformation of the ket dimension
    logical, intent(in) :: ket
-
    if (.not. bra .and. .not. ket) then
       cart = sphr
+      if (bra .and. lj == 1) cart = cart([3, 1, 2], :)
+      if (ket .and. li == 1) cart = cart(:, [3, 1, 2])
       return
    end if
 
@@ -329,6 +340,8 @@ pure subroutine adjoint_transform0_core(lj, li, sphr, cart, bra, ket)
       case default
          error stop "[Fatal] Moments higher than g are not supported"
       end select
+      if (bra .and. lj == 1) cart = cart([3, 1, 2], :)
+      if (ket .and. li == 1) cart = cart(:, [3, 1, 2])
       return
    end if
 
@@ -346,6 +359,8 @@ pure subroutine adjoint_transform0_core(lj, li, sphr, cart, bra, ket)
       case default
          error stop "[Fatal] Moments higher than g are not supported"
       end select
+      if (bra .and. lj == 1) cart = cart([3, 1, 2], :)
+      if (ket .and. li == 1) cart = cart(:, [3, 1, 2])
       return
    end if
 
@@ -410,8 +425,10 @@ pure subroutine adjoint_transform0_core(lj, li, sphr, cart, bra, ket)
    case default
       error stop "[Fatal] Moments higher than g are not supported"
    end select
+   if (bra .and. lj == 1) cart = cart([3, 1, 2], :)
+   if (ket .and. li == 1) cart = cart(:, [3, 1, 2])
 
-end subroutine adjoint_transform0_core
+end subroutine adjoint_transform0
 
 !> Adjoint transformation from the spherical harmonic to the cartesian basis
 !> for a vector of shell pair block. Applies quantities which behave contravariant

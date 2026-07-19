@@ -68,7 +68,7 @@ subroutine next_scf(iscf, mol, bas, wfn, solver, mixer, info, coulomb, dispersio
    type(container_list), intent(in), optional :: interactions
 
    !> Integral container
-   class(integral_type), intent(in) :: ints
+   type(integral_type), intent(in) :: ints
    !> Density dependent potential shifts
    type(potential_type), intent(inout) :: pot
    !> Restart data for coulombic interactions
@@ -303,7 +303,7 @@ subroutine next_density(wfn, solver, ints, ts, error)
    !> Solver for the general eigenvalue problem
    class(solver_type), intent(inout) :: solver
    !> Integral container
-   class(integral_type), intent(in) :: ints
+   type(integral_type), intent(in) :: ints
    !> Electronic entropy
    real(wp), intent(out) :: ts
    !> Error handling

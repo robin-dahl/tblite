@@ -36,7 +36,7 @@ module tblite_xtb_calculator
    use tblite_coulomb_thirdorder, only : new_onsite_thirdorder
    use tblite_disp, only : dispersion_type, d4_dispersion, new_d4_dispersion, &
       & new_d4s_dispersion, d3_dispersion, new_d3_dispersion
-   use tblite_integral_handler, only : integral_handler
+   use tblite_integral_handler, only : enum_integral_handler, integral_handler
    use tblite_integral_native, only : native_integral_type
 #if TBLITE_HAS_LIBCINT
    use tblite_integral_libcint, only : libcint_integral_type
@@ -53,13 +53,6 @@ module tblite_xtb_calculator
 
    public :: new_xtb_calculator
    public :: param_h0spec, xtb_config
-   public :: integral_handler_native, integral_handler_libcint
-
-   !> Available Gaussian integral handlers.
-   enum, bind(c)
-      enumerator :: integral_handler_native = 0
-      enumerator :: integral_handler_libcint = 1
-   end enum
 
    !> Extended tight-binding calculator
    type, public :: xtb_calculator
@@ -191,28 +184,28 @@ subroutine new_xtb_calculator(calc, mol, param, error, config)
 end subroutine new_xtb_calculator
 
 !> Select and initialize the Gaussian integral evaluator.
-subroutine set_integral_handler(self, mol, error, implementation)
-   class(xtb_calculator), intent(inout) :: self
+subroutine set_integral_handler(calc, mol, error, implementation)
+   !> xTB calculator
+   class(xtb_calculator), intent(inout) :: calc
+   !> Molecular structure data
    type(structure_type), intent(in) :: mol
+   !> Error information
    type(error_type), allocatable, intent(out) :: error
+   !> Integral evaluator implementation
    integer, intent(in), optional :: implementation
    integer :: selected
 
-   selected = integral_handler_native
+   selected = enum_integral_handler%native
    if (present(implementation)) selected = implementation
 
-   if (allocated(self%integral_handler)) deallocate(self%integral_handler)
+   if (allocated(calc%integral_handler)) deallocate(calc%integral_handler)
 
    select case(selected)
-   case(integral_handler_native)
-      allocate(native_integral_type :: self%integral_handler)
-   case(integral_handler_libcint)
-      if (any(mol%periodic)) then
-         call fatal_error(error, "libcint integral handler does not yet support periodic systems")
-         return
-      end if
+   case(enum_integral_handler%native)
+      allocate(native_integral_type :: calc%integral_handler)
+   case(enum_integral_handler%libcint)
 #if TBLITE_HAS_LIBCINT
-      allocate(libcint_integral_type :: self%integral_handler)
+      allocate(libcint_integral_type :: calc%integral_handler)
 #else
       call fatal_error(error, "libcint integral handler is not available in this build")
       return
@@ -222,7 +215,7 @@ subroutine set_integral_handler(self, mol, error, implementation)
       return
    end select
 
-   call self%integral_handler%initialize_integral(mol, self%bas)
+   call calc%integral_handler%initialize_integral(mol, calc%bas)
 end subroutine set_integral_handler
 
 

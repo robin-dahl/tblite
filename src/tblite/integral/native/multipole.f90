@@ -193,7 +193,7 @@ pure subroutine form_product(a, b, la, lb, d)
    ! <d|g> = (<s|+<p|+<d|)*(|s>+|p>+|d>+|f>+|g>)
    !       = <s> + <p> + <d> + <f> + <g> + <h> + <i>
    d(5)=d(5)+a(3)*b(3)
-   d(6)=d(5)+a(3)*b(4)+a(4)*b(3)
+   d(6)=d(6)+a(3)*b(4)+a(4)*b(3)
    d(7)=a(3)*b(5)+a(5)*b(3)
    if(la.le.2.or.lb.le.2) return
    ! <f|g> = (<s|+<p|+<d|+<f|)*(|s>+|p>+|d>+|f>+|g>)
@@ -238,7 +238,8 @@ pure subroutine multipole_3d(rpj, rpi, aj, ai, lj, li, s1d, s3d, d3d, q3d)
       do l = 0, li(k) + lj(k)
          v1d(k, 1) = v1d(k, 1) + s1d(l) * vv(l)
          v1d(k, 2) = v1d(k, 2) + (s1d(l+1) + rpi(k)*s1d(l)) * vv(l)
-         v1d(k, 3) = v1d(k, 3) + (s1d(l+2) + 2*rpi(k)*s1d(l+1) + rpi(k)*rpi(k)*s1d(l)) * vv(l)
+         v1d(k, 3) = v1d(k, 3) + (s1d(l+2) + 2*rpi(k)*s1d(l+1) &
+            & + rpi(k)*rpi(k)*s1d(l)) * vv(l)
       end do
    end do
 
@@ -378,7 +379,8 @@ pure subroutine multipole_cgto_diat(cgtoj, cgtoi, r2, vec, intcut, &
    real(wp), intent(out) :: qpint(6, msao(cgtoj%ang), msao(cgtoi%ang))
 
    integer :: ip, jp, mli, mlj, l, mapj, mapi
-   real(wp) :: eab, oab, est, s1d(0:maxl2), rpi(3), rpj(3), cc, val, dip(3), quad(6), pre, tr
+   real(wp) :: eab, oab, est, s1d(0:maxl2), rpi(3), rpj(3), cc, val
+   real(wp) :: dip(3), quad(6), pre, tr
    real(wp) :: s3d(mlao(cgtoj%ang), mlao(cgtoi%ang))
    real(wp) :: d3d(3, mlao(cgtoj%ang), mlao(cgtoi%ang))
    real(wp) :: q3d(6, mlao(cgtoj%ang), mlao(cgtoi%ang))

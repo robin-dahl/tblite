@@ -97,6 +97,7 @@ contains
       type(adjacency_list), intent(in) :: list
       !> Basis set information
       type(basis_type), intent(in) :: bas
+      !> Gaussian integral evaluator
       class(integral_handler), intent(in) :: handler
       !> Hamiltonian interaction data
       type(tb_hamiltonian), intent(in) :: h0
@@ -126,7 +127,8 @@ contains
       & block_overlap(smap(bas%maxl+1),smap(bas%maxl+1)))
 
       !$omp parallel do schedule(runtime) default(none) &
-      !$omp shared(mol, bas, handler, trans, list, overlap, overlap_diat, dpint, hamiltonian, h0, selfenergy) &
+      !$omp shared(mol, bas, handler, trans, list, overlap, overlap_diat, dpint, &
+      !$omp& hamiltonian, h0, selfenergy) &
       !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj, iao, jao, nao, ij, iaosh, jaosh) &
       !$omp private(r2, vec, stmp, block_overlap, dtmpi, dtmpj, hij, rr, inl, img)
       do iat = 1, mol%nat
@@ -151,8 +153,8 @@ contains
                   jj = bas%iao_sh(js+jsh)
                   jaosh = smap(jsh-1) ! Offset for the block overlap matrix
 
-                  call handler%dipole_cgto(bas%cgto(jsh,jzp), bas%cgto(ish,izp), js+jsh, is+ish, &
-                     & r2, vec, bas%intcut, stmp, dtmpi)
+                  call handler%dipole_cgto(bas%cgto(jsh,jzp), bas%cgto(ish,izp), &
+                     & js+jsh, is+ish, r2, vec, bas%intcut, stmp, dtmpi)
 
                   ! Store the overlap and dipole matrix
                   nao = msao(bas%cgto(jsh, jzp)%ang)
@@ -226,7 +228,8 @@ contains
       end do
 
       !$omp parallel do schedule(runtime) default(none) &
-      !$omp shared(mol, bas, handler, trans, overlap, overlap_diat, dpint, hamiltonian, h0, selfenergy) &
+      !$omp shared(mol, bas, handler, trans, overlap, overlap_diat, dpint, &
+      !$omp& hamiltonian, h0, selfenergy) &
       !$omp private(iat, izp, itr, is, ish, jsh, ii, jj, iao, jao, nao, ij) &
       !$omp private(r2, vec, stmp, dtmpi, hij, rr)
       do iat = 1, mol%nat
@@ -239,8 +242,8 @@ contains
             ii = bas%iao_sh(is+ish)
             do jsh = 1, bas%nsh_id(izp)
                jj = bas%iao_sh(is+jsh)
-               call handler%dipole_cgto(bas%cgto(jsh,izp), bas%cgto(ish,izp), is+jsh, is+ish, &
-                  & r2, vec, bas%intcut, stmp, dtmpi)
+               call handler%dipole_cgto(bas%cgto(jsh,izp), bas%cgto(ish,izp), &
+                  & is+jsh, is+ish, r2, vec, bas%intcut, stmp, dtmpi)
                nao = msao(bas%cgto(jsh, izp)%ang)
                do iao = 1, msao(bas%cgto(ish, izp)%ang)
                   do jao = 1, nao
