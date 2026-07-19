@@ -162,11 +162,17 @@ if not get_option('libcint').disabled()
   if not libcint_dep.found()
     cmake = import('cmake')
     libcint_options = cmake.subproject_options()
+    libcint_static = get_option('default_library') == 'static'
     libcint_options.add_cmake_defines({
       'PYPZPX': 'ON',
-      'BUILD_SHARED_LIBS': get_option('default_library') == 'static' ? 'OFF' : 'ON',
+      'BUILD_SHARED_LIBS': libcint_static ? 'OFF' : 'ON',
       'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
     })
+    # Static subprojects are part of their parent target and are not installed
+    # separately. This matches the policy of tblite's Meson subprojects.
+    if libcint_static
+      libcint_options.set_install(false)
+    endif
     libcint_project = cmake.subproject(
       'libcint',
       options: libcint_options,
