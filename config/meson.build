@@ -167,6 +167,7 @@ if not get_option('libcint').disabled()
       'PYPZPX': 'ON',
       'BUILD_SHARED_LIBS': libcint_static ? 'OFF' : 'ON',
       'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
+      'CMAKE_DISABLE_FIND_PACKAGE_QUADMATH': 'ON',
     })
     # Static subprojects are part of their parent target and are not installed
     # separately. This matches the policy of tblite's Meson subprojects.
