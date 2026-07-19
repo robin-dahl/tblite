@@ -114,12 +114,14 @@ if install
     'TBLITE_WITH_DDX': get_option('ddx') ? 'ON' : 'OFF',
     'TBLITE_WITH_TREXIO': trexio_dep.found() ? 'ON' : 'OFF',
     'TBLITE_WITH_HDF5': hdf5_dep.found() ? 'ON' : 'OFF',
+    'TBLITE_WITH_LIBCINT': libcint_found ? 'ON' : 'OFF',
     'TBLITE_USE_MCTCLIB': mctc_dep.type_name() != 'internal' ? 'ON' : 'OFF',
     'TBLITE_USE_MULTICHARGE': multicharge_dep.type_name() != 'internal' ? 'ON' : 'OFF',
     'TBLITE_USE_TOMLF': tomlf_dep.type_name() != 'internal' ? 'ON' : 'OFF',
     'TBLITE_USE_SDFTD3': sdftd3_dep.type_name() != 'internal' ? 'ON' : 'OFF',
     'TBLITE_USE_DFTD4': dftd4_dep.type_name() != 'internal' ? 'ON' : 'OFF',
     'TBLITE_USE_DDX': get_option('ddx') and ddx_dep.type_name() != 'internal' ? 'ON' : 'OFF',
+    'TBLITE_USE_LIBCINT': libcint_found and libcint_dep.type_name() != 'internal' ? 'ON' : 'OFF',
     'module-dir': module_id,
   })
   cmake_files = [
@@ -134,6 +136,7 @@ if install
       configuration: cmake_data,
     ),
     files('config'/'cmake'/'Finddftd4.cmake'),
+    files('config'/'cmake'/'Findcint.cmake'),
     files('config'/'cmake'/'Findmctc-lib.cmake'),
     files('config'/'cmake'/'Findmstore.cmake'),
     files('config'/'cmake'/'Findmulticharge.cmake'),

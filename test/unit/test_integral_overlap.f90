@@ -23,6 +23,7 @@ module test_integral_overlap
    use tblite_basis_slater, only : slater_to_gauss
    use tblite_basis_type, only : basis_type, new_basis, cgto_type, get_cutoff
    use tblite_cutoff, only : get_lattice_points
+   use tblite_integral_shell, only : msao
    use tblite_integral_diat_trafo, only : setup_diat_trafo, diat_trafo_cache, &
       & diat_trafo
    use tblite_integral_overlap, only : overlap_cgto, overlap_grad_cgto, msao, &

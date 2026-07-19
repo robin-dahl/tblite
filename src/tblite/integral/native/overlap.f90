@@ -14,67 +14,42 @@
 ! You should have received a copy of the GNU Lesser General Public License
 ! along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
-!> @file tblite/integral/dipole.f90
-!> Provides evaluation of dipole moment integrals
+!> @file tblite/integral/overlap.f90
+!> Provides evaluation of overlap integrals
 
-!> Implementation of dipole moment integrals
-module tblite_integral_dipole
+!> Implementation of overlap integrals
+module tblite_integral_overlap
    use mctc_env, only : wp
    use mctc_io, only : structure_type
    use mctc_io_constants, only : pi
    use tblite_basis_type, only : basis_type, cgto_type
-   use tblite_integral_diat_trafo, only: diat_trafo_cache, setup_diat_trafo, &
-      & diat_trafo
-   use tblite_integral_trafo, only : transform0, transform1, transform2
+   use tblite_integral_shell, only : maxl, maxl2, msao, mlao, smap, lmap, sdim, lx
+   use tblite_integral_diat_trafo, only: diat_trafo, diat_trafo_grad
+   use tblite_integral_trafo, only : transform0, transform1
    implicit none
    private
 
-   public :: dipole_cgto, dipole_grad_cgto
-   public :: get_dipole_integrals
-   public :: maxl, msao, smap, sdim
+   public :: overlap_cgto, overlap_grad_cgto
+   public :: get_overlap
+   public :: get_cartesian_exponents
 
-   interface get_dipole_integrals
-      module procedure :: get_dipole_integrals_lat
-      module procedure :: get_dipole_integrals_diat_lat
-   end interface get_dipole_integrals
+   interface get_overlap
+      module procedure :: get_overlap_lat
+      module procedure :: get_overlap_diat_lat
+   end interface get_overlap
 
-   integer, parameter :: maxl = 6
-   integer, parameter :: maxl2 = maxl*2
-   integer, parameter :: msao(0:maxl) = [1, 3, 5, 7, 9, 11, 13]
-   integer, parameter :: mlao(0:maxl) = [1, 3, 6, 10, 15, 21, 28]
-   integer, parameter :: smap(0:maxl) = [0, 1, 4, 9, 16, 25, 36]
-   integer, parameter :: lmap(0:maxl) = [0, 1, 4, 10, 20, 35, 56]
-   integer, parameter :: sdim(0:maxl) = [1, 4, 9, 16, 25, 36, 49]
    real(wp), parameter :: sqrtpi = sqrt(pi)
    real(wp), parameter :: sqrtpi3 = sqrtpi**3
 
-   ! x (+1), y (-1), z (0) in [-1, 0, 1] sorting
-   integer, parameter :: lx(3, 84) = reshape([&
-      & 0, &
-      & 0,0,1, &
-      & 2,0,0,1,1,0, &
-      & 3,0,0,2,2,1,0,1,0,1, &
-      & 4,0,0,3,3,1,0,1,0,2,2,0,2,1,1, &
-      & 5,0,0,3,3,2,2,0,0,4,4,1,0,0,1,1,3,1,2,2,1, &
-      & 6,0,0,3,3,0,5,5,1,0,0,1,4,4,2,0,2,0,3,3,1,2,2,1,4,1,1,2, &
-      & 0, &
-      & 1,0,0, &
-      & 0,2,0,1,0,1, &
-      & 0,3,0,1,0,2,2,0,1,1, &
-      & 0,4,0,1,0,3,3,0,1,2,0,2,1,2,1, &
-      & 0,5,0,2,0,3,0,3,2,1,0,4,4,1,0,1,1,3,2,1,2, &
-      & 0,6,0,3,0,3,1,0,0,1,5,5,2,0,0,2,4,4,2,1,3,1,3,2,1,4,1,2, &
-      & 0, &
-      & 0,1,0, &
-      & 0,0,2,0,1,1, &
-      & 0,0,3,0,1,0,1,2,2,1, &
-      & 0,0,4,0,1,0,1,3,3,0,2,2,1,1,2, &
-      & 0,0,5,0,2,0,3,2,3,0,1,0,1,4,4,3,1,1,1,2,2, &
-      & 0,0,6,0,3,3,0,1,5,5,1,0,0,2,4,4,0,2,1,2,2,3,1,3,1,1,4,2], &
-      & shape(lx), order=[2, 1])
-
 
 contains
+
+pure subroutine get_cartesian_exponents(l, exponents)
+   integer, intent(in) :: l
+   integer, intent(out) :: exponents(:, :)
+
+   exponents = lx(:, lmap(l)+1:lmap(l)+mlao(l))
+end subroutine get_cartesian_exponents
 
 
 elemental function overlap_1d(moment, alpha) result(overlap)
@@ -207,7 +182,7 @@ pure subroutine form_product(a, b, la, lb, d)
 end subroutine form_product
 
 
-pure subroutine dipole_3d(rpj, rpi, aj, ai, lj, li, s1d, s3d, d3d)
+pure subroutine overlap_3d(rpj, rpi, aj, ai, lj, li, s1d, s3d)
    real(wp), intent(in) :: rpi(3)
    real(wp), intent(in) :: rpj(3)
    real(wp), intent(in) :: ai
@@ -216,13 +191,11 @@ pure subroutine dipole_3d(rpj, rpi, aj, ai, lj, li, s1d, s3d, d3d)
    integer, intent(in) :: lj(3)
    real(wp), intent(in) :: s1d(0:)
    real(wp), intent(out) :: s3d
-   real(wp), intent(out) :: d3d(3)
 
    integer :: k, l
-   real(wp) :: vi(0:maxl), vj(0:maxl), vv(0:maxl2), v1d(3, 2)
-   real(wp), parameter :: s3 = sqrt(3.0_wp), s3_4 = s3 * 0.5_wp
+   real(wp) :: vi(0:maxl), vj(0:maxl), vv(0:maxl2), v1d(3)
 
-   v1d(:, :) = 0.0_wp
+   v1d(:) = 0.0_wp
 
    do k = 1, 3
       vv(:) = 0.0_wp
@@ -235,21 +208,16 @@ pure subroutine dipole_3d(rpj, rpi, aj, ai, lj, li, s1d, s3d, d3d)
       call horizontal_shift(rpj(k), lj(k), vj)
       call form_product(vi, vj, li(k), lj(k), vv)
       do l = 0, li(k) + lj(k)
-         v1d(k, 1) = v1d(k, 1) + s1d(l) * vv(l)
-         v1d(k, 2) = v1d(k, 2) + (s1d(l+1) + rpi(k)*s1d(l)) * vv(l)
+         v1d(k) = v1d(k) + s1d(l) * vv(l)
       end do
    end do
 
-   s3d = v1d(1, 1) * v1d(2, 1) * v1d(3, 1)
-   d3d(1) = v1d(1, 2) * v1d(2, 1) * v1d(3, 1)
-   d3d(2) = v1d(1, 1) * v1d(2, 2) * v1d(3, 1)
-   d3d(3) = v1d(1, 1) * v1d(2, 1) * v1d(3, 2)
+   s3d = v1d(1) * v1d(2) * v1d(3)
 
-end subroutine dipole_3d
+end subroutine overlap_3d
 
 
-pure subroutine dipole_grad_3d(rpj, rpi, aj, ai, lj, li, s1d, s3d, d3d, &
-      & ds3d, dd3d)
+pure subroutine overlap_grad_3d(rpj, rpi, aj, ai, lj, li, s1d, s3d, ds3d)
    real(wp), intent(in) :: rpi(3)
    real(wp), intent(in) :: rpj(3)
    real(wp), intent(in) :: ai
@@ -258,16 +226,14 @@ pure subroutine dipole_grad_3d(rpj, rpi, aj, ai, lj, li, s1d, s3d, d3d, &
    integer, intent(in) :: lj(3)
    real(wp), intent(in) :: s1d(0:)
    real(wp), intent(out) :: s3d
-   real(wp), intent(out) :: d3d(3)
    real(wp), intent(out) :: ds3d(3)
-   real(wp), intent(out) :: dd3d(3, 3)
 
    integer :: k, l
-   real(wp) :: vi(0:maxl), vj(0:maxl), vv(0:maxl2), v1d(3, 2)
-   real(wp) :: gi(0:maxl), gg(0:maxl2), g1d(3, 2)
+   real(wp) :: vi(0:maxl), vj(0:maxl), vv(0:maxl2), v1d(3)
+   real(wp) :: gi(0:maxl), gg(0:maxl2), g1d(3)
 
-   v1d(:, :) = 0.0_wp
-   g1d(:, :) = 0.0_wp
+   v1d(:) = 0.0_wp
+   g1d(:) = 0.0_wp
 
    do k = 1, 3
       vv(:) = 0.0_wp
@@ -288,35 +254,20 @@ pure subroutine dipole_grad_3d(rpj, rpi, aj, ai, lj, li, s1d, s3d, d3d, &
       call form_product(vi, vj, li(k), lj(k), vv)
       call form_product(gi, vj, li(k)+1, lj(k), gg)
       do l = 0, li(k) + lj(k) + 1
-         v1d(k, 1) = v1d(k, 1) + s1d(l) * vv(l)
-         v1d(k, 2) = v1d(k, 2) + (s1d(l+1) + rpi(k)*s1d(l)) * vv(l)
-         g1d(k, 1) = g1d(k, 1) + s1d(l) * gg(l)
-         g1d(k, 2) = g1d(k, 2) + (s1d(l+1) + rpi(k)*s1d(l)) * gg(l)
+         v1d(k) = v1d(k) + s1d(l) * vv(l)
+         g1d(k) = g1d(k) + s1d(l) * gg(l)
       end do
    end do
 
-   s3d = v1d(1, 1) * v1d(2, 1) * v1d(3, 1)
-   d3d(1) = v1d(1, 2) * v1d(2, 1) * v1d(3, 1)
-   d3d(2) = v1d(1, 1) * v1d(2, 2) * v1d(3, 1)
-   d3d(3) = v1d(1, 1) * v1d(2, 1) * v1d(3, 2)
+   s3d = v1d(1) * v1d(2) * v1d(3)
+   ds3d(1) = g1d(1) * v1d(2) * v1d(3)
+   ds3d(2) = v1d(1) * g1d(2) * v1d(3)
+   ds3d(3) = v1d(1) * v1d(2) * g1d(3)
 
-   ds3d(1) = g1d(1, 1) * v1d(2, 1) * v1d(3, 1)
-   ds3d(2) = v1d(1, 1) * g1d(2, 1) * v1d(3, 1)
-   ds3d(3) = v1d(1, 1) * v1d(2, 1) * g1d(3, 1)
-   dd3d(1, 1) = g1d(1, 2) * v1d(2, 1) * v1d(3, 1)
-   dd3d(2, 1) = v1d(1, 2) * g1d(2, 1) * v1d(3, 1)
-   dd3d(3, 1) = v1d(1, 2) * v1d(2, 1) * g1d(3, 1)
-   dd3d(1, 2) = g1d(1, 1) * v1d(2, 2) * v1d(3, 1)
-   dd3d(2, 2) = v1d(1, 1) * g1d(2, 2) * v1d(3, 1)
-   dd3d(3, 2) = v1d(1, 1) * v1d(2, 2) * g1d(3, 1)
-   dd3d(1, 3) = g1d(1, 1) * v1d(2, 1) * v1d(3, 2)
-   dd3d(2, 3) = v1d(1, 1) * g1d(2, 1) * v1d(3, 2)
-   dd3d(3, 3) = v1d(1, 1) * v1d(2, 1) * g1d(3, 2)
-
-end subroutine dipole_grad_3d
+end subroutine overlap_grad_3d
 
 
-pure subroutine dipole_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dpint)
+pure subroutine overlap_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap)
    !> Description of contracted Gaussian function on center j
    type(cgto_type), intent(in) :: cgtoj
    !> Description of contracted Gaussian function on center i
@@ -329,16 +280,65 @@ pure subroutine dipole_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dpint)
    real(wp), intent(in) :: intcut
    !> Overlap integrals for the given pair i  and j
    real(wp), intent(out) :: overlap(msao(cgtoj%ang), msao(cgtoi%ang))
-   !> Dipole moment integrals for the given pair i  and j
-   real(wp), intent(out) :: dpint(3, msao(cgtoj%ang), msao(cgtoi%ang))
 
    integer :: ip, jp, mli, mlj, l
-   real(wp) :: eab, oab, est, s1d(0:maxl2), rpi(3), rpj(3), cc, val, dip(3), pre
+   real(wp) :: eab, oab, est, s1d(0:maxl2), rpi(3), rpj(3), cc, val, pre
    real(wp) :: s3d(mlao(cgtoj%ang), mlao(cgtoi%ang))
-   real(wp) :: d3d(3, mlao(cgtoj%ang), mlao(cgtoi%ang))
 
    s3d(:, :) = 0.0_wp
-   d3d(:, :, :) = 0.0_wp
+
+   do ip = 1, cgtoi%nprim
+      do jp = 1, cgtoj%nprim
+         eab = cgtoi%alpha(ip) + cgtoj%alpha(jp)
+         oab = 1.0_wp/eab
+         est = cgtoi%alpha(ip) * cgtoj%alpha(jp) * r2 * oab
+         if (est > intcut) cycle
+         pre = exp(-est) * sqrtpi3*sqrt(oab)**3
+         rpi = -vec * cgtoj%alpha(jp) * oab
+         rpj = +vec * cgtoi%alpha(ip) * oab
+         do l = 0, cgtoi%ang + cgtoj%ang
+            s1d(l) = overlap_1d(l, eab)
+         end do
+         cc = cgtoi%coeff(ip) * cgtoj%coeff(jp) * pre
+         do mli = 1, mlao(cgtoi%ang)
+            do mlj = 1, mlao(cgtoj%ang)
+               call overlap_3d(rpj, rpi, cgtoj%alpha(jp), cgtoi%alpha(ip), &
+                  & lx(:, mlj+lmap(cgtoj%ang)), lx(:, mli+lmap(cgtoi%ang)), &
+                  & s1d, val)
+               s3d(mlj, mli) = s3d(mlj, mli) + cc*val
+            end do
+         end do
+      end do
+   end do
+
+   call transform0(cgtoj%ang, cgtoi%ang, s3d, overlap, .true., .true.)
+
+end subroutine overlap_cgto
+
+
+pure subroutine overlap_grad_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, doverlap)
+   !> Description of contracted Gaussian function on center j
+   type(cgto_type), intent(in) :: cgtoj
+   !> Description of contracted Gaussian function on center i
+   type(cgto_type), intent(in) :: cgtoi
+   !> Square distance between center i and j
+   real(wp), intent(in) :: r2
+   !> Distance vector between center i and j, ri - rj
+   real(wp), intent(in) :: vec(3)
+   !> Maximum value of integral prefactor to consider
+   real(wp), intent(in) :: intcut
+   !> Overlap integrals for the given pair i  and j
+   real(wp), intent(out) :: overlap(msao(cgtoj%ang), msao(cgtoi%ang))
+   !> Overlap integral gradient for the given pair i  and j
+   real(wp), intent(out) :: doverlap(3, msao(cgtoj%ang), msao(cgtoi%ang))
+
+   integer :: ip, jp, mli, mlj, l
+   real(wp) :: eab, oab, est, s1d(0:maxl2), rpi(3), rpj(3), cc, val, grad(3), pre
+   real(wp) :: s3d(mlao(cgtoj%ang), mlao(cgtoi%ang))
+   real(wp) :: ds3d(3, mlao(cgtoj%ang), mlao(cgtoi%ang))
+
+   s3d(:, :) = 0.0_wp
+   ds3d(:, :, :) = 0.0_wp
 
    do ip = 1, cgtoi%nprim
       do jp = 1, cgtoj%nprim
@@ -355,93 +355,24 @@ pure subroutine dipole_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dpint)
          cc = cgtoi%coeff(ip) * cgtoj%coeff(jp) * pre
          do mli = 1, mlao(cgtoi%ang)
             do mlj = 1, mlao(cgtoj%ang)
-               call dipole_3d(rpj, rpi, cgtoj%alpha(jp), cgtoi%alpha(ip), &
+               call overlap_grad_3d(rpj, rpi, cgtoj%alpha(jp), cgtoi%alpha(ip), &
                   & lx(:, mlj+lmap(cgtoj%ang)), lx(:, mli+lmap(cgtoi%ang)), &
-                  & s1d, val, dip)
+                  & s1d, val, grad)
                s3d(mlj, mli) = s3d(mlj, mli) + cc*val
-               d3d(:, mlj, mli) = d3d(:, mlj, mli) + cc*dip
-            end do
-         end do
-      end do
-   end do
-
-   call transform0(cgtoj%ang, cgtoi%ang, s3d, overlap, .true., .true.)
-   call transform1(cgtoj%ang, cgtoi%ang, d3d, dpint, .true., .true.)
-
-end subroutine dipole_cgto
-
-
-pure subroutine dipole_grad_cgto(cgtoj, cgtoi, r2, vec, intcut, overlap, dpint, &
-      & doverlap, ddpint)
-   !> Description of contracted Gaussian function on center j
-   type(cgto_type), intent(in) :: cgtoj
-   !> Description of contracted Gaussian function on center i
-   type(cgto_type), intent(in) :: cgtoi
-   !> Square distance between center i and j
-   real(wp), intent(in) :: r2
-   !> Distance vector between center i and j, ri - rj
-   real(wp), intent(in) :: vec(3)
-   !> Maximum value of integral prefactor to consider
-   real(wp), intent(in) :: intcut
-   !> Overlap integrals for the given pair i  and j
-   real(wp), intent(out) :: overlap(msao(cgtoj%ang), msao(cgtoi%ang))
-   !> Dipole moment integrals for the given pair i  and j
-   real(wp), intent(out) :: dpint(3, msao(cgtoj%ang), msao(cgtoi%ang))
-   !> Overlap integral gradient for the given pair i  and j
-   real(wp), intent(out) :: doverlap(3, msao(cgtoj%ang), msao(cgtoi%ang))
-   !> Dipole moment integral gradient for the given pair i  and j
-   real(wp), intent(out) :: ddpint(3, 3, msao(cgtoj%ang), msao(cgtoi%ang))
-
-   integer :: ip, jp, mli, mlj, l
-   real(wp) :: eab, oab, est, s1d(0:maxl2), rpi(3), rpj(3), cc, val, dip(3)
-   real(wp) :: pre, grad(3), ddip(3, 3)
-   real(wp) :: s3d(mlao(cgtoj%ang), mlao(cgtoi%ang))
-   real(wp) :: d3d(3, mlao(cgtoj%ang), mlao(cgtoi%ang))
-   real(wp) :: ds3d(3, mlao(cgtoj%ang), mlao(cgtoi%ang))
-   real(wp) :: dd3d(3, 3, mlao(cgtoj%ang), mlao(cgtoi%ang))
-
-   s3d(:, :) = 0.0_wp
-   d3d(:, :, :) = 0.0_wp
-   ds3d(:, :, :) = 0.0_wp
-   dd3d(:, :, :, :) = 0.0_wp
-
-   do ip = 1, cgtoi%nprim
-      do jp = 1, cgtoj%nprim
-         eab = cgtoi%alpha(ip) + cgtoj%alpha(jp)
-         oab = 1.0_wp/eab
-         est = cgtoi%alpha(ip) * cgtoj%alpha(jp) * r2 * oab
-         if (est > intcut) cycle
-         pre = exp(-est) * sqrtpi3*sqrt(oab)**3
-         rpi = -vec * cgtoj%alpha(jp) * oab
-         rpj = +vec * cgtoi%alpha(ip) * oab
-         do l = 0, cgtoi%ang + cgtoj%ang + 2
-            s1d(l) = overlap_1d(l, eab)
-         end do
-         cc = cgtoi%coeff(ip) * cgtoj%coeff(jp) * pre
-         do mli = 1, mlao(cgtoi%ang)
-            do mlj = 1, mlao(cgtoj%ang)
-               call dipole_grad_3d(rpj, rpi, cgtoj%alpha(jp), cgtoi%alpha(ip), &
-                  & lx(:, mlj+lmap(cgtoj%ang)), lx(:, mli+lmap(cgtoi%ang)), &
-                  & s1d, val, dip, grad, ddip)
-               s3d(mlj, mli) = s3d(mlj, mli) + cc*val
-               d3d(:, mlj, mli) = d3d(:, mlj, mli) + cc*dip
                ds3d(:, mlj, mli) = ds3d(:, mlj, mli) + cc*grad
-               dd3d(:, :, mlj, mli) = dd3d(:, :, mlj, mli) + cc*ddip
             end do
          end do
       end do
    end do
 
    call transform0(cgtoj%ang, cgtoi%ang, s3d, overlap, .true., .true.)
-   call transform1(cgtoj%ang, cgtoi%ang, d3d, dpint, .true., .true.)
    call transform1(cgtoj%ang, cgtoi%ang, ds3d, doverlap, .true., .true.)
-   call transform2(cgtoj%ang, cgtoi%ang, dd3d, ddpint, .true., .true.)
 
-end subroutine dipole_grad_cgto
+end subroutine overlap_grad_cgto
 
 
 !> Evaluate overlap for a molecular structure
-subroutine get_dipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint)
+subroutine get_overlap_lat(mol, trans, cutoff, bas, overlap)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
    !> Lattice points within a given realspace cutoff
@@ -452,24 +383,21 @@ subroutine get_dipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint)
    type(basis_type), intent(in) :: bas
    !> Overlap matrix
    real(wp), intent(out) :: overlap(:, :)
-   !> Dipole moment integral matrix
-   real(wp), intent(out) :: dpint(:, :, :)
 
    integer :: iat, jat, izp, jzp, itr, is, js
    integer :: ish, jsh, ii, jj, iao, jao, nao
    real(wp) :: r2, vec(3), cutoff2
-   real(wp), allocatable :: stmp(:), dtmp(:, :)
+   real(wp), allocatable :: stmp(:)
 
    overlap(:, :) = 0.0_wp
-   dpint(:, :, :) = 0.0_wp
 
-   allocate(stmp(msao(bas%maxl)**2), dtmp(3, msao(bas%maxl)**2))
+   allocate(stmp(msao(bas%maxl)**2))
    cutoff2 = cutoff**2
 
    !$omp parallel do schedule(runtime) default(none) &
-   !$omp shared(mol, bas, trans, cutoff2, overlap, dpint) &
-   !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, ii, jj) &
-   !$omp private(iao, jao, nao, r2, vec, stmp, dtmp)
+   !$omp shared(mol, bas, trans, cutoff2, overlap) &
+   !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh) &
+   !$omp private(ii, jj, iao, jao, nao, r2, vec, stmp)
    do iat = 1, mol%nat
       izp = mol%id(iat)
       is = bas%ish_at(iat)
@@ -484,8 +412,8 @@ subroutine get_dipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint)
                ii = bas%iao_sh(is+ish)
                do jsh = 1, bas%nsh_id(jzp)
                   jj = bas%iao_sh(js+jsh)
-                  call dipole_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                     & r2, vec, bas%intcut, stmp, dtmp)
+                  call overlap_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
+                     & r2, vec, bas%intcut, stmp)
 
                   nao = msao(bas%cgto(jsh, jzp)%ang)
                   !$omp simd collapse(2)
@@ -493,9 +421,6 @@ subroutine get_dipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint)
                      do jao = 1, nao
                         overlap(jj+jao, ii+iao) = overlap(jj+jao, ii+iao) &
                            & + stmp(jao + nao*(iao-1))
-
-                        dpint(:, jj+jao, ii+iao) = dpint(:, jj+jao, ii+iao) &
-                           & + dtmp(:, jao + nao*(iao-1))
                      end do
                   end do
 
@@ -506,11 +431,11 @@ subroutine get_dipole_integrals_lat(mol, trans, cutoff, bas, overlap, dpint)
       end do
    end do
 
-end subroutine get_dipole_integrals_lat
+end subroutine get_overlap_lat
 
-!> Evaluate dipole integrals and diatomic frame scaled overlap
-subroutine get_dipole_integrals_diat_lat(mol, trans, cutoff, bas, &
-   & ksig, kpi, kdel, overlap, overlap_diat, dpint)
+!> Evaluate overlap integrals and diatomic frame scaled overlap
+subroutine get_overlap_diat_lat(mol, trans, cutoff, bas, ksig, kpi, kdel, &
+   & overlap, overlap_diat)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
    !> Lattice points within a given realspace cutoff
@@ -527,30 +452,25 @@ subroutine get_dipole_integrals_diat_lat(mol, trans, cutoff, bas, &
    real(wp), intent(in) :: kdel(:, :)
    !> Overlap matrix
    real(wp), intent(out) :: overlap(:, :)
-   !> Overlap matrix with diatomic frame scaled elements
+   !> Overlap matrix with diatomic frame scaled elements in the diatomic frame
    real(wp), intent(out) :: overlap_diat(:, :)
-   !> Dipole moment integral matrix
-   real(wp), intent(out) :: dpint(:, :, :)
 
    integer :: iat, jat, izp, jzp, itr, is, js
    integer :: ish, jsh, nsi, nsj, ii, jj, ij, iao, jao, iaosh, jaosh, nao
    real(wp) :: r2, vec(3), cutoff2
-   real(wp), allocatable :: stmp(:), dtmp(:, :), block_overlap(:, :)
+   real(wp), allocatable :: stmp(:), block_overlap(:, :)
    type(diat_trafo_cache) :: dt_cache
 
    overlap(:, :) = 0.0_wp
    overlap_diat(:, :) = 0.0_wp
-   dpint(:, :, :) = 0.0_wp
 
-   allocate(stmp(msao(bas%maxl)**2), dtmp(3, msao(bas%maxl)**2), &
-      & block_overlap(sdim(bas%maxl), sdim(bas%maxl)))
+   allocate(stmp(msao(bas%maxl)**2), block_overlap(sdim(bas%maxl), sdim(bas%maxl)))
    cutoff2 = cutoff**2
 
-   !$omp parallel do schedule(runtime) default(none) shared(mol, bas, trans)&
-   !$omp shared(cutoff2, ksig, kpi, kdel, overlap, overlap_diat, dpint) &
-   !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, nsi, nsj) &
-   !$omp private(ii, jj, ij, iao, jao, iaosh, jaosh, nao, r2, vec) &
-   !$omp private(stmp, dtmp, block_overlap, dt_cache)
+   !$omp parallel do schedule(runtime) default(none) &
+   !$omp shared(mol, bas, trans, cutoff2, ksig, kpi, kdel, overlap, overlap_diat) &
+   !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, nsi, nsj, ii, jj, ij) &
+   !$omp private(iao, jao, iaosh, jaosh, nao, r2, vec, stmp, block_overlap, dt_cache)
    do iat = 1, mol%nat
       izp = mol%id(iat)
       is = bas%ish_at(iat)
@@ -564,16 +484,16 @@ subroutine get_dipole_integrals_diat_lat(mol, trans, cutoff, bas, &
             r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
             if (r2 > cutoff2) cycle
 
-            ! Calculate pairwise overlap and dipole integrals
+            ! Calculate pairwise overlap and multipole integrals
             block_overlap = 0.0_wp
-            do ish = 1, nsi
+            do ish = 1, bas%nsh_id(izp)
                ii = bas%iao_sh(is+ish)
                iaosh = smap(ish-1)
-               do jsh = 1, nsj
+               do jsh = 1, bas%nsh_id(jzp)
                   jj = bas%iao_sh(js+jsh)
                   jaosh = smap(jsh-1)
-                  call dipole_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                     & r2, vec, bas%intcut, stmp, dtmp)
+                  call overlap_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
+                     & r2, vec, bas%intcut, stmp)
 
                   nao = msao(bas%cgto(jsh, jzp)%ang)
                   !$omp simd collapse(2)
@@ -585,9 +505,6 @@ subroutine get_dipole_integrals_diat_lat(mol, trans, cutoff, bas, &
 
                         overlap(jj+jao, ii+iao) = overlap(jj+jao, ii+iao) &
                            & + stmp(ij)
-
-                        dpint(:, jj+jao, ii+iao) = dpint(:, jj+jao, ii+iao) &
-                           & + dtmp(:, ij)
                      end do
                   end do
                end do
@@ -626,6 +543,6 @@ subroutine get_dipole_integrals_diat_lat(mol, trans, cutoff, bas, &
       end do
    end do
 
-end subroutine get_dipole_integrals_diat_lat
+end subroutine get_overlap_diat_lat
 
-end module tblite_integral_dipole
+end module tblite_integral_overlap

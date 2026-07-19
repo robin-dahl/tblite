@@ -23,10 +23,8 @@ module test_integral_multipole
    use tblite_basis_slater, only : slater_to_gauss
    use tblite_basis_type, only : basis_type, new_basis, cgto_type, get_cutoff
    use tblite_cutoff, only : get_lattice_points
-   use tblite_integral_dipole, only : dipole_cgto, dipole_grad_cgto, msao, &
-      & get_dipole_integrals
-   use tblite_integral_multipole, only : multipole_cgto, multipole_grad_cgto, &
-      & get_multipole_integrals
+   use tblite_integral_native, only : native_integral_type, &
+      & get_dipole_integrals, get_multipole_integrals
    implicit none
    private
 
@@ -114,6 +112,7 @@ subroutine test_dipole_ss(error)
    integer, parameter :: ng = 6
    integer :: stat, i
    type(cgto_type) :: cgtoi, cgtoj
+   type(native_integral_type) :: native
    real(wp) :: vec(3), r2
    real(wp) :: overlap(1, 1), dipolei(3, 1, 1), dipolej(3, 1, 1)
 
@@ -124,11 +123,13 @@ subroutine test_dipole_ss(error)
    vec = vec - 0.5_wp
    r2 = sum(vec**2)
 
-   call dipole_cgto(cgtoi, cgtoj, r2, vec, 100.0_wp, overlap, dipolej)
+   call native%dipole_cgto(cgtoi, cgtoj, 1, 2, r2, vec, &
+      & 100.0_wp, overlap, dipolej)
 
    vec(:) = -vec
 
-   call dipole_cgto(cgtoj, cgtoi, r2, vec, 100.0_wp, overlap, dipolei)
+   call native%dipole_cgto(cgtoj, cgtoi, 2, 1, r2, vec, &
+      & 100.0_wp, overlap, dipolei)
 
    do i = 1, 3
       call check(error, dipolei(i, 1, 1) + vec(i) * overlap(1, 1), dipolej(i, 1, 1), thr=thr)
@@ -147,6 +148,7 @@ subroutine test_dipole_pp(error)
 
    integer :: stat, i, j, k
    type(cgto_type) :: cgtoi, cgtoj
+   type(native_integral_type) :: native
    real(wp) :: vec(3), r2
    real(wp) :: overlap(3, 3), dipolei(3, 3, 3), dipolej(3, 3, 3)
 
@@ -157,16 +159,19 @@ subroutine test_dipole_pp(error)
    vec = vec - 0.5_wp
    r2 = sum(vec**2)
 
-   call dipole_cgto(cgtoi, cgtoj, r2, vec, 100.0_wp, overlap, dipolej)
+   call native%dipole_cgto(cgtoi, cgtoj, 1, 2, r2, vec, &
+      & 100.0_wp, overlap, dipolej)
 
    vec(:) = -vec
 
-   call dipole_cgto(cgtoj, cgtoi, r2, vec, 100.0_wp, overlap, dipolei)
+   call native%dipole_cgto(cgtoj, cgtoi, 2, 1, r2, vec, &
+      & 100.0_wp, overlap, dipolei)
 
    do i = 1, 3
       do j = 1, 3
          do k = 1, 3
-            call check(error, dipolei(k, j, i) + vec(k) * overlap(j, i), dipolej(k, i, j), thr=thr)
+            call check(error, dipolei(k, j, i) + vec(k) * overlap(j, i), &
+               & dipolej(k, i, j), thr=thr)
             if (allocated(error)) return
          end do
       end do
@@ -184,6 +189,7 @@ subroutine test_dipole_dd(error)
 
    integer :: stat, i, j, k
    type(cgto_type) :: cgtoi, cgtoj
+   type(native_integral_type) :: native
    real(wp) :: vec(3), r2
    real(wp) :: overlap(5, 5), dipolei(3, 5, 5), dipolej(3, 5, 5)
 
@@ -194,16 +200,19 @@ subroutine test_dipole_dd(error)
    vec = vec - 0.5_wp
    r2 = sum(vec**2)
 
-   call dipole_cgto(cgtoi, cgtoj, r2, vec, 100.0_wp, overlap, dipolej)
+   call native%dipole_cgto(cgtoi, cgtoj, 1, 2, r2, vec, &
+      & 100.0_wp, overlap, dipolej)
 
    vec(:) = -vec
 
-   call dipole_cgto(cgtoj, cgtoi, r2, vec, 100.0_wp, overlap, dipolei)
+   call native%dipole_cgto(cgtoj, cgtoi, 2, 1, r2, vec, &
+      & 100.0_wp, overlap, dipolei)
 
    do i = 1, 5
       do j = 1, 5
          do k = 1, 3
-            call check(error, dipolei(k, j, i) + vec(k) * overlap(j, i), dipolej(k, i, j), thr=thr)
+            call check(error, dipolei(k, j, i) + vec(k) * overlap(j, i), &
+               & dipolej(k, i, j), thr=thr)
             if (allocated(error)) return
          end do
       end do
@@ -220,6 +229,7 @@ subroutine test_dipole_grad_ss(error)
    integer, parameter :: ng = 6
    integer :: stat, i, j
    type(cgto_type) :: cgtoi, cgtoj
+   type(native_integral_type) :: native
    real(wp) :: vec(3), r2, zero(3)
    real(wp) :: overlap(1, 1), doverlapi(3, 1, 1)
    real(wp) :: dipole(3, 1, 1), ddipolei(3, 3, 1, 1), ddipolej(3, 3, 1, 1)
@@ -235,16 +245,19 @@ subroutine test_dipole_grad_ss(error)
    zero = 0
    r2 = sum(vec**2)
 
-   call multipole_grad_cgto(cgtoj, cgtoi, r2, vec, 100.0_wp, overlap, dipole, quadrupole, &
-      & doverlapi, ddipolej, dquadrupolej, ddipolei, dquadrupolei)
+   call native%multipole_grad_cgto(cgtoj, cgtoi, 1, 2, r2, &
+      & vec, 100.0_wp, overlap, dipole, quadrupole, doverlapi, ddipolej, &
+      & dquadrupolej, ddipolei, dquadrupolei)
 
    do i = 1, 3
       vec(i) = vec(i) + step
       r2 = sum(vec**2)
-      call multipole_cgto(cgtoj, cgtoi, r2, vec, 100.0_wp, sr, dr, qr)
+      call native%multipole_cgto(cgtoj, cgtoi, 1, 2, r2, &
+         & vec, 100.0_wp, sr, dr, qr)
       vec(i) = vec(i) - 2*step
       r2 = sum(vec**2)
-      call multipole_cgto(cgtoj, cgtoi, r2, vec, 100.0_wp, sl, dl, ql)
+      call native%multipole_cgto(cgtoj, cgtoi, 1, 2, r2, &
+         & vec, 100.0_wp, sl, dl, ql)
       vec(i) = vec(i) + step
       ddipolej(i, :, :, :) = 0.5_wp * (dr - dl) / step
       dquadrupolej(i, :, :, :) = 0.5_wp * (qr - ql) / step

@@ -23,6 +23,9 @@
 #ifndef TBLITE_HAS_TREXIO
 #define TBLITE_HAS_TREXIO 0
 #endif
+#ifndef TBLITE_HAS_LIBCINT
+#define TBLITE_HAS_LIBCINT 0
+#endif
 
 !> @file tblite/features.f90
 !> Provides version and feature information
@@ -35,6 +38,7 @@ module tblite_features
    public :: get_tblite_feature
    public :: tblite_use_ddx
    public :: tblite_use_hdf5
+   public :: tblite_use_libcint
    public :: tblite_use_trexio
 
 
@@ -42,6 +46,8 @@ module tblite_features
    logical, parameter :: tblite_use_ddx = TBLITE_HAS_DDX /= 0
    !> Logical flag indicating if HDF5 support is available
    logical, parameter :: tblite_use_hdf5 = TBLITE_HAS_HDF5 /= 0
+   !> Logical flag indicating if libcint Gaussian integral support is available
+   logical, parameter :: tblite_use_libcint = TBLITE_HAS_LIBCINT /= 0
    !> Logical flag indicating if TREXIO support is available
    logical, parameter :: tblite_use_trexio = TBLITE_HAS_TREXIO /= 0
 
@@ -59,6 +65,8 @@ pure function get_tblite_feature(flag) result(use_feature)
       use_feature = tblite_use_ddx
    case("hdf5")
       use_feature = tblite_use_hdf5
+   case("libcint")
+      use_feature = tblite_use_libcint
    case("trexio")
       use_feature = tblite_use_trexio
    case default

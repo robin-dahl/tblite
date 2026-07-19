@@ -15,10 +15,19 @@
 # along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
 srcs += files(
-  'dipole.f90',
-  'multipole.f90',
-  'overlap.f90',
+  'shell.f90',
+  'native/dipole.f90',
+  'native/multipole.f90',
+  'native/overlap.f90',
+  'native/native.f90',
   'trafo.f90',
   'type.f90',
+  'handler.F90',
   'diat_trafo.f90',
 )
+
+if libcint_found
+  srcs += files(
+    'libcint/libcint.F90',
+  )
+endif

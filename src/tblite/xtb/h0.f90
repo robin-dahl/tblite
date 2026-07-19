@@ -25,8 +25,9 @@ module tblite_xtb_h0
    use tblite_basis_type, only : basis_type
    use tblite_integral_diat_trafo, only : diat_trafo_cache, setup_diat_trafo, &
       & diat_trafo
-   use tblite_integral_multipole, only : multipole_cgto, multipole_grad_cgto, &
+   use tblite_integral_shell, only : &
       & msao, smap, sdim
+   use tblite_integral_handler, only : integral_handler
    use tblite_scf_potential, only : potential_type
    use tblite_xtb_spec, only : tb_h0spec
    implicit none
@@ -217,8 +218,9 @@ subroutine get_selfenergy(h0, id, ish_at, nshell, cn, cn_en, qat, selfenergy, &
 end subroutine get_selfenergy
 
 
-subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, &
-   & dpint, qpint, hamiltonian)
+subroutine get_hamiltonian(mol, trans, list, bas, handler, h0, selfenergy, &
+      & overlap, dpint, qpint, &
+      & hamiltonian)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
    !> Lattice points within a given realspace cutoff
@@ -227,6 +229,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, &
    type(adjacency_list), intent(in) :: list
    !> Basis set information
    type(basis_type), intent(in) :: bas
+   !> Gaussian integral evaluator
+   class(integral_handler), intent(in) :: handler
    !> Hamiltonian interaction data
    type(tb_hamiltonian), intent(in) :: h0
    !> Diagonal elememts of the Hamiltonian
@@ -263,7 +267,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, &
 
    !$omp parallel do schedule(runtime) default(none) &
    !$omp firstprivate(mod_h0_fraction) &
-   !$omp shared(mol, bas, trans, list, overlap, dpint, qpint, hamiltonian, h0, selfenergy) &
+   !$omp shared(mol, bas, handler, trans, list, overlap, dpint, qpint, &
+   !$omp& hamiltonian, h0, selfenergy) &
    !$omp private(iat, jat, izp, jzp, itr, inl, img, is, js, ish, jsh, nsi, nsj, ii, jj) &
    !$omp private(iao, jao, iaosh, jaosh, nao, ij, r2, vec, hij, shpolyi, shpoly, rr) &
    !$omp private(stmp, dtmpi, qtmpi, dtmpj, qtmpj, block_overlap, dt_cache)
@@ -291,9 +296,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, &
             shpolyi = 1.0_wp + h0%shpoly(ish, izp)*rr
             do jsh = 1, nsj
                jj = bas%iao_sh(js+jsh)
-               jaosh = smap(jsh-1)
-               call multipole_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                  & r2, vec, bas%intcut, stmp, dtmpi, qtmpi)
+               call handler%multipole_cgto(bas%cgto(jsh,jzp), bas%cgto(ish,izp), &
+                  & js+jsh, is+ish, r2, vec, bas%intcut, stmp, dtmpi, qtmpi)
 
                shpoly = shpolyi * (1.0_wp + h0%shpoly(jsh, jzp)*rr)
 
@@ -387,19 +391,20 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, &
                      end do
                   end do
 
-               end do
-            end do
-         end if
-      end do
-
-      ! Onsite contribution to the Hamiltonian
+   !$omp parallel do schedule(runtime) default(none) &
+   !$omp shared(mol, bas, handler, overlap, dpint, qpint, hamiltonian, h0, selfenergy) &
+   !$omp private(iat, izp, is, ish, jsh, ii, jj, iao, jao, nao, ij) &
+   !$omp private(vec, stmp, dtmpi, qtmpi, hij)
+   do iat = 1, mol%nat
+      izp = mol%id(iat)
+      is = bas%ish_at(iat)
       vec(:) = 0.0_wp
       do ish = 1, nsi
          ii = bas%iao_sh(is+ish)
          do jsh = 1, nsi
             jj = bas%iao_sh(is+jsh)
-            call multipole_cgto(bas%cgto(jsh, izp), bas%cgto(ish, izp), &
-               & 0.0_wp, vec, bas%intcut, stmp, dtmpi, qtmpi)
+            call handler%multipole_cgto(bas%cgto(jsh, izp), bas%cgto(ish, izp), &
+               & is+jsh, is+ish, 0.0_wp, vec, bas%intcut, stmp, dtmpi, qtmpi)
 
             ! shpoly is always 1.0, because rr is always 0.0
             hij = 0.5_wp * (selfenergy(is+ish) + selfenergy(is+jsh))
@@ -429,7 +434,8 @@ subroutine get_hamiltonian(mol, trans, list, bas, h0, selfenergy, overlap, &
 end subroutine get_hamiltonian
 
 
-subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedcn, &
+subroutine get_hamiltonian_gradient(mol, trans, list, bas, handler, h0, &
+      & selfenergy, dsedcn, &
       & pot, pmat, xmat, dEdcn, gradient, sigma)
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -439,6 +445,8 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedc
    type(adjacency_list), intent(in) :: list
    !> Basis set information
    type(basis_type), intent(in) :: bas
+   !> Gaussian integral evaluator
+   class(integral_handler), intent(in) :: handler
    !> Hamiltonian interaction data
    type(tb_hamiltonian), intent(in) :: h0
    !> Diagonal elememts of the Hamiltonian
@@ -486,7 +494,8 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedc
       & block_doverlap(sdim(bas%maxl), sdim(bas%maxl), 3))
 
    !$omp parallel do schedule(runtime) default(none) reduction(+:dEdcn, gradient, sigma) &
-   !$omp shared(nspin, mol, bas, trans, h0, selfenergy, dsedcn, pot, pmat, xmat, list) &
+   !$omp shared(nspin, mol, bas, handler, trans, h0, selfenergy, dsedcn, pot, &
+   !$omp& pmat, xmat, list) &
    !$omp firstprivate(mod_h0_fraction) &
    !$omp private(iat, jat, izp, jzp, itr, is, js, ish, jsh, nsi, nsj, ii, jj) &
    !$omp private(iaosh, jaosh, iao, jao, nao, ij, inl, img, spin, r2, vec) &
@@ -522,10 +531,11 @@ subroutine get_hamiltonian_gradient(mol, trans, list, bas, h0, selfenergy, dsedc
             shpolyi = 1.0_wp + h0%shpoly(ish, izp)*rr
             do jsh = 1, nsj
                jj = bas%iao_sh(js+jsh)
-               jaosh = smap(jsh-1)
-               call multipole_grad_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
-                  & r2, vec, bas%intcut, stmp, dtmp, qtmp, dstmp, ddtmpj, dqtmpj, &
-                  & ddtmpi, dqtmpi)
+               call handler%multipole_grad_cgto(bas%cgto(jsh, jzp), bas%cgto(ish, izp), &
+                  & js+jsh, is+ish, r2, vec, bas%intcut, stmp, dtmp, qtmp, dstmp, &
+                  & ddtmpj, dqtmpj, ddtmpi, dqtmpi)
+               
+               shpolyi = 1.0_wp + h0%shpoly(ish, izp)*rr
                shpolyj = 1.0_wp + h0%shpoly(jsh, jzp)*rr
                shpoly = shpolyi * shpolyj
                dshpoly = (shpolyi * h0%shpoly(jsh, jzp) + shpolyj * &

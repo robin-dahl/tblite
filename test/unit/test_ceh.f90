@@ -25,7 +25,14 @@ module test_ceh
    use mstore, only : get_structure
    use tblite_adjlist, only : adjacency_list, new_adjacency_list
    use tblite_basis_slater, only : slater_to_gauss
-   use tblite_basis_type
+   use tblite_xtb_h0, only : tb_hamiltonian, new_hamiltonian
+   use tblite_wavefunction_type, only : wavefunction_type, new_wavefunction
+   use tblite_xtb_calculator, only : xtb_calculator
+   use tblite_ceh_singlepoint, only : ceh_singlepoint
+   use tblite_ceh_ceh, only : ceh_h0spec, new_ceh_calculator
+   use tblite_ceh_h0, only : get_scaled_selfenergy, get_hamiltonian
+   use tblite_integral_native, only : native_integral_type
+
    use tblite_blas, only: gemv
    use tblite_ceh_ceh, only : ceh_h0spec, new_ceh_calculator
    use tblite_ceh_singlepoint, only : ceh_singlepoint
@@ -46,6 +53,7 @@ module test_ceh
    real(wp), parameter :: thr = 100*epsilon(1.0_wp)
    real(wp), parameter :: thr1 = 1e5*epsilon(1.0_wp)
    real(wp), parameter :: thr2 = 1e2*sqrt(epsilon(1.0_wp))
+   type(native_integral_type) :: integral
 
 contains
 
@@ -370,10 +378,11 @@ subroutine test_hamiltonian_mol(error, mol, ref)
    call get_selfenergy(h0, mol%id, bas%ish_at, bas%nsh_id, cn=cn, cn_en=cn_en, &
       & selfenergy=selfenergy)
 
-   allocate(overlap(bas%nao, bas%nao), dpint(3, bas%nao, bas%nao), &
-      & qpint(6, bas%nao, bas%nao), hamiltonian(bas%nao, bas%nao))
-   call get_hamiltonian(mol, lattr, list, bas, h0, selfenergy, &
-      & overlap, dpint, qpint, hamiltonian)
+      allocate(overlap(bas%nao, bas%nao), overlap_diat(bas%nao, bas%nao), &
+      & dpint(3, bas%nao, bas%nao), hamiltonian(bas%nao, bas%nao))
+
+      call get_hamiltonian(mol, lattr, list, bas, integral, h0, selfenergy, &
+      & overlap, overlap_diat, dpint, hamiltonian)
 
    do ii = 1, size(hamiltonian, 2)
       do jj = 1, size(hamiltonian, 1)

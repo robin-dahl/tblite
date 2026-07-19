@@ -163,8 +163,9 @@ contains
 
       ! Get Hamiltonian and integrals
       call new_integral(ints, calc%bas%nao)
-      call get_hamiltonian(mol, lattr, list, calc%bas, calc%h0, selfenergy, &
-      & ints%overlap, ints%dipole, ints%quadrupole, ints%hamiltonian)
+      call get_hamiltonian(mol, lattr, list, calc%bas, calc%integral_handler, &
+      & calc%h0, selfenergy, &
+      & ints%overlap, ints%overlap_diat, ints%dipole, ints%hamiltonian)
       call timer%pop
 
       ! Get initial potential for external fields and Coulomb

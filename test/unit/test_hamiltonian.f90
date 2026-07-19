@@ -26,8 +26,10 @@ module test_hamiltonian
    use tblite_basis_slater, only : slater_to_gauss
    use tblite_basis_type
    use tblite_cutoff, only : get_lattice_points
-   use tblite_integral_overlap
+   use tblite_integral_shell, only : msao
    use tblite_lapack_sygvd, only : sygvd_solver
+   use tblite_integral_overlap
+   use tblite_integral_native, only : native_integral_type
    use tblite_scf_potential, only : potential_type, new_potential
    use tblite_xtb_gfn2
    use tblite_xtb_h0
@@ -38,6 +40,7 @@ module test_hamiltonian
 
    real(wp), parameter :: thr = 5e+6_wp*epsilon(1.0_wp)
    real(wp), parameter :: thr2 = 1.0e2_wp*sqrt(epsilon(1.0_wp))
+   type(native_integral_type) :: integral
 
 contains
 
@@ -150,8 +153,8 @@ subroutine test_hamiltonian_mol(error, mol, ref)
 
    allocate(overlap(bas%nao, bas%nao), dpint(3, bas%nao, bas%nao), &
       & qpint(6, bas%nao, bas%nao), hamiltonian(bas%nao, bas%nao))
-   call get_hamiltonian(mol, lattr, list, bas, h0, selfenergy, overlap, dpint, qpint, &
-      & hamiltonian)
+   call get_hamiltonian(mol, lattr, list, bas, integral, h0, selfenergy, &
+      & overlap, dpint, qpint, hamiltonian)
 
    !where(abs(hamiltonian) < thr) hamiltonian = 0.0_wp
    !print '(*(6x,"&", 3(es20.14e1, "_wp":, ","), "&", /))', hamiltonian
@@ -223,8 +226,8 @@ subroutine test_hamiltonian_periodic_self(error)
       pmat(iao, iao, 1) = 1.0_wp
    end do
 
-   call get_hamiltonian_gradient(mol, lattr, list, bas, h0, selfenergy, dsedcn, &
-      & pot, pmat, xmat, dEdcn, gradient, sigma)
+   call get_hamiltonian_gradient(mol, lattr, list, bas, integral, h0, &
+      & selfenergy, dsedcn, pot, pmat, xmat, dEdcn, gradient, sigma)
 
    call numdiff_hamiltonian_cn(mol, cn, numdEdcn)
    call numdiff_hamiltonian_cartesian(mol, cn, numgradient)
@@ -289,8 +292,8 @@ function get_hamiltonian_energy(mol, cn) result(energy)
 
    allocate(overlap(bas%nao, bas%nao), dpint(3, bas%nao, bas%nao), &
       & qpint(6, bas%nao, bas%nao), hamiltonian(bas%nao, bas%nao))
-   call get_hamiltonian(mol, lattr, list, bas, h0, selfenergy, overlap, dpint, qpint, &
-      & hamiltonian)
+   call get_hamiltonian(mol, lattr, list, bas, integral, h0, selfenergy, &
+      & overlap, dpint, qpint, hamiltonian)
 
    energy = 0.0_wp
    do iao = 1, bas%nao
@@ -326,8 +329,8 @@ function get_hamiltonian_image_energy(mol, cn) result(energy)
 
    allocate(overlap(bas%nao, bas%nao), dpint(3, bas%nao, bas%nao), &
       & qpint(6, bas%nao, bas%nao), hamiltonian(bas%nao, bas%nao))
-   call get_hamiltonian(mol, lattr, list, bas, h0, selfenergy, overlap, dpint, qpint, &
-      & hamiltonian)
+   call get_hamiltonian(mol, lattr, list, bas, integral, h0, selfenergy, &
+      & overlap, dpint, qpint, hamiltonian)
 
    energy = 0.0_wp
    do iao = 1, bas%nao
@@ -369,8 +372,8 @@ function get_hamiltonian_energy_with_selfenergy(mol, selfenergy) result(energy)
 
    allocate(overlap(bas%nao, bas%nao), dpint(3, bas%nao, bas%nao), &
       & qpint(6, bas%nao, bas%nao), hamiltonian(bas%nao, bas%nao))
-   call get_hamiltonian(mol, lattr, list, bas, h0, selfenergy, overlap, dpint, qpint, &
-      & hamiltonian)
+   call get_hamiltonian(mol, lattr, list, bas, integral, h0, selfenergy, &
+      & overlap, dpint, qpint, hamiltonian)
 
    energy = 0.0_wp
    do iao = 1, bas%nao
