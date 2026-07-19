@@ -165,6 +165,7 @@ if not get_option('libcint').disabled()
     libcint_options.add_cmake_defines({
       'PYPZPX': 'ON',
       'BUILD_SHARED_LIBS': get_option('default_library') == 'static' ? 'OFF' : 'ON',
+      'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
     })
     libcint_project = cmake.subproject(
       'libcint',
