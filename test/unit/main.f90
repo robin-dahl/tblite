@@ -33,6 +33,7 @@ program tester
    use test_halogen, only : collect_halogen
    use test_hamiltonian, only : collect_hamiltonian
    use test_hdf5, only : collect_hdf5
+   use test_integral_libcint, only : collect_integral_libcint
    use test_integral_multipole, only : collect_integral_multipole
    use test_integral_overlap, only : collect_integral_overlap
    use test_integral_trafo, only : collect_integral_trafo
@@ -83,6 +84,7 @@ program tester
       new_testsuite("slater-expansion", collect_slater_expansion), &
       new_testsuite("cgto-ortho", collect_cgto_ortho), &
       new_testsuite("integral-overlap", collect_integral_overlap), &
+      new_testsuite("integral-libcint", collect_integral_libcint), &
       new_testsuite("integral-multipole", collect_integral_multipole), &
       new_testsuite("integral-trafo", collect_integral_trafo), &
       new_testsuite("molden", collect_molden), &

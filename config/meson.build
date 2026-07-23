@@ -21,6 +21,7 @@ if has_cc
   cc = meson.get_compiler('c')
 endif
 fc_id = fc.get_id()
+fs = import('fs')
 
 if fc_id == 'gcc'
   add_project_arguments(
@@ -152,6 +153,45 @@ if trexio_dep.found()
     ],
     dependencies: [trexio_dep],
   )
+endif
+
+libcint_found = false
+libcint_dep = declare_dependency()
+if not get_option('libcint').disabled()
+  libcint_dep = dependency('cint', required: false, method: 'pkg-config')
+  if not libcint_dep.found()
+    cmake = import('cmake')
+    libcint_options = cmake.subproject_options()
+    libcint_static = get_option('default_library') == 'static'
+    libcint_options.add_cmake_defines({
+      'PYPZPX': 'ON',
+      'BUILD_SHARED_LIBS': libcint_static ? 'OFF' : 'ON',
+      'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
+      'CMAKE_DISABLE_FIND_PACKAGE_QUADMATH': 'ON',
+    })
+    # Static subprojects are part of their parent target and are not installed
+    # separately. This matches the policy of tblite's Meson subprojects.
+    if libcint_static
+      libcint_options.set_install(false)
+    endif
+    libcint_project = cmake.subproject(
+      'libcint',
+      options: libcint_options,
+      required: get_option('libcint'),
+    )
+    if libcint_project.found()
+      libcint_dep = libcint_project.dependency('cint')
+    endif
+  endif
+  libcint_found = libcint_dep.found()
+endif
+if libcint_found
+  lib_deps += declare_dependency(
+    compile_args: ['-DTBLITE_HAS_LIBCINT=1'],
+    dependencies: [libcint_dep],
+  )
+elif get_option('libcint').enabled()
+  error('libcint support was requested but libcint was not found')
 endif
 
 # Create TOML Fortran as subproject

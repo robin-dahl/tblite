@@ -30,6 +30,7 @@ set(
   "hdf5"
   "halogen"
   "integral-overlap"
+  "integral-libcint"
   "integral-multipole"
   "integral-trafo"
   "ipea1-xtb"
@@ -58,8 +59,12 @@ set(
   "main.f90"
 )
 foreach(t IN LISTS tests)
-  string(MAKE_C_IDENTIFIER ${t} t) 
-  list(APPEND test-srcs "test_${t}.f90")
+  string(MAKE_C_IDENTIFIER ${t} t)
+  if(t STREQUAL "integral_libcint")
+    list(APPEND test-srcs "test_integral_libcint.F90")
+  else()
+    list(APPEND test-srcs "test_${t}.f90")
+  endif()
 endforeach()
 
 add_executable(
@@ -72,7 +77,6 @@ target_link_libraries(
   "${PROJECT_NAME}-lib"
   "mstore::mstore"
 )
-
 foreach(t IN LISTS tests)
   add_test("${PROJECT_NAME}/${t}" "${PROJECT_NAME}-tester" "${t}")
 endforeach()

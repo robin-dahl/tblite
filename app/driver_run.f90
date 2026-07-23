@@ -29,6 +29,7 @@ module tblite_driver_run
    use tblite_context, only : context_type, context_terminal, escape
    use tblite_data_spin, only : get_spin_constant
    use tblite_external_field, only : electric_field
+   use tblite_integral_handler, only : enum_integral_handler
    use tblite_io_molden, only : save_molden
    use tblite_io_trexio, only : save_trexio
    use tblite_lapack_solver, only : lapack_solver
@@ -158,6 +159,11 @@ subroutine run_main(config, error)
    end if
    if (allocated(error)) return
 
+   if (config%libcint) then
+      call calc%set_integral_handler(mol, error, enum_integral_handler%libcint)
+      if (allocated(error)) return
+   end if
+
    calc%mixer_input = config%mixer
 
    use_guess = .true.
@@ -182,6 +188,10 @@ subroutine run_main(config, error)
    if (use_guess .and. config%guess == "ceh") then
       call new_ceh_calculator(calc_ceh, mol, error)
       if (allocated(error)) return
+      if (config%libcint) then
+         call calc_ceh%set_integral_handler(mol, error, enum_integral_handler%libcint)
+         if (allocated(error)) return
+      end if
       call new_wavefunction(wfn_ceh, mol%nat, calc_ceh%bas%nsh, calc_ceh%bas%nao, 1, config%etemp_guess * kt)
    end if
 
@@ -499,6 +509,5 @@ subroutine read_file(filename, val, error)
    end if
 
 end subroutine read_file
-
 
 end module tblite_driver_run

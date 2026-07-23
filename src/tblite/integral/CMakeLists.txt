@@ -15,6 +15,7 @@
 # along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
 add_subdirectory("native")
+add_subdirectory("libcint")
 
 set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
@@ -22,6 +23,7 @@ list(
   APPEND srcs
   "${dir}/trafo.f90"
   "${dir}/type.f90"
+  "${dir}/handler.F90"
   "${dir}/diat_trafo.f90"
 )
 

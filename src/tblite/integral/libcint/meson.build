@@ -14,13 +14,8 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
-srcs += files(
-  'calculator.F90',
-  'coulomb.f90',
-  'gfn1.f90',
-  'gfn2.f90',
-  'h0.f90',
-  'ipea1.f90',
-  'singlepoint.f90',
-  'spec.f90',
-)
+if libcint_found
+  srcs += files(
+    'libcint.F90',
+  )
+endif

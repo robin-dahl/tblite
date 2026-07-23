@@ -14,7 +14,7 @@
 ! You should have received a copy of the GNU Lesser General Public License
 ! along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
-!> @file tblite/xtb/calculator.f90
+!> @file tblite/xtb/calculator.F90
 !> Provides the calculator type for holding xTB Hamiltonian parametrization.
 
 !> Implementation of calculator type for the extended-tight binding Hamiltonian.
@@ -36,6 +36,11 @@ module tblite_xtb_calculator
    use tblite_coulomb_thirdorder, only : new_onsite_thirdorder
    use tblite_disp, only : dispersion_type, d4_dispersion, new_d4_dispersion, &
       & new_d4s_dispersion, d3_dispersion, new_d3_dispersion
+   use tblite_integral_handler, only : enum_integral_handler, integral_handler
+   use tblite_integral_native, only : native_integral_type
+#if TBLITE_HAS_LIBCINT
+   use tblite_integral_libcint, only : libcint_integral_type
+#endif
    use tblite_param, only : param_record
    use tblite_repulsion, only : new_repulsion
    use tblite_repulsion_effective, only : tb_repulsion
@@ -55,6 +60,8 @@ module tblite_xtb_calculator
       type(basis_type) :: bas
       !> Core Hamiltonian
       type(tb_hamiltonian) :: h0
+      !> Selected Gaussian integral evaluator
+      class(integral_handler), allocatable :: integral_handler
       !> Coordination number for modifying the self-energies
       class(ncoord_type), allocatable :: ncoord
       !> Electronegativity-weighted coordination number for modifying the self-energies
@@ -86,6 +93,8 @@ module tblite_xtb_calculator
       procedure :: push_back
       !> Remove an interaction container
       procedure :: pop
+      !> Select and initialize the Gaussian integral evaluator
+      procedure :: set_integral_handler
    end type xtb_calculator
 
 
@@ -157,6 +166,8 @@ subroutine new_xtb_calculator(calc, mol, param, error, config)
    if (allocated(error)) return
 
    call add_basis(calc, mol, param, irc)
+   call calc%set_integral_handler(mol, error)
+   if (allocated(error)) return
    calc%max_iter = calc%mixer_input%max_iter
    call add_ncoord(calc, mol, param, error)
    if (allocated(error)) return
@@ -171,6 +182,41 @@ subroutine new_xtb_calculator(calc, mol, param, error, config)
    calc%method = "custom"
 
 end subroutine new_xtb_calculator
+
+!> Select and initialize the Gaussian integral evaluator.
+subroutine set_integral_handler(calc, mol, error, implementation)
+   !> xTB calculator
+   class(xtb_calculator), intent(inout) :: calc
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+   !> Error information
+   type(error_type), allocatable, intent(out) :: error
+   !> Integral evaluator implementation
+   integer, intent(in), optional :: implementation
+   integer :: selected
+
+   selected = enum_integral_handler%native
+   if (present(implementation)) selected = implementation
+
+   if (allocated(calc%integral_handler)) deallocate(calc%integral_handler)
+
+   select case(selected)
+   case(enum_integral_handler%native)
+      allocate(native_integral_type :: calc%integral_handler)
+   case(enum_integral_handler%libcint)
+#if TBLITE_HAS_LIBCINT
+      allocate(libcint_integral_type :: calc%integral_handler)
+#else
+      call fatal_error(error, "libcint integral handler is not available in this build")
+      return
+#endif
+   case default
+      call fatal_error(error, "Unknown integral handler requested")
+      return
+   end select
+
+   call calc%integral_handler%initialize_integral(mol, calc%bas)
+end subroutine set_integral_handler
 
 
 subroutine add_basis(calc, mol, param, irc)

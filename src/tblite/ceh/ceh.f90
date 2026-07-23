@@ -26,7 +26,6 @@ module tblite_ceh_ceh
    use tblite_coulomb_charge, only : new_effective_coulomb, effective_coulomb, &
       & arithmetic_average
    use tblite_coulomb_thirdorder, only : new_onsite_thirdorder
-   use tblite_integral_type, only : integral_type
    use tblite_output_format, only: format_string
    use tblite_xtb_calculator, only : xtb_calculator
    use tblite_xtb_h0, only : new_hamiltonian
@@ -922,6 +921,8 @@ contains
       end if
 
       call add_ceh_basis(calc, mol)
+      call calc%set_integral_handler(mol, error)
+      if (allocated(error)) return
       call add_ncoord(calc, mol, error)
       if(allocated(error)) return
       call add_ncoord_en(calc, mol, error)
@@ -965,7 +966,6 @@ contains
       call new_basis(calc%bas, mol, nsh_id, cgto, 1.0_wp)
 
    end subroutine add_ceh_basis
-
 
    subroutine add_ncoord(calc, mol, error)
       !> Instance of the CEH evaluator

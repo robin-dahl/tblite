@@ -16,4 +16,5 @@
 
 srcs += files(
   'integrals.f90',
+  'native.f90',
 )

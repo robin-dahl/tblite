@@ -98,6 +98,8 @@ module tblite_cli
       real(wp), allocatable :: efield(:)
       !> Spin polarization
       logical :: spin_polarized = .false.
+      !> Use libcint rather than tblite's native Gaussian integral handler
+      logical :: libcint = .false.
       !> Algorithm for electronic solver
       integer :: solver = lapack_algorithm%gvd
       !> Configuration for xtb calculator
@@ -344,6 +346,9 @@ subroutine get_run_arguments(config, list, start, error)
 
       case("--spin-polarized")
          config%spin_polarized = .true.
+
+      case("--libcint")
+         config%libcint = .true.
 
       case("--method")
          if (allocated(config%param)) then
