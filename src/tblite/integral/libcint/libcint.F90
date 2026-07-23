@@ -17,6 +17,10 @@
 !> @file tblite/integral/libcint/libcint.F90
 !> Provides an optional libcint-backed Gaussian integral interface.
 
+#ifndef TBLITE_HAS_LIBCINT
+#define TBLITE_HAS_LIBCINT 0
+#endif
+
 !> Interface to Libcint Gaussian integral evaluation.
 module tblite_integral_libcint
    use, intrinsic :: iso_c_binding, only : c_double, c_int, c_null_ptr, c_ptr
@@ -92,6 +96,7 @@ module tblite_integral_libcint
    integer, parameter :: GAUSSIAN_NUC = 2
    integer, parameter :: FRAC_CHARGE_NUC = 3
 
+#if TBLITE_HAS_LIBCINT
    interface
       !> Return the number of spherical atomic orbitals in a libcint shell
       function cint_cgto_spheric(bas_id, bas) bind(C, name="CINTcgto_spheric") result(nao)
@@ -334,6 +339,7 @@ module tblite_integral_libcint
       end function int1e_rr_origj_ip_sph
 
    end interface
+#endif
 
 contains
 
@@ -425,9 +431,13 @@ subroutine dipole_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap
    real(c_double), allocatable :: cdp(:, :, :), cov(:, :)
    integer :: dj, di, jao, iao, stat
 
-   ! Query libcint so scratch dimensions agree with its cached shell representation
+#if TBLITE_HAS_LIBCINT
    dj = int(cint_cgto_spheric(int(jsh - 1, c_int), self%basis%bas))
    di = int(cint_cgto_spheric(int(ish - 1, c_int), self%basis%bas))
+#else
+   dj = msao(cgtoj%ang)
+   di = msao(cgtoi%ang)
+#endif
    allocate(cdp(dj, di, 3), cov(dj, di))
    stat = libcint_eval_1e(cov, &
       & [jsh-1, ish-1], self%basis%atm, self%basis%bas, self%basis%env)
@@ -472,8 +482,13 @@ subroutine multipole_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut, over
    integer :: dj, di, jao, iao, stat
 
    call self%dipole_cgto(cgtoj, cgtoi, jsh, ish, r2, vec, intcut, overlap, dpint)
+#if TBLITE_HAS_LIBCINT
    dj = int(cint_cgto_spheric(int(jsh - 1, c_int), self%basis%bas))
    di = int(cint_cgto_spheric(int(ish - 1, c_int), self%basis%bas))
+#else
+   dj = msao(cgtoj%ang)
+   di = msao(cgtoi%ang)
+#endif
 
    allocate(cqp(dj, di, 9))
    stat = libcint_eval_quadrupole(cqp, [jsh-1, ish-1], self%basis%atm, &
@@ -534,8 +549,13 @@ subroutine multipole_grad_libcint(self, cgtoj, cgtoi, jsh, ish, r2, vec, intcut,
 
    call self%multipole_cgto(cgtoj, cgtoi, jsh, ish, r2, vec, intcut, &
       & overlap, dpint, qpint)
+#if TBLITE_HAS_LIBCINT
    dj = int(cint_cgto_spheric(int(jsh - 1, c_int), self%basis%bas))
    di = int(cint_cgto_spheric(int(ish - 1, c_int), self%basis%bas))
+#else
+   dj = msao(cgtoj%ang)
+   di = msao(cgtoi%ang)
+#endif
    allocate(covg(dj, di, 3), cdj(dj, di, 3, 3), cdi(dj, di, 3, 3), &
       & cqj(dj, di, 9, 3), cqi(dj, di, 9, 3), &
       & sdj(di, dj, 3, 3), sdi(di, dj, 3, 3), &
@@ -590,6 +610,7 @@ function libcint_eval_1e(out, shls, atm, bas, env) result(stat)
    !> Libcint return status
    integer :: stat
 
+#if TBLITE_HAS_LIBCINT
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj
 
@@ -606,6 +627,10 @@ function libcint_eval_1e(out, shls, atm, bas, env) result(stat)
    out(:, :) = 0.0_c_double
    stat = int(int1e_ovlp_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
       & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
+#else
+   out = 0.0_c_double
+   stat = -1
+#endif
 end function libcint_eval_1e
 
 !> Evaluate <i| R |j>
@@ -622,6 +647,7 @@ function libcint_eval_dipole(out, shls, atm, bas, env) result(stat)
    real(c_double), contiguous, intent(in) :: env(:)
    !> Libcint return status
    integer :: stat
+#if TBLITE_HAS_LIBCINT
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj
 
@@ -636,6 +662,10 @@ function libcint_eval_dipole(out, shls, atm, bas, env) result(stat)
    out = 0.0_c_double
    stat = int(int1e_r_origj_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
       & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
+#else
+   out = 0.0_c_double
+   stat = -1
+#endif
 end function libcint_eval_dipole
 
 !> Evaluate <i| R R |j>
@@ -652,6 +682,7 @@ function libcint_eval_quadrupole(out, shls, atm, bas, env) result(stat)
    real(c_double), contiguous, intent(in) :: env(:)
    !> Libcint return status
    integer :: stat
+#if TBLITE_HAS_LIBCINT
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj
 
@@ -666,6 +697,10 @@ function libcint_eval_quadrupole(out, shls, atm, bas, env) result(stat)
    out = 0.0_c_double
    stat = int(int1e_rr_origj_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
       & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
+#else
+   out = 0.0_c_double
+   stat = -1
+#endif
 end function libcint_eval_quadrupole
 
 !> Evaluate <NABLA i| OVLP |R j> and <i| OVLP |NABLA R j>
@@ -684,6 +719,7 @@ function libcint_eval_dipole_gradient(out_bra, out_ket, shls, atm, bas, env) res
    real(c_double), contiguous, intent(in) :: env(:)
    !> Libcint return status
    integer :: stat
+#if TBLITE_HAS_LIBCINT
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj, stat_bra
 
@@ -706,6 +742,11 @@ function libcint_eval_dipole_gradient(out_bra, out_ket, shls, atm, bas, env) res
       & int(size(atm, 2), c_int), bas, int(size(bas, 2), c_int), env, &
       & c_null_ptr, c_null_ptr))
    if (stat_bra < 0) stat = stat_bra
+#else
+   out_bra = 0.0_c_double
+   out_ket = 0.0_c_double
+   stat = -1
+#endif
 end function libcint_eval_dipole_gradient
 
 !> Evaluate <NABLA i| OVLP |R R j> and <i| OVLP |NABLA R R j>
@@ -725,6 +766,7 @@ function libcint_eval_quadrupole_gradient(out_bra, out_ket, shls, atm, bas, &
    real(c_double), contiguous, intent(in) :: env(:)
    !> Libcint return status
    integer :: stat
+#if TBLITE_HAS_LIBCINT
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj, stat_bra
 
@@ -747,6 +789,11 @@ function libcint_eval_quadrupole_gradient(out_bra, out_ket, shls, atm, bas, &
       & int(size(atm, 2), c_int), bas, int(size(bas, 2), c_int), env, &
       & c_null_ptr, c_null_ptr))
    if (stat_bra < 0) stat = stat_bra
+#else
+   out_bra = 0.0_c_double
+   out_ket = 0.0_c_double
+   stat = -1
+#endif
 end function libcint_eval_quadrupole_gradient
 
 !> Evaluate <i| OVLP |NABLA j>
@@ -763,6 +810,7 @@ function libcint_eval_overlap_gradient(out, shls, atm, bas, env) result(stat)
    real(c_double), contiguous, intent(in) :: env(:)
    !> Libcint return status
    integer :: stat
+#if TBLITE_HAS_LIBCINT
    integer(c_int) :: cshls(2), dims(2)
    integer :: di, dj
 
@@ -780,6 +828,10 @@ function libcint_eval_overlap_gradient(out, shls, atm, bas, env) result(stat)
    ! Libcint differentiates the electronic coordinate of the basis function;
    ! tblite differentiates its nuclear centre, which has the opposite sign.
    if (stat >= 0) out = -out
+#else
+   out = 0.0_c_double
+   stat = -1
+#endif
 end function libcint_eval_overlap_gradient
 
 end module tblite_integral_libcint

@@ -30,11 +30,9 @@ module test_integral_libcint
    use tblite_xtb_calculator, only : xtb_calculator
    use tblite_xtb_gfn2, only : new_gfn2_calculator
    use tblite_xtb_singlepoint, only : xtb_singlepoint
-#if TBLITE_HAS_LIBCINT
    use tblite_integral_libcint
    use tblite_integral_native, only : native_integral_type
    use tblite_integral_native_integrals, only : get_overlap, overlap_grad_cgto
-#endif
    implicit none
    private
 
@@ -55,28 +53,25 @@ subroutine collect_integral_libcint(testsuite)
    !> Collection of tests
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
-#if TBLITE_HAS_LIBCINT
-   testsuite = [ &
-      new_unittest("integral-handler-consistency", test_integral_handler_consistency), &
-      new_unittest("energy-consistency", test_energy_consistency), &
-      new_unittest("overlap-consistency", test_overlap_consistency), &
-      new_unittest("overlap-gradient-consistency", &
-         & test_overlap_gradient_consistency), &
-      new_unittest("dipole-consistency", test_dipole_consistency), &
-      new_unittest("dipole-gradient-consistency", &
-         & test_dipole_gradient_consistency), &
-      new_unittest("quadrupole-consistency", test_quadrupole_consistency), &
-      new_unittest("quadrupole-gradient-consistency", &
-         & test_quadrupole_gradient_consistency) &
-      ]
-#else
-   testsuite = [ &
-      new_unittest("disabled", test_disabled) &
-      ]
-#endif
+   if (tblite_use_libcint) then
+      testsuite = [ &
+         new_unittest("integral-handler-consistency", test_integral_handler_consistency), &
+         new_unittest("energy-consistency", test_energy_consistency), &
+         new_unittest("overlap-consistency", test_overlap_consistency), &
+         new_unittest("overlap-gradient-consistency", &
+            & test_overlap_gradient_consistency), &
+         new_unittest("dipole-consistency", test_dipole_consistency), &
+         new_unittest("dipole-gradient-consistency", &
+            & test_dipole_gradient_consistency), &
+         new_unittest("quadrupole-consistency", test_quadrupole_consistency), &
+         new_unittest("quadrupole-gradient-consistency", &
+            & test_quadrupole_gradient_consistency) &
+         ]
+   else
+      testsuite = [new_unittest("disabled", test_disabled)]
+   end if
 end subroutine collect_integral_libcint
 
-#if TBLITE_HAS_LIBCINT
 !> Construct a molecular basis containing s, p, d, and f shells for comparisons
 subroutine make_comparison_basis(mol, basis, libcint)
    !> Molecular structure data
@@ -637,7 +632,6 @@ subroutine test_quadrupole_gradient_consistency(error)
    end do
 end subroutine test_quadrupole_gradient_consistency
 
-#else
 !> Check that libcint support is reported as disabled when unavailable
 subroutine test_disabled(error)
    !> Error handling
@@ -646,6 +640,5 @@ subroutine test_disabled(error)
    call check(error, .not. tblite_use_libcint, &
       & message="Build unexpectedly reports libcint support")
 end subroutine test_disabled
-#endif
 
 end module test_integral_libcint

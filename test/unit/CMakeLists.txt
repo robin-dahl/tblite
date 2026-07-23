@@ -60,11 +60,7 @@ set(
 )
 foreach(t IN LISTS tests)
   string(MAKE_C_IDENTIFIER ${t} t)
-  if(t STREQUAL "integral_libcint")
-    list(APPEND test-srcs "test_integral_libcint.F90")
-  else()
-    list(APPEND test-srcs "test_${t}.f90")
-  endif()
+  list(APPEND test-srcs "test_${t}.f90")
 endforeach()
 
 add_executable(

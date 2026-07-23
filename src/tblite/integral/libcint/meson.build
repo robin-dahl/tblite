@@ -14,8 +14,6 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
-if libcint_found
-  srcs += files(
-    'libcint.F90',
-  )
-endif
+srcs += files(
+  'libcint.F90',
+)

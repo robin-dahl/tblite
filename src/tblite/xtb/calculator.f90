@@ -14,7 +14,7 @@
 ! You should have received a copy of the GNU Lesser General Public License
 ! along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
-!> @file tblite/xtb/calculator.F90
+!> @file tblite/xtb/calculator.f90
 !> Provides the calculator type for holding xTB Hamiltonian parametrization.
 
 !> Implementation of calculator type for the extended-tight binding Hamiltonian.
@@ -36,11 +36,10 @@ module tblite_xtb_calculator
    use tblite_coulomb_thirdorder, only : new_onsite_thirdorder
    use tblite_disp, only : dispersion_type, d4_dispersion, new_d4_dispersion, &
       & new_d4s_dispersion, d3_dispersion, new_d3_dispersion
+   use tblite_features, only : tblite_use_libcint
    use tblite_integral_handler, only : enum_integral_handler, integral_handler
-   use tblite_integral_native, only : native_integral_type
-#if TBLITE_HAS_LIBCINT
    use tblite_integral_libcint, only : libcint_integral_type
-#endif
+   use tblite_integral_native, only : native_integral_type
    use tblite_param, only : param_record
    use tblite_repulsion, only : new_repulsion
    use tblite_repulsion_effective, only : tb_repulsion
@@ -204,12 +203,11 @@ subroutine set_integral_handler(calc, mol, error, implementation)
    case(enum_integral_handler%native)
       allocate(native_integral_type :: calc%integral_handler)
    case(enum_integral_handler%libcint)
-#if TBLITE_HAS_LIBCINT
+      if (.not. tblite_use_libcint) then
+         call fatal_error(error, "libcint integral handler is not available in this build")
+         return
+      end if
       allocate(libcint_integral_type :: calc%integral_handler)
-#else
-      call fatal_error(error, "libcint integral handler is not available in this build")
-      return
-#endif
    case default
       call fatal_error(error, "Unknown integral handler requested")
       return

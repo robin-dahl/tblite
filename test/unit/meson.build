@@ -72,11 +72,7 @@ test_srcs = files(
   'main.f90',
 )
 foreach t : tests
-  if t == 'integral-libcint'
-    test_srcs += files('test_integral_libcint.F90')
-  else
-    test_srcs += files('test_@0@.f90'.format(t.underscorify()))
-  endif
+  test_srcs += files('test_@0@.f90'.format(t.underscorify()))
 endforeach
 
 tester = executable(

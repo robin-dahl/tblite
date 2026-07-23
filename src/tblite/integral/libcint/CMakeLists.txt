@@ -16,11 +16,9 @@
 
 set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
 
-if(TBLITE_WITH_LIBCINT)
-  list(
-    APPEND srcs
-    "${dir}/libcint.F90"
-  )
-endif()
+list(
+  APPEND srcs
+  "${dir}/libcint.F90"
+)
 
 set(srcs "${srcs}" PARENT_SCOPE)

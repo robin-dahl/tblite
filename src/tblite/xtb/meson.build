@@ -15,7 +15,7 @@
 # along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
 srcs += files(
-  'calculator.F90',
+  'calculator.f90',
   'coulomb.f90',
   'gfn1.f90',
   'gfn2.f90',
