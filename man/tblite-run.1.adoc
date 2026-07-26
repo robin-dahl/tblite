@@ -114,15 +114,35 @@ Supported geometry input formats are:
      Possible options are _p16_ (default for ALPB) and _still_ (default for GB/GBSA).
 
 *--cosmo* _real_|_string_::
-     Use (domain decomposition based) COSMO.
+     Use the moist-backed conductor-like screening model (COSMO).
      Solvent is specified by dielectric constant or solvent name.
 
---cpcm* _real_|_string_::
-     Use (domain decomposition based) CPCM.
+*--cpcm* _real_|_string_::
+     Use the moist-backed conductor-like polarizable continuum model (CPCM).
      Solvent is specified by dielectric constant or solvent name.
 
---pcm* _real_|_string_::
-     Use (domain decomposition based) PCM.
+*--solv-dipoles*::
+     Include atom-resolved dipoles in the COSMO/CPCM or ddX solute density.
+     Without either multipole option, only monopoles are used.
+
+*--solv-quadrupoles*::
+     Include atom-resolved quadrupoles in the COSMO/CPCM or ddX solute density.
+     This option is independent of *--solv-dipoles*.
+
+*--solv-full-density*::
+     Couple the complete AO density to the moist Gaussian surface-charge basis.
+     This requires libcint and is mutually exclusive with the multipole options.
+
+*--ddcosmo* _real_|_string_::
+     Use the domain-decomposition conductor-like screening model (ddCOSMO).
+     Solvent is specified by dielectric constant or solvent name.
+
+*--ddcpcm* _real_|_string_::
+     Use the domain-decomposition conductor-like polarizable continuum model (ddCPCM).
+     Solvent is specified by dielectric constant or solvent name.
+
+*--ddpcm* _real_|_string_::
+     Use the domain-decomposition polarizable continuum model (ddPCM).
      Solvent is specified by dielectric constant or solvent name.
 
 *--solv-state* _string_::

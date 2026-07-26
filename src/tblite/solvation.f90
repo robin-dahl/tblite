@@ -22,11 +22,14 @@
 
 !> Proxy module for implicit solvation models.
 module tblite_solvation
+   use tblite_basis_type, only : basis_type
    use mctc_env, only : error_type, fatal_error
    use mctc_io, only : structure_type
    use tblite_features, only : tblite_use_ddx
    use tblite_solvation_alpb, only : alpb_solvation, new_alpb, alpb_input, born_kernel
    use tblite_solvation_cds, only : cds_solvation, new_cds, cds_input
+   use tblite_solvation_cosmo, only : cosmo_solvation, new_cosmo, cosmo_input, &
+      & cosmo_solvation_model
    use tblite_solvation_data, only : solvent_data, get_solvent_data
    use tblite_solvation_data_alpb, only: get_alpb_param
    use tblite_solvation_data_cds, only: get_cds_param
@@ -41,6 +44,7 @@ module tblite_solvation
    public :: alpb_solvation, new_alpb, alpb_input, born_kernel
    public :: ddx_solvation, ddx_solvation_model, new_ddx, ddx_input
    public :: cds_solvation, new_cds, cds_input
+   public :: cosmo_solvation, new_cosmo, cosmo_input, cosmo_solvation_model
    public :: shift_solvation, new_shift, shift_input
    public :: solvent_data, get_solvent_data
    public :: solvation_input, new_solvation, solvation_type
@@ -50,7 +54,7 @@ module tblite_solvation
 contains
 
 !> Create new solvation model from input data
-subroutine new_solvation(solv, mol, input, error, method)
+subroutine new_solvation(solv, mol, input, error, method, basis)
    !> Instance of the solvation model
    class(solvation_type), allocatable, intent(out) :: solv
    !> Molecular structure data
@@ -61,9 +65,11 @@ subroutine new_solvation(solv, mol, input, error, method)
    type(error_type), allocatable, intent(out) :: error
    !> Method for parameter selection
    character(len=*), optional, intent(in) :: method
+   type(basis_type), optional, intent(in) :: basis
    !> scratch input
    type(alpb_input), allocatable :: scratch_input
    type(ddx_solvation), allocatable :: ddx_solv
+   type(cosmo_solvation), allocatable :: cosmo_solv
 
    if (allocated(input%alpb)) then
       scratch_input = input%alpb
@@ -88,6 +94,14 @@ subroutine new_solvation(solv, mol, input, error, method)
       call new_ddx(ddx_solv, mol, input%ddx, error)
       if (allocated(error)) return
       call move_alloc(ddx_solv, solv)
+      return
+   end if
+
+   if (allocated(input%cosmo)) then
+      allocate(cosmo_solv)
+      call new_cosmo(cosmo_solv, mol, input%cosmo, error, basis)
+      if (allocated(error)) return
+      call move_alloc(cosmo_solv, solv)
       return
    end if
 

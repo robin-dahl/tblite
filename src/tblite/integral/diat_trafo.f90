@@ -18,7 +18,9 @@
 !> Evaluation of the diatomic scaled overlap
 module tblite_integral_diat_trafo
    use mctc_env, only : wp
-   use tblite_blas, only : gemm
+   use tblite_blas, only: gemm
+   use tblite_integral_shell, only : sdim
+
    implicit none
    private
 
@@ -26,7 +28,6 @@ module tblite_integral_diat_trafo
 
    integer, parameter :: max_diat_l = 2
    integer, parameter :: max_diat_dim = 9
-   integer, parameter :: sdim(0:max_diat_l) = [1, 4, 9]
 
    !> Thread-private reusable cache for one atom-pair transformation
    type :: diat_trafo_cache

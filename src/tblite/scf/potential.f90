@@ -46,6 +46,8 @@ module tblite_scf_potential
       real(wp), allocatable :: vdp(:, :, :)
       !> Atom-resolved quadrupolar potential
       real(wp), allocatable :: vqp(:, :, :)
+      !> General AO-matrix potential
+      real(wp), allocatable :: vmat(:, :, :)
 
       !> Position derivative of atom-resolved charge-dependent potential shift
       real(wp), allocatable :: dvatdr(:, :, :, :)
@@ -84,6 +86,7 @@ subroutine new_potential(self, mol, bas, nspin, grad)
 
    allocate(self%vdp(3, mol%nat, nspin))
    allocate(self%vqp(6, mol%nat, nspin))
+   allocate(self%vmat(bas%nao, bas%nao, nspin))
 
    if(present(grad)) then
       if(grad) then
@@ -108,6 +111,7 @@ subroutine reset(self)
    self%vao(:, :) = 0.0_wp
    self%vdp(:, :, :) = 0.0_wp
    self%vqp(:, :, :) = 0.0_wp
+   self%vmat(:, :, :) = 0.0_wp
 
    if(self%grad) then
       self%dvatdr(:, :, :, :) = 0.0_wp
@@ -137,6 +141,7 @@ subroutine add_pot_to_h1(bas, ints, pot, h1)
    call add_vao_to_h1(bas, ints%overlap, pot%vao, h1)
    call add_vmp_to_h1(bas, ints%dipole, pot%vdp, h1)
    call add_vmp_to_h1(bas, ints%quadrupole, pot%vqp, h1)
+   h1(:, :, :) = h1(:, :, :) + pot%vmat(:, :, :)
 
    call magnet_to_updown(h1)
 end subroutine add_pot_to_h1

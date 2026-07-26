@@ -15,9 +15,12 @@
 # along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
 subdir('native')
+subdir('libcint')
 
 srcs += files(
+  'shell.f90',
   'trafo.f90',
   'type.f90',
+  'handler.F90',
   'diat_trafo.f90',
 )

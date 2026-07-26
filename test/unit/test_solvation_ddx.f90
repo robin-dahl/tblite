@@ -58,9 +58,13 @@ subroutine collect_solvation_ddx(testsuite)
          new_unittest("energy-mol-cpcm", test_e_cpcm_m01), &
          new_unittest("energy-mol-pcm", test_e_pcm_m01), &
          new_unittest("gradient-mol-num-cosmo", test_g_cosmo_m02), &
+         new_unittest("gradient-mol-num-cosmo-dipole", test_g_cosmo_dipole_m02), &
+         new_unittest("gradient-mol-num-cosmo-quadrupole", test_g_cosmo_quadrupole_m02), &
          new_unittest("gradient-mol-num-cpcm", test_g_cpcm_m02), &
          new_unittest("gradient-mol-num-pcm", test_g_pcm_m02), &
          new_unittest("potential-mol-cosmo", test_p_cosmo_m03), &
+         new_unittest("potential-mol-cosmo-dipole", test_p_cosmo_dipole_m03), &
+         new_unittest("potential-mol-cosmo-quadrupole", test_p_cosmo_quadrupole_m03), &
          new_unittest("potential-mol-cpcm", test_p_cpcm_m03), &
          new_unittest("potential-mol-pcm", test_p_pcm_m03) &
          ]
@@ -116,19 +120,19 @@ subroutine test_e(error, model, mol, qat, ref)
 
    if (abs(sum(energy) - ref) > thr) then
       call test_failed(error, "Energy does not match reference")
-      print "(a)", "Energy:"
-      print "(3es20.13)", sum(energy)
-      print "(a)", "---"
-      print "(a)", "Reference:"
-      print "(3es20.13)", ref
-      print "(a)", "---"
-      print "(a)", "Difference:"
-      print "(3es20.13)", sum(energy) - ref
+      print '(a)', 'Energy:'
+      print '(3es20.13)', sum(energy)
+      print '(a)', "---"
+      print '(a)', 'Reference:'
+      print '(3es20.13)', ref
+      print '(a)', "---"
+      print '(a)', 'Difference:'
+      print '(3es20.13)', sum(energy) - ref
    end if
 end subroutine test_e
 
 
-subroutine test_g(error, model, mol, qat)
+subroutine test_g(error, model, mol, qat, dpat, qpat)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -141,6 +145,12 @@ subroutine test_g(error, model, mol, qat)
 
    !> Atomic partial charges
    real(wp), intent(in) :: qat(:)
+
+   !> Atom-resolved dipole moments
+   real(wp), intent(in), optional :: dpat(:, :)
+
+   !> Atom-resolved quadrupole moments
+   real(wp), intent(in), optional :: qpat(:, :)
 
    type(ddx_solvation) :: solv
    type(wavefunction_type) :: wfn
@@ -155,9 +165,22 @@ subroutine test_g(error, model, mol, qat)
    integer :: ii, ic
 
    wfn%qat = reshape(qat, [size(qat), 1])
+   if (present(dpat)) then
+      wfn%dpat = reshape(dpat, [3, mol%nat, 1])
+   end if
+   if (present(qpat)) then
+      wfn%qpat = reshape(qpat, [6, mol%nat, 1])
+   end if
    allocate(pot%vat(size(qat, 1), 1))
+   if (present(dpat)) then
+      allocate(pot%vdp(3, mol%nat, 1))
+   end if
+   if (present(qpat)) then
+      allocate(pot%vqp(6, mol%nat, 1))
+   end if
 
-   call new_ddx(solv, mol, ddx_input(ddx_model=model, dielectric_const=eps, nang=nang), error)
+   call new_ddx(solv, mol, ddx_input(ddx_model=model, dielectric_const=eps, nang=nang, &
+      & use_dipoles=present(dpat), use_quadrupoles=present(qpat)), error)
    if (allocated(error)) return
 
    allocate(numg(3, mol%nat), gradient(3, mol%nat))
@@ -190,15 +213,15 @@ subroutine test_g(error, model, mol, qat)
 
    if (any(abs(gradient - numg) > thr)) then
       call test_failed(error, "Gradient does not match")
-      print "(3es20.13)", gradient
-      print "(a)", "---"
-      print "(3es20.13)", numg
-      print "(a)", "---"
-      print "(3es20.13)", gradient - numg
+      print '(3es20.13)', gradient
+      print '(a)', "---"
+      print '(3es20.13)', numg
+      print '(a)', "---"
+      print '(3es20.13)', gradient - numg
    end if
 end subroutine test_g
 
-subroutine test_p(error, model, mol, qat)
+subroutine test_p(error, model, mol, qat, dpat, qpat)
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -212,6 +235,12 @@ subroutine test_p(error, model, mol, qat)
    !> Atomic partial charges
    real(wp), intent(in) :: qat(:)
 
+   !> Atom-resolved dipole moments
+   real(wp), intent(in), optional :: dpat(:, :)
+
+   !> Atom-resolved quadrupole moments
+   real(wp), intent(in), optional :: qpat(:, :)
+
    type(ddx_solvation) :: solv
    type(wavefunction_type) :: wfn
    type(potential_type) :: pot
@@ -220,20 +249,40 @@ subroutine test_p(error, model, mol, qat)
    integer, parameter :: nang = 302
    real(wp), parameter :: step = 1.0e-4_wp
    real(wp), parameter :: thr = 1e+3_wp*sqrt(epsilon(1.0_wp))
-   real(wp), allocatable :: vat(:)
+   real(wp), allocatable :: vat(:), vdp(:, :), vqp(:, :)
    real(wp) :: energy(mol%nat), er(mol%nat), el(mol%nat)
-   integer :: ii
+   integer :: ii, ic
 
    wfn%qat = reshape(qat, [size(qat), 1])
+   if (present(dpat)) then
+      wfn%dpat = reshape(dpat, [3, mol%nat, 1])
+   end if
+   if (present(qpat)) then
+      wfn%qpat = reshape(qpat, [6, mol%nat, 1])
+   end if
    allocate(pot%vat(size(qat, 1), 1))
+   if (present(dpat)) then
+      allocate(pot%vdp(3, mol%nat, 1))
+   end if
+   if (present(qpat)) then
+      allocate(pot%vqp(6, mol%nat, 1))
+   end if
 
-   call new_ddx(solv, mol, ddx_input(ddx_model=model, dielectric_const=eps, nang=nang), error)
+   call new_ddx(solv, mol, ddx_input(ddx_model=model, dielectric_const=eps, nang=nang, &
+      & use_dipoles=present(dpat), use_quadrupoles=present(qpat)), error)
    if (allocated(error)) return
 
    allocate(cache)
    call solv%update(mol, cache)
 
    allocate(vat(mol%nat))
+   if (present(dpat)) then
+      allocate(vdp(3, mol%nat))
+   end if
+   if (present(qpat)) then
+      allocate(vqp(6, mol%nat))
+   end if
+
    do ii = 1, mol%nat
       er = 0.0_wp
       el = 0.0_wp
@@ -249,21 +298,92 @@ subroutine test_p(error, model, mol, qat)
       vat(ii) = 0.5_wp*(sum(er) - sum(el))/step
    end do
 
+   if (present(dpat)) then
+      do ii = 1, mol%nat
+         do ic = 1, 3
+            er = 0.0_wp
+            el = 0.0_wp
+            wfn%dpat(ic, ii, 1) = wfn%dpat(ic, ii, 1) + step
+            call solv%get_potential(mol, cache, wfn, pot)
+            call solv%get_energy(mol, cache, wfn, er)
+
+            wfn%dpat(ic, ii, 1) = wfn%dpat(ic, ii, 1) - 2*step
+            call solv%get_potential(mol, cache, wfn, pot)
+            call solv%get_energy(mol, cache, wfn, el)
+
+            wfn%dpat(ic, ii, 1) = wfn%dpat(ic, ii, 1) + step
+            vdp(ic, ii) = 0.5_wp*(sum(er) - sum(el))/step
+         end do
+      end do
+   end if
+
+   if (present(qpat)) then
+      do ii = 1, mol%nat
+         do ic = 1, 6
+            er = 0.0_wp
+            el = 0.0_wp
+            wfn%qpat(ic, ii, 1) = wfn%qpat(ic, ii, 1) + step
+            call solv%get_potential(mol, cache, wfn, pot)
+            call solv%get_energy(mol, cache, wfn, er)
+
+            wfn%qpat(ic, ii, 1) = wfn%qpat(ic, ii, 1) - 2*step
+            call solv%get_potential(mol, cache, wfn, pot)
+            call solv%get_energy(mol, cache, wfn, el)
+
+            wfn%qpat(ic, ii, 1) = wfn%qpat(ic, ii, 1) + step
+            vqp(ic, ii) = 0.5_wp*(sum(er) - sum(el))/step
+         end do
+      end do
+   end if
+
    energy = 0.0_wp
    pot%vat(:, :) = 0.0_wp
+   if (allocated(pot%vdp)) pot%vdp(:, :, :) = 0.0_wp
+   if (allocated(pot%vqp)) pot%vqp(:, :, :) = 0.0_wp
    call solv%get_potential(mol, cache, wfn, pot)
    call solv%get_energy(mol, cache, wfn, energy)
 
    if (any(abs([pot%vat] - vat) > thr)) then
-      call test_failed(error, "Potential does not match")
-      print "(a)", "analytical"
-      print "(3es20.13)", pot%vat
-      print "(a)", "---"
-      print "(a)", "numerical"
-      print "(3es20.13)", vat
-      print "(a)", "---"
-      print "(a)", "diff"
-      print "(3es20.13)", [pot%vat] - vat
+      call test_failed(error, "Charge-dependent potential does not match")
+      print '(a)', 'analytical'
+      print '(3es20.13)', pot%vat
+      print '(a)', "---"
+      print '(a)', 'numerical'
+      print '(3es20.13)', vat
+      print '(a)', "---"
+      print '(a)', 'diff'
+      print '(3es20.13)', [pot%vat] - vat
+      return
+   end if
+
+   if (present(dpat)) then
+      if (any(abs(pot%vdp(:, :, 1) - vdp) > thr)) then
+         call test_failed(error, "Dipole-dependent potential does not match")
+         print '(a)', 'analytical'
+         print '(3es20.13)', pot%vdp(:, :, 1)
+         print '(a)', "---"
+         print '(a)', 'numerical'
+         print '(3es20.13)', vdp
+         print '(a)', "---"
+         print '(a)', 'diff'
+         print '(3es20.13)', pot%vdp(:, :, 1) - vdp
+         return
+      end if
+   end if
+
+   if (present(qpat)) then
+      if (any(abs(pot%vqp(:, :, 1) - vqp) > thr)) then
+         call test_failed(error, "Quadrupole-dependent potential does not match")
+         print '(a)', 'analytical'
+         print '(3es20.13)', pot%vqp(:, :, 1)
+         print '(a)', "---"
+         print '(a)', 'numerical'
+         print '(3es20.13)', vqp
+         print '(a)', "---"
+         print '(a)', 'diff'
+         print '(3es20.13)', pot%vqp(:, :, 1) - vqp
+         return
+      end if
    end if
 end subroutine test_p
 
@@ -340,6 +460,58 @@ subroutine test_g_cosmo_m02(error)
 
 end subroutine test_g_cosmo_m02
 
+subroutine test_g_cosmo_dipole_m02(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: qat(*) = [&
+      & 2.50000000000000E-1_wp,-2.50000000000000E-1_wp, 5.00000000000000E-1_wp,&
+      &-5.00000000000000E-1_wp]
+   real(wp), parameter :: dpat(3, 4) = reshape([&
+      & 1.00000000000000E-1_wp,-2.00000000000000E-2_wp, 3.00000000000000E-2_wp,&
+      &-4.00000000000000E-2_wp, 8.00000000000000E-2_wp,-1.00000000000000E-2_wp,&
+      & 6.00000000000000E-2_wp, 2.00000000000000E-2_wp,-7.00000000000000E-2_wp,&
+      &-3.00000000000000E-2_wp,-5.00000000000000E-2_wp, 4.00000000000000E-2_wp], &
+      & [3, 4])
+
+   call get_structure(mol, "Heavy28", "bih3")
+   call test_g(error, ddx_solvation_model%cosmo, mol, qat, dpat=dpat)
+
+end subroutine test_g_cosmo_dipole_m02
+
+subroutine test_g_cosmo_quadrupole_m02(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: qat(*) = [&
+      & 2.50000000000000E-1_wp,-2.50000000000000E-1_wp, 5.00000000000000E-1_wp,&
+      &-5.00000000000000E-1_wp]
+   real(wp), parameter :: dpat(3, 4) = reshape([&
+      & 1.00000000000000E-1_wp,-2.00000000000000E-2_wp, 3.00000000000000E-2_wp,&
+      &-4.00000000000000E-2_wp, 8.00000000000000E-2_wp,-1.00000000000000E-2_wp,&
+      & 6.00000000000000E-2_wp, 2.00000000000000E-2_wp,-7.00000000000000E-2_wp,&
+      &-3.00000000000000E-2_wp,-5.00000000000000E-2_wp, 4.00000000000000E-2_wp], &
+      & [3, 4])
+   real(wp), parameter :: qpat(6, 4) = reshape([&
+      & 2.00000000000000E-2_wp, 1.00000000000000E-2_wp,-3.00000000000000E-2_wp,&
+      & 4.00000000000000E-3_wp,-2.00000000000000E-3_wp, 1.00000000000000E-2_wp,&
+      &-1.00000000000000E-2_wp, 3.00000000000000E-3_wp, 2.00000000000000E-2_wp,&
+      &-5.00000000000000E-3_wp, 7.00000000000000E-3_wp,-2.00000000000000E-2_wp,&
+      & 3.00000000000000E-2_wp,-4.00000000000000E-3_wp, 1.00000000000000E-2_wp,&
+      & 8.00000000000000E-3_wp,-6.00000000000000E-3_wp,-4.00000000000000E-2_wp,&
+      &-2.00000000000000E-2_wp, 5.00000000000000E-3_wp,-1.00000000000000E-2_wp,&
+      &-7.00000000000000E-3_wp, 2.00000000000000E-3_wp, 3.00000000000000E-2_wp], &
+      & [6, 4])
+
+   call get_structure(mol, "Heavy28", "bih3")
+   call test_g(error, ddx_solvation_model%cosmo, mol, qat, dpat=dpat, qpat=qpat)
+
+end subroutine test_g_cosmo_quadrupole_m02
+
 subroutine test_g_cpcm_m02(error)
 
    !> Error handling
@@ -384,6 +556,58 @@ subroutine test_p_cosmo_m03(error)
    call test_p(error, ddx_solvation_model%cosmo, mol, qat)
 
 end subroutine test_p_cosmo_m03
+
+subroutine test_p_cosmo_dipole_m03(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: qat(*) = [&
+      & 2.50000000000000E-1_wp,-2.50000000000000E-1_wp, 5.00000000000000E-1_wp,&
+      &-5.00000000000000E-1_wp]
+   real(wp), parameter :: dpat(3, 4) = reshape([&
+      & 1.00000000000000E-1_wp,-2.00000000000000E-2_wp, 3.00000000000000E-2_wp,&
+      &-4.00000000000000E-2_wp, 8.00000000000000E-2_wp,-1.00000000000000E-2_wp,&
+      & 6.00000000000000E-2_wp, 2.00000000000000E-2_wp,-7.00000000000000E-2_wp,&
+      &-3.00000000000000E-2_wp,-5.00000000000000E-2_wp, 4.00000000000000E-2_wp], &
+      & [3, 4])
+
+   call get_structure(mol, "Heavy28", "bih3")
+   call test_p(error, ddx_solvation_model%cosmo, mol, qat, dpat=dpat)
+
+end subroutine test_p_cosmo_dipole_m03
+
+subroutine test_p_cosmo_quadrupole_m03(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+   real(wp), parameter :: qat(*) = [&
+      & 2.50000000000000E-1_wp,-2.50000000000000E-1_wp, 5.00000000000000E-1_wp,&
+      &-5.00000000000000E-1_wp]
+   real(wp), parameter :: dpat(3, 4) = reshape([&
+      & 1.00000000000000E-1_wp,-2.00000000000000E-2_wp, 3.00000000000000E-2_wp,&
+      &-4.00000000000000E-2_wp, 8.00000000000000E-2_wp,-1.00000000000000E-2_wp,&
+      & 6.00000000000000E-2_wp, 2.00000000000000E-2_wp,-7.00000000000000E-2_wp,&
+      &-3.00000000000000E-2_wp,-5.00000000000000E-2_wp, 4.00000000000000E-2_wp], &
+      & [3, 4])
+   real(wp), parameter :: qpat(6, 4) = reshape([&
+      & 2.00000000000000E-2_wp, 1.00000000000000E-2_wp,-3.00000000000000E-2_wp,&
+      & 4.00000000000000E-3_wp,-2.00000000000000E-3_wp, 1.00000000000000E-2_wp,&
+      &-1.00000000000000E-2_wp, 3.00000000000000E-3_wp, 2.00000000000000E-2_wp,&
+      &-5.00000000000000E-3_wp, 7.00000000000000E-3_wp,-2.00000000000000E-2_wp,&
+      & 3.00000000000000E-2_wp,-4.00000000000000E-3_wp, 1.00000000000000E-2_wp,&
+      & 8.00000000000000E-3_wp,-6.00000000000000E-3_wp,-4.00000000000000E-2_wp,&
+      &-2.00000000000000E-2_wp, 5.00000000000000E-3_wp,-1.00000000000000E-2_wp,&
+      &-7.00000000000000E-3_wp, 2.00000000000000E-3_wp, 3.00000000000000E-2_wp], &
+      & [6, 4])
+
+   call get_structure(mol, "Heavy28", "bih3")
+   call test_p(error, ddx_solvation_model%cosmo, mol, qat, dpat=dpat, qpat=qpat)
+
+end subroutine test_p_cosmo_quadrupole_m03
 
 subroutine test_p_cpcm_m03(error)
 

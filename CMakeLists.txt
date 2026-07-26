@@ -62,6 +62,9 @@ if(TBLITE_WITH_TREXIO AND NOT TARGET "TREXIO::TREXIO")
     INTERFACE_INCLUDE_DIRECTORIES "${TREXIO_INCLUDE_DIR}"
   )
 endif()
+if(TBLITE_WITH_LIBCINT AND NOT TARGET "cint::cint")
+  find_package("cint" REQUIRED)
+endif()
 if(NOT TARGET "LAPACK::LAPACK")
   find_package("LAPACK" REQUIRED)
 endif()
@@ -85,6 +88,9 @@ endif()
 if(NOT TARGET "s-dftd3::s-dftd3")
   find_package("s-dftd3" REQUIRED)
 endif()
+if(NOT TARGET "moist::moist")
+  find_package("moist" REQUIRED)
+endif()
 if(TBLITE_WITH_DDX AND NOT TARGET "ddx")
   find_package("ddX" CONFIG REQUIRED)
 endif()
@@ -98,6 +104,7 @@ set(
   "mctc-lib::mctc-lib"
   "dftd4::dftd4"
   "s-dftd3::s-dftd3"
+  "moist::moist"
 )
 
 # Collect source of the project
@@ -159,6 +166,18 @@ if(TBLITE_WITH_TREXIO)
     "${PROJECT_NAME}-lib"
     PUBLIC
     "TBLITE_HAS_TREXIO=1"
+  )
+endif()
+if(TBLITE_WITH_LIBCINT)
+  target_link_libraries(
+    "${PROJECT_NAME}-lib"
+    PUBLIC
+    "cint::cint"
+  )
+  target_compile_definitions(
+    "${PROJECT_NAME}-lib"
+    PUBLIC
+    "TBLITE_HAS_LIBCINT=1"
   )
 endif()
 target_include_directories(

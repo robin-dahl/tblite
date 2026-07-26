@@ -18,6 +18,7 @@ set(
   "$<$<BOOL:${TBLITE_USE_TOMLF}>:toml-f::toml-f>"
   "$<$<BOOL:${TBLITE_USE_DFTD4}>:dftd4::dftd4>"
   "$<$<BOOL:${TBLITE_USE_SDFTD3}>:s-dftd3::s-dftd3>"
+  "$<$<BOOL:${TBLITE_USE_MOIST}>:moist::moist>"
   "$<$<BOOL:${TBLITE_USE_DDX}>:ddx::ddx>"
   "$<$<BOOL:${TBLITE_WITH_OpenMP}>:OpenMP::OpenMP_Fortran>"
   "$<$<BOOL:${TBLITE_WITH_HDF5}>:HDF5::HDF5>"

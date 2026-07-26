@@ -14,18 +14,8 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
-add_subdirectory("native")
-add_subdirectory("libcint")
-
-set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
-
-list(
-  APPEND srcs
-  "${dir}/shell.f90"
-  "${dir}/trafo.f90"
-  "${dir}/type.f90"
-  "${dir}/handler.F90"
-  "${dir}/diat_trafo.f90"
-)
-
-set(srcs "${srcs}" PARENT_SCOPE)
+if libcint_found
+  srcs += files(
+    'libcint.F90',
+  )
+endif

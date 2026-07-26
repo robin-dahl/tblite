@@ -21,6 +21,7 @@
 module tblite_solvation_input
    use tblite_solvation_alpb, only : alpb_input
    use tblite_solvation_cds,  only : cds_input
+   use tblite_solvation_cosmo, only : cosmo_input
    use tblite_solvation_ddx, only : ddx_input
    use tblite_solvation_shift,  only : shift_input
    implicit none
@@ -31,6 +32,8 @@ module tblite_solvation_input
    type, public :: solvation_input
       !> Input for ddX solvation model
       type(ddx_input), allocatable :: ddx
+      !> Input for moist-backed COSMO/CPCM solvation model
+      type(cosmo_input), allocatable :: cosmo
       !> Input for ALPB solvation model
       type(alpb_input), allocatable :: alpb
       !> Input for CDS model

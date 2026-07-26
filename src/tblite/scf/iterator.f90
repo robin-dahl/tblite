@@ -196,7 +196,7 @@ end subroutine get_qat_from_qsh
 
 
 function get_mixer_dimension(mol, bas, info) result(ndim)
-   use tblite_scf_info, only : atom_resolved, shell_resolved
+   use tblite_scf_info, only : atom_resolved, shell_resolved, orbital_resolved
    type(structure_type), intent(in) :: mol
    type(basis_type), intent(in) :: bas
    type(scf_info), intent(in) :: info
@@ -226,10 +226,15 @@ function get_mixer_dimension(mol, bas, info) result(ndim)
    case default
       continue
    end select
+
+   select case(info%density)
+   case(orbital_resolved)
+      ndim = ndim + bas%nao*bas%nao
+   end select
 end function get_mixer_dimension
 
 subroutine set_mixer(mixer, wfn, info)
-   use tblite_scf_info, only : atom_resolved, shell_resolved
+   use tblite_scf_info, only : atom_resolved, shell_resolved, orbital_resolved
    class(mixer_type), intent(inout) :: mixer
    type(wavefunction_type), intent(in) :: wfn
    type(scf_info), intent(in) :: info
@@ -256,10 +261,12 @@ subroutine set_mixer(mixer, wfn, info)
    case default
       continue
    end select
+
+   if (info%density == orbital_resolved) call mixer%set(wfn%density)
 end subroutine set_mixer
 
 subroutine diff_mixer(mixer, wfn, info)
-   use tblite_scf_info, only : atom_resolved, shell_resolved
+   use tblite_scf_info, only : atom_resolved, shell_resolved, orbital_resolved
    class(mixer_type), intent(inout) :: mixer
    type(wavefunction_type), intent(in) :: wfn
    type(scf_info), intent(in) :: info
@@ -286,10 +293,12 @@ subroutine diff_mixer(mixer, wfn, info)
    case default
       continue
    end select
+
+   if (info%density == orbital_resolved) call mixer%diff(wfn%density)
 end subroutine diff_mixer
 
 subroutine get_mixer(mixer, bas, wfn, info)
-   use tblite_scf_info, only : atom_resolved, shell_resolved
+   use tblite_scf_info, only : atom_resolved, shell_resolved, orbital_resolved
    class(mixer_type), intent(inout) :: mixer
    type(basis_type), intent(in) :: bas
    type(wavefunction_type), intent(inout) :: wfn
@@ -318,6 +327,8 @@ subroutine get_mixer(mixer, bas, wfn, info)
    case default
       continue
    end select
+
+   if (info%density == orbital_resolved) call mixer%get(wfn%density)
 end subroutine get_mixer
 
 

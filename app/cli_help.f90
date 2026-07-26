@@ -154,11 +154,18 @@ module tblite_cli_help
       "      --born-kernel <name> Specify Born kernel to use with ALPB, GBSA or GB solvation model."//nl//&
       "                           Possible options are p16 (default for ALPB) and still (default for GB/GBSA)."//nl//&
       "      --cosmo <real>/<name> "//nl//&
-      "                           Use conductor-like screening solvation model (COSMO)."//nl//&
+      "                           Use moist-backed conductor-like screening model (COSMO)."//nl//&
       "                           Solvent is specified by dielectric constant or solvent name."//nl//&
-      "      --cpcm <real>/<name> Use conductor-like polarizable continuum solvation model (CPCM)."//nl//&
+      "      --cpcm <real>/<name> Use moist-backed conductor-like polarizable continuum model (CPCM)."//nl//&
       "                           Solvent is specified by dielectric constant or solvent name."//nl//&
-      "      --pcm <real>/<name>  Use polarizable continuum solvation model (PCM)."//nl//&
+      "      --solv-dipoles      Include atomic dipoles in COSMO/CPCM or ddX solvation."//nl//&
+      "      --solv-quadrupoles  Include atomic quadrupoles in COSMO/CPCM or ddX solvation."//nl//&
+      "      --solv-full-density Use the full AO density with Gaussian-surface COSMO/CPCM."//nl//&
+      "      --ddcosmo <real>/<name> Use ddX conductor-like screening model (ddCOSMO)."//nl//&
+      "                           Solvent is specified by dielectric constant or solvent name."//nl//&
+      "      --ddcpcm <real>/<name> Use ddX conductor-like polarizable continuum model (ddCPCM)."//nl//&
+      "                           Solvent is specified by dielectric constant or solvent name."//nl//&
+      "      --ddpcm <real>/<name> Use ddX polarizable continuum model (ddPCM)."//nl//&
       "                           Solvent is specified by dielectric constant or solvent name."//nl//&
       "      --solv-state <name>  Solution state correction: gsolv (default), bar1mol, reference."//nl//&
       "      --spin-polarized     Use spin-polarized xTB Hamiltonian"//nl//&
@@ -180,6 +187,7 @@ module tblite_cli_help
       "      --trexio [file]      Dump results as TREXIO output (default: tblite.trexio)."//nl//&
       "                           Use .h5/.hdf5 for TREXIO HDF5 when available."//nl//&
       "      --molden [file]      Dump results as Molden output (default: tblite.molden)"//nl//&
+      "      --libcint            Use libcint for Gaussian integral evaluation"//nl//&
       "  -i, --input <format>     Hint for the format of the input file"//nl//&
       "  -v, --verbose            Increase verbosity of printout"//nl//&
       "  -s, --silent             Reduce verbosity of printout"//nl//&

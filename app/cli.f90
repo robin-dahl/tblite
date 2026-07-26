@@ -25,7 +25,8 @@ module tblite_cli
       & help_text_fit, help_text_tagdiff, help_text_guess
    use tblite_lapack_solver, only : lapack_algorithm
    use tblite_scf_mixer_input, only : mixer_input, anneal_input, scf_version
-   use tblite_solvation, only: alpb_input, born_kernel, cds_input, ddx_input, &
+   use tblite_solvation, only: alpb_input, born_kernel, cds_input, cosmo_input, &
+      & cosmo_solvation_model, ddx_input, &
       & ddx_solvation_model, get_solvent_data, shift_input, solution_state, &
       & solvation_input, solvent_data
    use tblite_version, only : get_tblite_version
@@ -98,6 +99,8 @@ module tblite_cli
       real(wp), allocatable :: efield(:)
       !> Spin polarization
       logical :: spin_polarized = .false.
+      !> Use libcint rather than tblite's native Gaussian integral handler
+      logical :: libcint = .false.
       !> Algorithm for electronic solver
       integer :: solver = lapack_algorithm%gvd
       !> Configuration for xtb calculator
@@ -272,12 +275,16 @@ subroutine get_run_arguments(config, list, start, error)
    character(len=:), allocatable :: arg, sec, mixer_name
    real(wp) :: anneal_input(3)
    logical :: solvent_not_found, parametrized_solvation
+   logical :: solv_dipoles, solv_quadrupoles, solv_full_density
    logical, allocatable :: alpb
-   integer :: ddx_model
+   integer, allocatable :: ddx_model, cosmo_model
    integer, allocatable :: kernel, sol_state
    type(solvent_data), allocatable :: solvent
 
    iarg = start
+   solv_dipoles = .false.
+   solv_quadrupoles = .false.
+   solv_full_density = .false.
    getopts = .true.
    narg = len(list)
    do while(iarg < narg)
@@ -344,6 +351,9 @@ subroutine get_run_arguments(config, list, start, error)
 
       case("--spin-polarized")
          config%spin_polarized = .true.
+
+      case("--libcint")
+         config%libcint = .true.
 
       case("--method")
          if (allocated(config%param)) then
@@ -443,7 +453,16 @@ subroutine get_run_arguments(config, list, start, error)
             exit
          end select
 
-      case("--cosmo", "--cpcm", "--pcm")
+      case("--solv-dipoles")
+         solv_dipoles = .true.
+
+      case("--solv-quadrupoles")
+         solv_quadrupoles = .true.
+
+      case("--solv-full-density")
+         solv_full_density = .true.
+
+      case("--ddcosmo", "--ddcpcm", "--ddpcm")
          if (.not.get_tblite_feature("ddx")) then
             call fatal_error(error, "ddX solvation support is not available in this build")
             exit
@@ -452,11 +471,11 @@ subroutine get_run_arguments(config, list, start, error)
             call fatal_error(error, "Cannot use multiple solvation models")
             exit
          end if
-         if (arg == "--cosmo") then
+         if (arg == "--ddcosmo") then
             ddx_model = ddx_solvation_model%cosmo
-         else if (arg == "--cpcm") then
+         else if (arg == "--ddcpcm") then
             ddx_model = ddx_solvation_model%cpcm
-         else if (arg == "--pcm") then
+         else if (arg == "--ddpcm") then
             ddx_model = ddx_solvation_model%pcm
          end if
          parametrized_solvation = .false.
@@ -466,6 +485,33 @@ subroutine get_run_arguments(config, list, start, error)
          call list%get(iarg, arg)
          if (.not.allocated(arg)) then
             call fatal_error(error, "Missing argument for ddX solvation")
+            exit
+         end if
+         solvent_not_found = .false.
+         allocate(solvent)
+         solvent = get_solvent_data(arg)
+         if (solvent%eps <= 0.0_wp) then
+            solvent_not_found = .true.
+            call get_argument_as_real(arg, solvent%eps, error)
+         end if
+         if (allocated(error)) exit
+
+      case("--cosmo", "--cpcm")
+         if (allocated(solvent)) then
+            call fatal_error(error, "Cannot use multiple solvation models")
+            exit
+         end if
+         if (arg == "--cosmo") then
+            cosmo_model = cosmo_solvation_model%cosmo
+         else
+            cosmo_model = cosmo_solvation_model%cpcm
+         end if
+         parametrized_solvation = .false.
+
+         iarg = iarg + 1
+         call list%get(iarg, arg)
+         if (.not.allocated(arg)) then
+            call fatal_error(error, "Missing argument for COSMO/CPCM solvation")
             exit
          end if
          solvent_not_found = .false.
@@ -740,6 +786,21 @@ subroutine get_run_arguments(config, list, start, error)
       config%post_proc_output = "tblite-data.npz"
    end if
 
+   if ((solv_dipoles .or. solv_quadrupoles) .and. &
+      & .not.allocated(cosmo_model) .and. .not.allocated(ddx_model)) then
+      call fatal_error(error, &
+         & "Solvation multipoles require COSMO/CPCM or a ddX solvation model")
+      return
+   end if
+   if (solv_full_density .and. .not.allocated(cosmo_model)) then
+      call fatal_error(error, "Full-density solvation requires --cosmo or --cpcm")
+      return
+   end if
+   if (solv_full_density .and. (solv_dipoles .or. solv_quadrupoles)) then
+      call fatal_error(error, "Full-density and multipole solvation representations are mutually exclusive")
+      return
+   end if
+
    if (allocated(solvent)) then
       if (.not.allocated(sol_state)) then
          sol_state = solution_state%gsolv
@@ -765,6 +826,15 @@ subroutine get_run_arguments(config, list, start, error)
          else
             config%solvation%alpb = alpb_input(solvent%eps, kernel=kernel, alpb=alpb)
          end if
+      else if (allocated(cosmo_model)) then
+         if (sol_state /= solution_state%gsolv) then
+            call fatal_error(error, "Solution state shift not supported for COSMO/CPCM solvation")
+            return
+         end if
+         allocate(config%solvation)
+         config%solvation%cosmo = cosmo_input(solvent%eps, model=cosmo_model, &
+            & dipoles=solv_dipoles, quadrupoles=solv_quadrupoles, &
+            & full_density=solv_full_density)
       else
          ! ddX solvation model
          if (sol_state /= solution_state%gsolv) then
@@ -772,7 +842,8 @@ subroutine get_run_arguments(config, list, start, error)
             return
          end if
          allocate(config%solvation)
-         config%solvation%ddx = ddx_input(ddx_model, solvent%eps)
+         config%solvation%ddx = ddx_input(ddx_model, solvent%eps, &
+            & use_dipoles=solv_dipoles, use_quadrupoles=solv_quadrupoles)
       end if
    end if
 

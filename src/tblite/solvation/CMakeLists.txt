@@ -24,6 +24,7 @@ list(
   "${dir}/born.f90"
   "${dir}/cds.f90"
   "${dir}/cm5.f90"
+  "${dir}/cosmo.F90"
   "${dir}/ddx.F90"
   "${dir}/data.f90"
   "${dir}/input.f90"

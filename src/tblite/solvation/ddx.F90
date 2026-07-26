@@ -38,7 +38,7 @@ module tblite_solvation_ddx
    use tblite_blas, only: dot, gemv
    use tblite_container_cache, only: container_cache
    use tblite_mesh_lebedev, only: grid_size
-   use tblite_scf_info, only: atom_resolved, scf_info
+   use tblite_scf_info, only: atom_resolved, not_used, scf_info
    use tblite_scf_potential, only: potential_type
    use tblite_solvation_data, only: get_vdw_rad_cosmo
    use tblite_solvation_type, only: solvation_type
@@ -84,6 +84,10 @@ module tblite_solvation_ddx
       real(wp) :: eta = 0.1_wp
       !> Maximum angular momentum of basis functions
       integer :: lmax = 1
+      !> Include atom-resolved dipoles in the ddX solute density
+      logical :: use_dipoles = .false.
+      !> Include atom-resolved quadrupoles in the ddX solute density
+      logical :: use_quadrupoles = .false.
    end type ddx_input
 
    !> Provide constructor for ddX input
@@ -109,6 +113,10 @@ module tblite_solvation_ddx
       integer :: nang
       !> Maximum angular momentum of basis functions
       integer :: lmax
+      !> Include atom-resolved dipoles in the ddX solute density
+      logical :: use_dipoles = .false.
+      !> Include atom-resolved quadrupoles in the ddX solute density
+      logical :: use_quadrupoles = .false.
       !> Number of OMP threads
       integer :: nproc = 1
       !> Shift of the switching function
@@ -153,16 +161,25 @@ module tblite_solvation_ddx
 #endif
       !> Interaction matrix with surface charges jmat(ncav, nat)
       real(wp), allocatable :: jmat(:, :)
+      !> Dipole interaction matrix with surface charges adpmat(3, ncav, nat)
+      real(wp), allocatable :: adpmat(:, :, :)
+      !> Quadrupole interaction matrix with surface charges aqpmat(6, ncav, nat)
+      real(wp), allocatable :: aqpmat(:, :, :)
       !> ddX potential
       real(wp), allocatable :: ddx_pot(:)
-      !> ddX multipoles, dim=(1, mol%nat)
+      !> ddX dipole potential
+      real(wp), allocatable :: ddx_dppot(:, :)
+      !> ddX quadrupole potential
+      real(wp), allocatable :: ddx_qppot(:, :)
+      !> ddX multipoles, dim=(1, mol%nat), (4, mol%nat), or (9, mol%nat) for monopole, dipole, and quadrupole expansion
       real(wp), allocatable :: multipoles(:, :)
    end type ddx_cache
 
 contains
 
 !> Constructor for ddX input
-function create_ddx_input(ddx_model, dielectric_const, rvdw, rscale, nang, eta, lmax) result(self)
+function create_ddx_input(ddx_model, dielectric_const, rvdw, rscale, nang, eta, lmax, use_dipoles, &
+      & use_quadrupoles) result(self)
    !> ddX model
    integer, intent(in), optional :: ddx_model
    !> Dielectric constant
@@ -177,6 +194,10 @@ function create_ddx_input(ddx_model, dielectric_const, rvdw, rscale, nang, eta, 
    real(wp), intent(in), optional :: eta
    !> Maximum angular momentum of basis functions
    integer, intent(in), optional :: lmax
+   !> Include atom-resolved dipoles in the ddX solute density
+   logical, intent(in), optional :: use_dipoles
+   !> Include atom-resolved quadrupoles in the ddX solute density
+   logical, intent(in), optional :: use_quadrupoles
 
    type(ddx_input) :: self
 
@@ -204,6 +225,16 @@ function create_ddx_input(ddx_model, dielectric_const, rvdw, rscale, nang, eta, 
 
    if (present(lmax)) then
       self%lmax = lmax
+   end if
+
+   if (present(use_dipoles)) then
+      self%use_dipoles = use_dipoles
+   end if
+   if (present(use_quadrupoles)) then
+      self%use_quadrupoles = use_quadrupoles
+   end if
+   if (self%use_quadrupoles) then
+      self%lmax = max(self%lmax, 2)
    end if
 
 end function create_ddx_input
@@ -249,7 +280,7 @@ subroutine new_ddx(self, mol, input, error)
 
    ! Get number of OMP threads
    self%nproc = 1
-!$ self%nproc = omp_get_max_threads()
+   !$ self%nproc = omp_get_max_threads()
 
    ! Get radii for all atoms
    allocate(self%rvdw(mol%nat), source=0.0_wp)
@@ -286,7 +317,9 @@ subroutine new_ddx(self, mol, input, error)
    ! Initialize the rest of the adjustable input parameters
    self%nang = input%nang
    self%eta = input%eta
-   self%lmax = input%lmax
+   self%lmax = max(input%lmax, multipole_order(input%use_dipoles, input%use_quadrupoles))
+   self%use_dipoles = input%use_dipoles
+   self%use_quadrupoles = input%use_quadrupoles
 #else
    call fatal_error(error, "ddX solvation model support is not available in this build of tblite")
 #endif
@@ -305,9 +338,11 @@ subroutine update(self, mol, cache)
 #if TBLITE_HAS_DDX
    type(ddx_cache), pointer :: ptr
 
-   integer :: model
+   integer :: model, mp_order, nmultipoles
 
    call taint(cache, ptr)
+   mp_order = multipole_order(self%use_dipoles, self%use_quadrupoles)
+   nmultipoles = (mp_order + 1)**2
 
    ! Request all electrostatic quantities that may be needed later
    ! The ddX multipole routine allocates and fills only the selected arrays
@@ -351,31 +386,58 @@ subroutine update(self, mol, cache)
    call allocate_state(ptr%ddx%params, ptr%ddx%constants, ptr%ddx_state, ptr%ddx_error)
    call check_error(ptr%ddx_error)
 
-   ! Allocate the multipole array that later contains the xTB Mulliken charges
-   ! (We only pass monopoles)
-   if (.not.allocated(ptr%multipoles))then
-         allocate(ptr%multipoles(1, mol%nat), source=0.0_wp)
+   ! Allocate the multipole array that later contains xTB Mulliken charges and, optionally, dipoles
+   if (allocated(ptr%multipoles)) then
+      deallocate(ptr%multipoles)
    end if
+   allocate(ptr%multipoles(nmultipoles, mol%nat), source=0.0_wp)
 
-   ! Allocate and compute the Coulomb matrix
+   ! Allocate and compute the Coulomb matrix and, if required, the dipole and quadrupole coupling matrices
    if (allocated(ptr%jmat))then
       deallocate(ptr%jmat)
-   end if
+   endif
    allocate(ptr%jmat(ptr%ddx%constants%ncav, mol%nat), source=0.0_wp)
    call get_coulomb_matrix(mol%xyz, ptr%ddx%constants%ccav, ptr%jmat)
-
-   ! Allocate atom-resolved solvation potential contribution produced by get_potential
-   if (.not.allocated(ptr%ddx_pot))then
-      allocate(ptr%ddx_pot(mol%nat), source=0.0_wp)
+   if (self%use_dipoles) then
+      if (allocated(ptr%adpmat))then
+         deallocate(ptr%adpmat)
+      endif
+      allocate(ptr%adpmat(3, ptr%ddx%constants%ncav, mol%nat), source=0.0_wp)
+      call get_adp_matrix(mol%xyz, ptr%ddx%constants%ccav, ptr%adpmat)
+   end if
+   if (self%use_quadrupoles) then
+      if (allocated(ptr%aqpmat))then
+         deallocate(ptr%aqpmat)
+      endif
+      allocate(ptr%aqpmat(6, ptr%ddx%constants%ncav, mol%nat), source=0.0_wp)
+      call get_aqp_matrix(mol%xyz, ptr%ddx%constants%ccav, ptr%aqpmat)
    end if
 
-   ! Now we initialize the RHSs (they are zero in the first iteration)
-   ! Given the monopole distribution...
-   ! ...we compute the electrostatic potential on the cavity surface
+   ! Allocate atom-resolved solvation potential contribution produced by get_potential
+   if (allocated(ptr%ddx_pot))then
+      deallocate(ptr%ddx_pot)
+   endif
+   allocate(ptr%ddx_pot(mol%nat), source=0.0_wp)
+   if (self%use_dipoles) then
+      if (allocated(ptr%ddx_dppot))then
+         deallocate(ptr%ddx_dppot)
+      endif
+      allocate(ptr%ddx_dppot(3, mol%nat), source=0.0_wp)
+   end if
+   if (self%use_quadrupoles) then
+      if (allocated(ptr%ddx_qppot))then
+         deallocate(ptr%ddx_qppot)
+      endif
+      allocate(ptr%ddx_qppot(6, mol%nat), source=0.0_wp)
+   end if
+
+   ! Now we initialize the RHSs (they are zero in the first iteration).
+   ! Given the multipole distribution, compute the electrostatic potential
+   ! on the cavity surface.
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
-      & ptr%ddx%workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
-   ! ...we convert the monopole charges into the spherical harmonics representation
-   call multipole_psi(ptr%ddx%params, ptr%multipoles, 0, ptr%ddx_state%psi)
+      & ptr%ddx%workspace, ptr%multipoles, mp_order, ptr%ddx_electrostatics, ptr%ddx_error)
+   ! Given a multipolar distribution, assemble the RHS of the adjoint linear ddX system
+   call multipole_psi(ptr%ddx%params, ptr%multipoles, mp_order, ptr%ddx_state%psi)
    ! ...and we transform the potential into the spherical harmonics representation,
    !    marking the RHSs as ready for the solver
    call setup(ptr%ddx%params,ptr%ddx%constants, &
@@ -410,19 +472,21 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    type(container_cache), intent(inout) :: cache
 #if TBLITE_HAS_DDX
    type(ddx_cache), pointer :: ptr
+   integer :: mp_order
 
    call view(cache, ptr)
+   mp_order = multipole_order(self%use_dipoles, self%use_quadrupoles)
 
    ! Recalculate the solution of the ddX system with the new charges after diagonalization
 
-   ! Assemble the multipole array based on the new xTB charges and
-   ! apply a normalization for the spherical harmonics representation
-   ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4.0_wp*pi)
+   ! Convert the multipoles from Cartesian into the spherical harmonics representation
+   ! according to https://en.wikipedia.org/wiki/Table_of_spherical_harmonics
+   call set_multipoles(ptr, wfn, self%use_dipoles, self%use_quadrupoles)
    ! Compute the electrostatic potential on the cavity surface
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
-      & ptr%ddx%workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
-   ! Convert the normalized monopole charges into the spherical harmonics representation
-   call multipole_psi(ptr%ddx%params, ptr%multipoles, 0, ptr%ddx_state%psi)
+      & ptr%ddx%workspace, ptr%multipoles, mp_order, ptr%ddx_electrostatics, ptr%ddx_error)
+   ! Given a multipolar distribution, assemble the RHS of the adjoint linear ddX system
+   call multipole_psi(ptr%ddx%params, ptr%multipoles, mp_order, ptr%ddx_state%psi)
    ! Transform the potential into the spherical harmonics representation
    call setup(ptr%ddx%params,ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, &
@@ -455,20 +519,22 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    type(container_cache), intent(inout) :: cache
 #if TBLITE_HAS_DDX
    type(ddx_cache), pointer :: ptr
+   integer :: k, ic, mp_order
 
    call view(cache, ptr)
+   mp_order = multipole_order(self%use_dipoles, self%use_quadrupoles)
 
    ! Due to intermediate mixing, the xTB charges have changed since the last call
    ! to get_energy, and we need to solve the ddX systems again
 
-   ! Assemble the multipole array based on the new xTB charges and
-   ! apply a normalization for the spherical harmonics representation
-   ptr%multipoles(1, :) = wfn%qat(:, 1) / sqrt(4.0_wp*pi)
+   ! Convert the multipoles from Cartesian space into the spherical harmonics representation
+   ! according to https://en.wikipedia.org/wiki/Table_of_spherical_harmonics
+   call set_multipoles(ptr, wfn, self%use_dipoles, self%use_quadrupoles)
    ! Compute the electrostatic potential on the cavity surface
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
-      & ptr%ddx%workspace, ptr%multipoles, 0, ptr%ddx_electrostatics, ptr%ddx_error)
-   ! Convert the normalized monopole charges into the spherical harmonics representation
-   call multipole_psi(ptr%ddx%params, ptr%multipoles, 0, ptr%ddx_state%psi)
+      & ptr%ddx%workspace, ptr%multipoles, mp_order, ptr%ddx_electrostatics, ptr%ddx_error)
+   ! Given a multipolar distribution, assemble the RHS of the adjoint linear ddX system
+   call multipole_psi(ptr%ddx%params, ptr%multipoles, mp_order, ptr%ddx_state%psi)
    ! Transform the potential into the spherical harmonics representation
    call setup(ptr%ddx%params,ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, &
@@ -496,12 +562,41 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    ! (Again, see J. Chem. Theory Comput. 2013, 9, 3637−3648)
    ! Zeta is an intermediate in the computation of the latter and needs to be
    ! contracted with the Coulomb matrix in a last step.
-   call gemv(ptr%jmat, ptr%ddx_state%zeta, ptr%ddx_pot(:), alpha=-1.0_wp, beta=1.0_wp, trans="t")
+   call gemv(ptr%jmat, ptr%ddx_state%zeta, ptr%ddx_pot(:), alpha=-1.0_wp, beta=1.0_wp, trans='t')
 
    ! Scale with 0.5 and feps, and get the Psi contribution to potential
    ptr%ddx_pot(:) = 0.5_wp * self%feps * (ptr%ddx_pot(:) + sqrt(4.0_wp*pi) * ptr%ddx_state%xs(1, :))
+
+   if (self%use_dipoles .and. allocated(pot%vdp)) then
+      ptr%ddx_dppot(:, :) = 0.0_wp
+      do k = 1, 3
+         call gemv(ptr%adpmat(k, :, :), ptr%ddx_state%zeta, ptr%ddx_dppot(k, :), &
+            & alpha=-1.0_wp, beta=1.0_wp, trans='t')
+         ptr%ddx_dppot(k, :) = 0.5_wp * self%feps * (ptr%ddx_dppot(k, :) &
+            & + sqrt(4.0_wp*pi/3.0_wp) / ptr%ddx%params%rsph(:) * ptr%ddx_state%xs(k+1, :))
+      end do
+   end if
+   if (self%use_quadrupoles .and. allocated(pot%vqp)) then
+      ptr%ddx_qppot(:, :) = 0.0_wp
+      do ic = 1, 6
+         call gemv(ptr%aqpmat(ic, :, :), ptr%ddx_state%zeta, ptr%ddx_qppot(ic, :), &
+            & alpha=-1.0_wp, beta=1.0_wp, trans='t')
+      end do
+      call add_quadrupole_psi_potential(ptr%ddx%params%rsph, ptr%ddx_state%xs(5:9, :), &
+         & ptr%ddx_qppot)
+      ptr%ddx_qppot(:, :) = 0.5_wp * self%feps * ptr%ddx_qppot(:, :)
+   end if
+
    ! Add potential to overall potential for new SCC step
    pot%vat(:,1) = pot%vat(:,1) + ptr%ddx_pot(:)
+   if (self%use_dipoles .and. allocated(pot%vdp)) then
+      pot%vdp(1,:,1) = pot%vdp(1,:,1) + ptr%ddx_dppot(3,:)
+      pot%vdp(2,:,1) = pot%vdp(2,:,1) + ptr%ddx_dppot(1,:)
+      pot%vdp(3,:,1) = pot%vdp(3,:,1) + ptr%ddx_dppot(2,:)
+   end if
+   if (self%use_quadrupoles .and. allocated(pot%vqp)) then
+      pot%vqp(:,:,1) = pot%vqp(:,:,1) + ptr%ddx_qppot(:,:)
+   end if
 #endif
 
 end subroutine get_potential
@@ -526,8 +621,29 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    real(wp), allocatable :: force(:,:)
 
    type(ddx_cache), pointer :: ptr
+   integer :: mp_order
 
    call view(cache, ptr)
+   mp_order = multipole_order(self%use_dipoles, self%use_quadrupoles)
+
+   call set_multipoles(ptr, wfn, self%use_dipoles, self%use_quadrupoles)
+
+   call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%multipoles, mp_order, ptr%ddx_electrostatics, ptr%ddx_error)
+   call multipole_psi(ptr%ddx%params, ptr%multipoles, mp_order, ptr%ddx_state%psi)
+
+   call setup(ptr%ddx%params,ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, ptr%ddx_electrostatics, &
+      & ptr%ddx_state%psi, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
+
+   call solve(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, self%conv, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
+
+   call solve_adjoint(ptr%ddx%params, ptr%ddx%constants, &
+      & ptr%ddx%workspace, ptr%ddx_state, self%conv, ptr%ddx_error)
+   call check_error(ptr%ddx_error)
 
    allocate(force(3, mol%nat), source=0.0_wp)
 
@@ -538,7 +654,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
 
    ! Compute all the solute-specific solvation force terms
    call multipole_force_terms(ptr%ddx%params, ptr%ddx%constants, ptr%ddx%workspace, &
-      ptr%ddx_state, 0, ptr%multipoles, force, ptr%ddx_error)
+      ptr%ddx_state, mp_order, ptr%multipoles, force, ptr%ddx_error)
    call check_error(ptr%ddx_error)
 
    ! Add the dielectric factor to the gradient of the solvation energy
@@ -558,8 +674,47 @@ pure function variable_info(self) result(info)
    !> Information on the required potential data
    type(scf_info) :: info
 
-   info = scf_info(charge=atom_resolved)
+   info = scf_info(charge=atom_resolved, &
+      & dipole=merge(atom_resolved, not_used, self%use_dipoles), &
+      & quadrupole=merge(atom_resolved, not_used, self%use_quadrupoles))
 end function variable_info
+
+#if TBLITE_HAS_DDX
+pure function multipole_order(use_dipoles, use_quadrupoles) result(order)
+   logical, intent(in) :: use_dipoles
+   logical, intent(in) :: use_quadrupoles
+   integer :: order
+
+   if (use_quadrupoles) then
+      order = 2
+   else if (use_dipoles) then
+      order = 1
+   else
+      order = 0
+   end if
+end function multipole_order
+
+subroutine set_multipoles(ptr, wfn, use_dipoles, use_quadrupoles)
+   type(ddx_cache), intent(inout) :: ptr
+   type(wavefunction_type), intent(in) :: wfn
+   logical, intent(in) :: use_dipoles
+   logical, intent(in) :: use_quadrupoles
+
+   real(wp), parameter :: qfac = 1.0_wp / sqrt(4.0_wp*pi)
+   real(wp), parameter :: dfac = sqrt(3.0_wp/(4.0_wp*pi))
+
+   ptr%multipoles(:, :) = 0.0_wp
+   ptr%multipoles(1, :) = wfn%qat(:, 1) * qfac
+   if (use_dipoles .and. allocated(wfn%dpat)) then
+      ptr%multipoles(2, :) = wfn%dpat(2,:,1) * dfac
+      ptr%multipoles(3, :) = wfn%dpat(3,:,1) * dfac
+      ptr%multipoles(4, :) = wfn%dpat(1,:,1) * dfac
+   end if
+   if (use_quadrupoles .and. allocated(wfn%qpat)) then
+      call quadrupole_to_spherical(wfn%qpat(:, :, 1), ptr%multipoles(5:9, :))
+   end if
+end subroutine set_multipoles
+#endif
 
 subroutine taint(cache, ptr)
    type(container_cache), target, intent(inout) :: cache
@@ -615,5 +770,119 @@ subroutine get_coulomb_matrix(xyz, ccav, jmat)
    end do
 
 end subroutine get_coulomb_matrix
+
+!> Evaluate the dipole interactions between the atomic sites (xyz) and the
+!> surface elements of the cavity (ccav).
+subroutine get_adp_matrix(xyz, ccav, adpmat)
+   real(wp), intent(in) :: xyz(:, :)
+   real(wp), intent(in) :: ccav(:, :)
+   real(wp), intent(inout) :: adpmat(:, :, :)
+
+   integer :: ic, jat
+   real(wp) :: vec(3), vec2(3), d2, d
+
+   adpmat(:, :, :) = 0.0_wp
+   !$omp parallel do default(none) schedule(runtime) collapse(2) &
+   !$omp shared(ccav, xyz, adpmat) private(ic, jat, vec, vec2, d2, d)
+   do ic = 1, size(ccav, 2)
+      do jat = 1, size(xyz, 2)
+         vec(:) = ccav(:, ic) - xyz(:, jat)
+         d2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+         d = sqrt(d2)
+         ! ddX orders l=1 real harmonics as y, z, x.
+         vec2(1) = vec(2)
+         vec2(2) = vec(3)
+         vec2(3) = vec(1)
+         adpmat(:, ic, jat) = vec2(:) / (d**3)
+      end do
+   end do
+
+end subroutine get_adp_matrix
+
+!> Transform xTB Cartesian quadrupoles [xx, xy, yy, xz, yz, zz] to ddX l=2
+!> real-spherical multipoles ordered as [m=-2, -1, 0, +1, +2].
+pure subroutine quadrupole_to_spherical(qpat, sph)
+   real(wp), intent(in) :: qpat(:, :)
+   real(wp), intent(out) :: sph(:, :)
+
+   real(wp), parameter :: q2fac = sqrt(15.0_wp/(4.0_wp*pi)) / 3.0_wp
+   real(wp), parameter :: q0fac = sqrt(5.0_wp/(4.0_wp*pi)) / 3.0_wp
+
+   ! qpat stores the independent components of the traceless Cartesian tensor:
+   ! [Q_xx, Q_xy, Q_yy, Q_xz, Q_yz, Q_zz]. A Cartesian contraction therefore
+   ! contains 2*Q_xy*x*y (and analogously for xz and yz).
+   sph(1, :) = 2.0_wp*q2fac * qpat(2, :)
+   sph(2, :) = 2.0_wp*q2fac * qpat(5, :)
+   sph(3, :) = q0fac * (2.0_wp*qpat(6, :) - qpat(1, :) - qpat(3, :))
+   sph(4, :) = 2.0_wp*q2fac * qpat(4, :)
+   sph(5, :) = q2fac * (qpat(1, :) - qpat(3, :))
+end subroutine quadrupole_to_spherical
+
+!> Adjoint transform from ddX l=2 real-spherical potentials to xTB Cartesian
+!> quadrupole potentials. This is the transpose of quadrupole_to_spherical.
+pure subroutine spherical_to_quadrupole_potential(sph, qpot)
+   real(wp), intent(in) :: sph(:, :)
+   real(wp), intent(out) :: qpot(:, :)
+
+   real(wp), parameter :: q2fac = sqrt(15.0_wp/(4.0_wp*pi)) / 3.0_wp
+   real(wp), parameter :: q0fac = sqrt(5.0_wp/(4.0_wp*pi)) / 3.0_wp
+
+   qpot(1, :) = -q0fac * sph(3, :) + q2fac * sph(5, :)
+   qpot(2, :) =  2.0_wp*q2fac * sph(1, :)
+   qpot(3, :) = -q0fac * sph(3, :) - q2fac * sph(5, :)
+   qpot(4, :) =  2.0_wp*q2fac * sph(4, :)
+   qpot(5, :) =  2.0_wp*q2fac * sph(2, :)
+   qpot(6, :) =  2.0_wp*q0fac * sph(3, :)
+end subroutine spherical_to_quadrupole_potential
+
+subroutine add_quadrupole_psi_potential(rsph, xs_quad, qppot)
+   real(wp), intent(in) :: rsph(:)
+   real(wp), intent(in) :: xs_quad(:, :)
+   real(wp), intent(inout) :: qppot(:, :)
+
+   real(wp), allocatable :: sph(:, :), qpot(:, :)
+   integer :: iat
+
+   allocate(sph(5, size(xs_quad, 2)), source=0.0_wp)
+   do iat = 1, size(xs_quad, 2)
+      sph(:, iat) = 4.0_wp*pi/5.0_wp * xs_quad(:, iat) / rsph(iat)**2
+   end do
+   allocate(qpot(6, size(xs_quad, 2)), source=0.0_wp)
+   call spherical_to_quadrupole_potential(sph, qpot)
+   qppot(:, :) = qppot(:, :) + qpot(:, :)
+end subroutine add_quadrupole_psi_potential
+
+!> Evaluate quadrupole interactions between the atomic sites (xyz) and the
+!> surface elements of the cavity (ccav), returned in xTB Cartesian qpat order.
+subroutine get_aqp_matrix(xyz, ccav, aqpmat)
+   real(wp), intent(in) :: xyz(:, :)
+   real(wp), intent(in) :: ccav(:, :)
+   real(wp), intent(inout) :: aqpmat(:, :, :)
+
+   integer :: ic, jat
+   real(wp) :: vec(3), sph(5, 1), qpot(6, 1), d2, d5, yfac
+   real(wp), parameter :: sq15 = sqrt(15.0_wp/(4.0_wp*pi))
+   real(wp), parameter :: sq5 = sqrt(5.0_wp/(4.0_wp*pi))
+
+   aqpmat(:, :, :) = 0.0_wp
+   !$omp parallel do default(none) schedule(runtime) collapse(2) &
+   !$omp shared(ccav, xyz, aqpmat) private(ic, jat, vec, sph, qpot, d2, d5, yfac)
+   do ic = 1, size(ccav, 2)
+      do jat = 1, size(xyz, 2)
+         vec(:) = ccav(:, ic) - xyz(:, jat)
+         d2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+         d5 = d2**2 * sqrt(d2)
+         yfac = 4.0_wp*pi / 5.0_wp / d5
+         sph(1, 1) = yfac * sq15 * vec(1) * vec(2)
+         sph(2, 1) = yfac * sq15 * vec(2) * vec(3)
+         sph(3, 1) = yfac * 0.5_wp * sq5 * (2.0_wp*vec(3)**2 - vec(1)**2 - vec(2)**2)
+         sph(4, 1) = yfac * sq15 * vec(1) * vec(3)
+         sph(5, 1) = yfac * 0.5_wp * sq15 * (vec(1)**2 - vec(2)**2)
+         call spherical_to_quadrupole_potential(sph, qpot)
+         aqpmat(:, ic, jat) = qpot(:, 1)
+      end do
+   end do
+
+end subroutine get_aqp_matrix
 
 end module tblite_solvation_ddx

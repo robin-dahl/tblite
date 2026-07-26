@@ -2,6 +2,6 @@ $ORIGIN/03-ser-xar.sdf
 --no-restart
 --method
 gfn2
---cpcm
+--ddcpcm
 inf
 --grad

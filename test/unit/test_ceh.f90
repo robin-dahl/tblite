@@ -33,6 +33,7 @@ module test_ceh
    use tblite_context_type, only : context_type
    use tblite_cutoff, only : get_lattice_points
    use tblite_external_field, only : electric_field
+   use tblite_integral_native, only : native_integral_type
    use tblite_wavefunction_type, only : wavefunction_type, new_wavefunction
    use tblite_xtb_calculator, only : xtb_calculator
    use tblite_xtb_h0, only : tb_hamiltonian, new_hamiltonian, get_hamiltonian, &
@@ -46,7 +47,6 @@ module test_ceh
    real(wp), parameter :: thr = 100*epsilon(1.0_wp)
    real(wp), parameter :: thr1 = 1e5*epsilon(1.0_wp)
    real(wp), parameter :: thr2 = 1e2*sqrt(epsilon(1.0_wp))
-
 contains
 
 !> Collect all exported unit tests
@@ -334,6 +334,7 @@ subroutine test_hamiltonian_mol(error, mol, ref)
    class(ncoord_type), allocatable :: ncoord
    class(ncoord_type), allocatable :: ncoord_en
    type(adjacency_list) :: list
+   type(native_integral_type) :: nativeint
    real(wp), parameter :: cn_cutoff = 30.0_wp
    real(wp), allocatable :: lattr(:, :), cn(:), cn_en(:), rcov(:), en(:)
    real(wp), allocatable :: overlap(:, :), dpint(:, :, :), qpint(:, :, :)
@@ -372,7 +373,8 @@ subroutine test_hamiltonian_mol(error, mol, ref)
 
    allocate(overlap(bas%nao, bas%nao), dpint(3, bas%nao, bas%nao), &
       & qpint(6, bas%nao, bas%nao), hamiltonian(bas%nao, bas%nao))
-   call get_hamiltonian(mol, lattr, list, bas, h0, selfenergy, &
+
+   call get_hamiltonian(mol, lattr, list, bas, nativeint, h0, selfenergy, &
       & overlap, dpint, qpint, hamiltonian)
 
    do ii = 1, size(hamiltonian, 2)
