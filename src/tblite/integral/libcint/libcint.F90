@@ -34,6 +34,7 @@ module tblite_integral_libcint
    public :: PTR_GRIDS, PTR_ENV_START
    public :: POINT_NUC, GAUSSIAN_NUC, FRAC_CHARGE_NUC
    public :: libcint_eval_1e
+   public :: libcint_eval_2e
    public :: libcint_eval_dipole, libcint_eval_quadrupole
    public :: libcint_eval_dipole_gradient, libcint_eval_quadrupole_gradient
    public :: libcint_eval_overlap_gradient
@@ -152,6 +153,23 @@ module tblite_integral_libcint
          type(c_ptr), value :: cache
          integer(c_size_t) :: stat
       end function int3c2e_sph
+
+      !> Evaluate (i j|k l) four-center two-electron repulsion integrals
+      function int2e_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
+            & bind(C, name="int2e_sph") result(stat)
+         import :: c_double, c_int, c_ptr, c_size_t
+         real(c_double), intent(out) :: out(*)
+         integer(c_int), intent(in) :: dims(*)
+         integer(c_int), intent(in) :: shls(*)
+         integer(c_int), intent(in) :: atm(*)
+         integer(c_int), value :: natm
+         integer(c_int), intent(in) :: bas(*)
+         integer(c_int), value :: nbas
+         real(c_double), intent(in) :: env(*)
+         type(c_ptr), value :: opt
+         type(c_ptr), value :: cache
+         integer(c_size_t) :: stat
+      end function int2e_sph
 
       !> Evaluate <i| R |j>
       function int1e_r_origj_sph(out, dims, shls, atm, natm, bas, nbas, env, opt, cache) &
@@ -705,6 +723,35 @@ function libcint_eval_1e(out, shls, atm, bas, env) result(stat)
    stat = int(int1e_ovlp_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
       & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
 end function libcint_eval_1e
+
+!> Evaluate (i j|k l) for four Gaussian shells.
+function libcint_eval_2e(out, shls, atm, bas, env) result(stat)
+   real(c_double), contiguous, intent(out) :: out(:, :, :, :)
+   integer, intent(in) :: shls(4)
+   integer(c_int), contiguous, intent(in) :: atm(:, :)
+   integer(c_int), contiguous, intent(in) :: bas(:, :)
+   real(c_double), contiguous, intent(in) :: env(:)
+   integer :: stat
+
+   integer(c_int) :: cshls(4), dims(4)
+   integer :: di, dj, dk, dl
+
+   di = int(cint_cgto_spheric(int(shls(1), c_int), bas))
+   dj = int(cint_cgto_spheric(int(shls(2), c_int), bas))
+   dk = int(cint_cgto_spheric(int(shls(3), c_int), bas))
+   dl = int(cint_cgto_spheric(int(shls(4), c_int), bas))
+   if (min(di, dj, dk, dl) < 0 .or. size(out, 1) < di .or. &
+      & size(out, 2) < dj .or. size(out, 3) < dk .or. size(out, 4) < dl) then
+      stat = -1
+      return
+   end if
+
+   cshls = int(shls, c_int)
+   dims = int(shape(out), c_int)
+   out = 0.0_c_double
+   stat = int(int2e_sph(out, dims, cshls, atm, int(size(atm, 2), c_int), &
+      & bas, int(size(bas, 2), c_int), env, c_null_ptr, c_null_ptr))
+end function libcint_eval_2e
 
 !> Evaluate (i j|k) for two AO shells and one auxiliary Gaussian shell.
 function libcint_eval_3c2e(out, shls, atm, bas, env) result(stat)

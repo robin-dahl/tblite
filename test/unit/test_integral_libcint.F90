@@ -15,11 +15,12 @@
 ! along with tblite.  If not, see <https://www.gnu.org/licenses/>.
 
 module test_integral_libcint
-   use, intrinsic :: iso_c_binding, only : c_double
+   use, intrinsic :: iso_c_binding, only : c_double, c_int
    use mctc_env, only : wp
    use mctc_env_testing, only : check, error_type, new_unittest, test_failed, &
       & unittest_type
    use mctc_io, only : new, structure_type
+   use mctc_io_constants, only : pi
    use mstore, only : get_structure
    use tblite_basis_type, only : basis_type, cgto_type, get_cutoff, new_basis, &
       & new_cgto
@@ -67,7 +68,9 @@ subroutine collect_integral_libcint(testsuite)
          & test_dipole_gradient_consistency), &
       new_unittest("quadrupole-consistency", test_quadrupole_consistency), &
       new_unittest("quadrupole-gradient-consistency", &
-         & test_quadrupole_gradient_consistency) &
+         & test_quadrupole_gradient_consistency), &
+      new_unittest("surface-3c2e-analytic", test_surface_3c2e_analytic), &
+      new_unittest("surface-3c2e-four-center", test_surface_3c2e_four_center) &
       ]
 #else
    testsuite = [ &
@@ -104,6 +107,137 @@ subroutine make_comparison_basis(mol, basis, libcint)
    call new_basis(basis, mol, nshell, cgto, 1.0_wp)
    call libcint%initialize_integral(mol, basis)
 end subroutine make_comparison_basis
+
+!> Validate the surface integral independently against the primitive s formula.
+subroutine test_surface_3c2e_analytic(error)
+   type(error_type), allocatable, intent(out) :: error
+   type(structure_type) :: mol
+   type(basis_type) :: basis
+   type(libcint_integral_type) :: libcint
+   type(cgto_type) :: cgtoi, cgtoj
+   real(wp), allocatable :: bmat(:, :, :)
+   real(wp) :: xyz(3, 1), xi(1), ref, p, kab, rho, t, f0
+   real(wp) :: center(3), product_center(3)
+   integer :: ip, jp, ish, jsh, ii, jj
+
+   call make_comparison_basis(mol, basis, libcint)
+   xyz(:, 1) = [0.31_wp, -0.47_wp, 0.72_wp]
+   xi(1) = 0.83_wp
+   call libcint%surface_3c2e(mol, basis, xyz, xi, bmat)
+
+   ! The first shell on each atom is an s shell.
+   ish = 1
+   jsh = 5
+   ii = basis%iao_sh(ish) + 1
+   jj = basis%iao_sh(jsh) + 1
+   cgtoi = basis%cgto(ish-basis%ish_at(1), mol%id(1))
+   cgtoj = basis%cgto(jsh-basis%ish_at(2), mol%id(2))
+
+   center = xyz(:, 1)
+   ref = 0.0_wp
+   do ip = 1, cgtoi%nprim
+      do jp = 1, cgtoj%nprim
+         p = cgtoi%alpha(ip) + cgtoj%alpha(jp)
+         product_center = (cgtoi%alpha(ip)*mol%xyz(:, 1) + &
+            & cgtoj%alpha(jp)*mol%xyz(:, 2))/p
+         kab = exp(-cgtoi%alpha(ip)*cgtoj%alpha(jp)/p * &
+            & sum((mol%xyz(:, 1)-mol%xyz(:, 2))**2))
+         rho = p*xi(1)**2/(p + xi(1)**2)
+         t = rho*sum((product_center-center)**2)
+         if (t > epsilon(1.0_wp)) then
+            f0 = 0.5_wp*sqrt(pi/t)*erf(sqrt(t))
+         else
+            f0 = 1.0_wp
+         end if
+         ref = ref + cgtoi%coeff(ip)*cgtoj%coeff(jp)*kab * &
+            & 2.0_wp*pi*xi(1)/(p*sqrt(p + xi(1)**2))*f0
+      end do
+   end do
+
+   call check(error, bmat(1, ii, jj), ref, thr=1.0e-11_wp, &
+      & message="Surface 3c2e integral does not match analytical s-s reference")
+end subroutine test_surface_3c2e_analytic
+
+!> Compare the 3c integral with an exactly equivalent four-center ERI.
+subroutine test_surface_3c2e_four_center(error)
+   type(error_type), allocatable, intent(out) :: error
+   type(structure_type) :: mol
+   type(basis_type) :: basis
+   type(libcint_integral_type) :: libcint
+   integer(c_int), allocatable :: atm(:, :), bas(:, :)
+   real(c_double), allocatable :: env(:), block(:, :, :, :)
+   real(wp), allocatable :: bmat(:, :, :)
+   real(wp) :: xyz(3, 1), xi(1), exponent, coeff
+   integer :: old_env, off, aux_atom, aux_shell, ish, jsh
+   integer :: ni, nj, ii, jj, iao, jao, stat
+
+   call make_comparison_basis(mol, basis, libcint)
+   xyz(:, 1) = [-0.24_wp, 0.63_wp, 0.91_wp]
+   xi(1) = 1.07_wp
+   call libcint%surface_3c2e(mol, basis, xyz, xi, bmat)
+
+   ! Construct h1 and h2 such that h1(r)h2(r)=g(r) exactly.  Both are
+   ! colocated s functions with exponent xi^2/2 and radial coefficient
+   ! (xi^2/pi)^(3/4).  The sqrt(4*pi) factor converts that radial
+   ! coefficient to libcint's normalized spherical angular convention.
+   allocate(atm(ATM_SLOTS, mol%nat+1), source=0_c_int)
+   allocate(bas(BAS_SLOTS, basis%nsh+2), source=0_c_int)
+   old_env = size(libcint%basis%env)
+   allocate(env(old_env+7), source=0.0_c_double)
+   atm(:, :mol%nat) = libcint%basis%atm
+   bas(:, :basis%nsh) = libcint%basis%bas
+   env(:old_env) = libcint%basis%env
+
+   off = old_env
+   aux_atom = mol%nat + 1
+   atm(CHARGE_OF, aux_atom) = 0_c_int
+   atm(PTR_COORD, aux_atom) = int(off, c_int)
+   atm(NUC_MOD_OF, aux_atom) = POINT_NUC
+   env(off+1:off+3) = real(xyz(:, 1), c_double)
+   off = off + 3
+   exponent = 0.5_wp*xi(1)**2
+   coeff = sqrt(4.0_wp*pi)*(xi(1)**2/pi)**0.75_wp
+   do aux_shell = basis%nsh+1, basis%nsh+2
+      bas(ATOM_OF, aux_shell) = int(aux_atom-1, c_int)
+      bas(ANG_OF, aux_shell) = 0_c_int
+      bas(NPRIM_OF, aux_shell) = 1_c_int
+      bas(NCTR_OF, aux_shell) = 1_c_int
+      bas(KAPPA_OF, aux_shell) = 0_c_int
+      bas(PTR_EXP, aux_shell) = int(off, c_int)
+      env(off+1) = real(exponent, c_double)
+      off = off + 1
+      bas(PTR_COEFF, aux_shell) = int(off, c_int)
+      env(off+1) = real(coeff, c_double)
+      off = off + 1
+   end do
+
+   do ish = 1, basis%nsh
+      ni = basis%nao_sh(ish)
+      ii = basis%iao_sh(ish)
+      do jsh = 1, basis%nsh
+         nj = basis%nao_sh(jsh)
+         jj = basis%iao_sh(jsh)
+         allocate(block(nj, ni, 1, 1))
+         stat = libcint_eval_2e(block, &
+            & [jsh-1, ish-1, basis%nsh, basis%nsh+1], atm, bas, env)
+         call check(error, stat >= 0, &
+            & message="Libcint four-center reference evaluation failed")
+         if (allocated(error)) return
+         do iao = 1, ni
+            do jao = 1, nj
+               call check(error, bmat(1, ii+iao, jj+jao), &
+                  & real(block(jao, iao, 1, 1), wp), thr=1.0e-11_wp, &
+                  & message="Surface 3c2e block does not match four-center ERI")
+               if (allocated(error)) return
+            end do
+         end do
+         deallocate(block)
+      end do
+   end do
+
+   call check(error, all(abs(bmat(1, :, :)-transpose(bmat(1, :, :))) < &
+      & 1.0e-12_wp), message="Surface 3c2e AO matrix is not symmetric")
+end subroutine test_surface_3c2e_four_center
 
 !> Compare native and libcint evaluators through the common handler interface
 subroutine test_integral_handler_consistency(error)
