@@ -1,2 +1,4 @@
-[wrap-redirect]
-filename = moist/subprojects/fclap.wrap
+[wrap-git]
+directory = fclap
+url = https://github.com/chselz/fclap
+revision = 8f499d50596aea1726fdd806e93400d1547a6f1e
