@@ -34,13 +34,13 @@ module tblite_solvation_ddx
    use mctc_env, only: wp, error_type, fatal_error
    use mctc_io, only: structure_type
    use mctc_io_constants, only: pi
+   use moist_radii_static, only: static_radius_type, new_gauss_radii
 !$ use omp_lib, only: omp_get_max_threads
    use tblite_blas, only: dot, gemv
    use tblite_container_cache, only: container_cache
    use tblite_mesh_lebedev, only: grid_size
    use tblite_scf_info, only: atom_resolved, not_used, scf_info
    use tblite_scf_potential, only: potential_type
-   use tblite_solvation_data, only: get_vdw_rad_cosmo
    use tblite_solvation_type, only: solvation_type
    use tblite_wavefunction_type, only: wavefunction_type
 
@@ -260,8 +260,8 @@ subroutine new_ddx(self, mol, input, error)
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
 #if TBLITE_HAS_DDX
-   integer :: iat, izp
    real(wp) :: feps_param
+   type(static_radius_type) :: gauss_radii
 
    ! Set label
    if (input%ddx_model == ddx_solvation_model%cosmo) then
@@ -287,10 +287,10 @@ subroutine new_ddx(self, mol, input, error)
    if (allocated(input%rvdw)) then
       self%rvdw(:) = input%rscale * input%rvdw(mol%id)
    else
-      do iat = 1, mol%nat
-         izp = mol%num(mol%id(iat))
-         self%rvdw(iat) = input%rscale * get_vdw_rad_cosmo(izp)
-      end do
+      call new_gauss_radii(gauss_radii)
+      call gauss_radii%update(mol, error)
+      if (allocated(error)) return
+      self%rvdw(:) = input%rscale * gauss_radii%f0
    end if
 
    ! Get epsilon and calculate dielectric function depending on the model

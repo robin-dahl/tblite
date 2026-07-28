@@ -28,6 +28,7 @@ module tblite_solvation_cosmo
    use moist_cavity_iswig, only : cavity_type_iswig, new_cavity_iswig
    use moist_model_component_pcm_solvers, only : solve_pcm_cholesky
    use moist_radii, only : radius_type, new_radii_custom_atoms
+   use moist_radii_static, only : static_radius_type, new_gauss_radii
    use tblite_basis_type, only : basis_type
    use tblite_container_cache, only : container_cache
 #if TBLITE_HAS_LIBCINT
@@ -35,7 +36,6 @@ module tblite_solvation_cosmo
 #endif
    use tblite_scf_info, only : atom_resolved, orbital_resolved, scf_info
    use tblite_scf_potential, only : potential_type
-   use tblite_solvation_data, only : get_vdw_rad_cosmo
    use tblite_solvation_type, only : solvation_type
    use tblite_wavefunction_type, only : wavefunction_type
    implicit none
@@ -103,7 +103,7 @@ module tblite_solvation_cosmo
 
    !> Geometry-dependent COSMO data.
    type :: cosmo_cache
-      ! sVDW drop cavity (previous implementation):
+      ! sVDW drop cavity:
       ! type(cavity_type_drop) :: cavity
       type(cavity_type_iswig) :: cavity
       real(wp), allocatable :: amat(:, :)
@@ -150,7 +150,7 @@ subroutine new_cosmo(self, mol, input, error, basis)
    type(error_type), allocatable, intent(out) :: error
    type(basis_type), intent(in), optional :: basis
 
-   integer :: iat
+   type(static_radius_type) :: gauss_radii
 
    if (input%dielectric_const <= 1.0_wp) then
       call fatal_error(error, "COSMO dielectric constant must be larger than one")
@@ -185,17 +185,18 @@ subroutine new_cosmo(self, mol, input, error, basis)
       end if
       self%basis = basis
    end if
-   allocate(self%rvdw(mol%nat))
    if (allocated(input%rvdw)) then
       if (maxval(mol%id) > size(input%rvdw)) then
          call fatal_error(error, "COSMO radii do not cover all species")
          return
       end if
+      allocate(self%rvdw(mol%nat))
       self%rvdw = input%rscale * input%rvdw(mol%id)
-   else
-      do iat = 1, mol%nat
-         self%rvdw(iat) = input%rscale * get_vdw_rad_cosmo(mol%num(mol%id(iat)))
-      end do
+   else if (input%rscale /= 1.0_wp) then
+      call new_gauss_radii(gauss_radii)
+      call gauss_radii%update(mol, error)
+      if (allocated(error)) return
+      allocate(self%rvdw(mol%nat), source=input%rscale*gauss_radii%f0)
    end if
 end subroutine new_cosmo
 
@@ -207,6 +208,7 @@ subroutine update(self, mol, cache)
 
    type(cosmo_cache), pointer :: ptr
    class(radius_type), allocatable :: radii
+   type(static_radius_type) :: gauss_radii
    ! sVDW drop cavity (previous implementation):
    ! type(moist_cavity_drop_lsf_svdw_type) :: svdw
    type(error_type), allocatable :: error
@@ -216,17 +218,23 @@ subroutine update(self, mol, cache)
    call taint(cache, ptr)
    ptr%ready = .false.
 
-   call new_radii_custom_atoms(self%rvdw, radii, error)
-   if (allocated(error)) return
    ! sVDW drop cavity (previous implementation):
    ! call svdw%new(blend_k=6.5_wp)
    ! call new_cavity_drop(ptr%cavity, verbose=0, nleb=self%nang, &
    !    & radius_model=radii, lsf_model=svdw, error=error)
 
-   ! iSwiG cavity. The same custom atom radii and requested Lebedev grid are
-   ! passed to moist; cut_a and cut_f retain moist's iSwiG defaults.
-   call new_cavity_iswig(ptr%cavity, nleb=self%nang, radius_model=radii, &
-      & error=error)
+   ! iSwiG cavity. Use moist's ORCA-style Gaussian radii by default; retain
+   ! explicitly supplied or additionally scaled radii through the custom model.
+   if (allocated(self%rvdw)) then
+      call new_radii_custom_atoms(self%rvdw, radii, error)
+      if (allocated(error)) return
+      call new_cavity_iswig(ptr%cavity, nleb=self%nang, radius_model=radii, &
+         & error=error)
+   else
+      call new_gauss_radii(gauss_radii)
+      call new_cavity_iswig(ptr%cavity, nleb=self%nang, radius_model=gauss_radii, &
+         & error=error)
+   end if
    if (allocated(error)) return
    call ptr%cavity%update(mol, error)
    if (allocated(error)) return
@@ -238,12 +246,8 @@ subroutine update(self, mol, cache)
    if (allocated(ptr%phi)) deallocate(ptr%phi)
    if (allocated(ptr%qsurf)) deallocate(ptr%qsurf)
    allocate(ptr%amat(ptr%cavity%ngrid, ptr%cavity%ngrid))
-   ! The standalone iSwiG cavity currently provides a collocation-style
-   ! matrix which is not the Coulomb matrix of its Gaussian surface basis.
-   ! Assemble the latter explicitly so that A, Ucore, and the AO-pair
-   ! integrals all use the same normalized Gaussians.
-   call build_iswig_amat(ptr%cavity%xyz, ptr%cavity%xi, ptr%cavity%f, &
-      & ptr%amat)
+   call ptr%cavity%get_amat(ptr%amat, error)
+   if (allocated(error)) return
 
    allocate(ptr%c0(ptr%cavity%ngrid, mol%nat))
    allocate(ptr%c1(3, ptr%cavity%ngrid, mol%nat))
@@ -290,29 +294,6 @@ subroutine update(self, mol, cache)
    end do
    ptr%ready = .true.
 end subroutine update
-
-!> Build A(i,j)=(g_i|g_j) for the normalized iSwiG surface Gaussians.
-subroutine build_iswig_amat(xyz, xi, switch, amat)
-   real(wp), intent(in) :: xyz(:, :)
-   real(wp), intent(in) :: xi(:)
-   real(wp), intent(in) :: switch(:)
-   real(wp), intent(out) :: amat(:, :)
-
-   integer :: igrid, jgrid
-   real(wp) :: xiij, rij
-
-   do igrid = 1, size(xi)
-      amat(igrid, igrid) = sqrt(2.0_wp/acos(-1.0_wp))*xi(igrid) &
-         & /switch(igrid)
-      do jgrid = 1, igrid - 1
-         xiij = xi(igrid)*xi(jgrid) &
-            & /sqrt(xi(igrid)**2 + xi(jgrid)**2)
-         rij = norm2(xyz(:, igrid) - xyz(:, jgrid))
-         amat(igrid, jgrid) = erf(xiij*rij)/rij
-         amat(jgrid, igrid) = amat(igrid, jgrid)
-      end do
-   end do
-end subroutine build_iswig_amat
 
 !> Form the solute potential and solve for apparent surface charges.
 subroutine solve_surface(self, ptr, wfn)

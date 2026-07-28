@@ -403,7 +403,9 @@ subroutine test_e_cosmo_m01(error)
       & 5.17677238544189E-1_wp]
 
    call get_structure(mol, "MB16-43", "01")
-   call test_e(error, ddx_solvation_model%cosmo, mol, qat, -3.4697720884118800E-2_wp)
+   ! COSMO radii reference:
+   ! call test_e(error, ddx_solvation_model%cosmo, mol, qat, -3.4697720884118800E-2_wp)
+   call test_e(error, ddx_solvation_model%cosmo, mol, qat, -1.9188724249112E-2_wp)
 
 end subroutine test_e_cosmo_m01
 
@@ -422,7 +424,9 @@ subroutine test_e_cpcm_m01(error)
       & 5.17677238544189E-1_wp]
 
    call get_structure(mol, "MB16-43", "01")
-   call test_e(error, ddx_solvation_model%cpcm, mol, qat, -3.4914581639644553E-002_wp)
+   ! COSMO radii reference:
+   ! call test_e(error, ddx_solvation_model%cpcm, mol, qat, -3.4914581639644553E-002_wp)
+   call test_e(error, ddx_solvation_model%cpcm, mol, qat, -1.9308653775669E-2_wp)
 
 end subroutine test_e_cpcm_m01
 
@@ -441,7 +445,9 @@ subroutine test_e_pcm_m01(error)
       & 5.17677238544189E-1_wp]
 
    call get_structure(mol, "MB16-43", "01")
-   call test_e(error, ddx_solvation_model%pcm, mol, qat, -3.3624259293951506E-2_wp)
+   ! COSMO radii reference:
+   ! call test_e(error, ddx_solvation_model%pcm, mol, qat, -3.3624259293951506E-2_wp)
+   call test_e(error, ddx_solvation_model%pcm, mol, qat, -1.8492346683564E-2_wp)
 
 end subroutine test_e_pcm_m01
 

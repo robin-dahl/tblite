@@ -1,4 +1,4 @@
 [wrap-git]
 directory = moist
 url = https://github.com/lukaswittmann/moist
-revision = v0.6.0-alpha.1
+revision = main
