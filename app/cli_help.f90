@@ -158,8 +158,9 @@ module tblite_cli_help
       "                           Solvent is specified by dielectric constant or solvent name."//nl//&
       "      --cpcm <real>/<name> Use moist-backed conductor-like polarizable continuum model (CPCM)."//nl//&
       "                           Solvent is specified by dielectric constant or solvent name."//nl//&
-      "      --solv-dipoles      Include atomic dipoles in COSMO/CPCM or ddX solvation."//nl//&
-      "      --solv-quadrupoles  Include atomic quadrupoles in COSMO/CPCM or ddX solvation."//nl//&
+      "      --solv-monopoles    Use atomic monopoles in COSMO/CPCM or ddX solvation."//nl//&
+      "      --solv-dipoles      Use atomic dipoles in COSMO/CPCM or ddX solvation."//nl//&
+      "      --solv-quadrupoles  Use atomic quadrupoles in COSMO/CPCM or ddX solvation."//nl//&
       "      --solv-full-density Use the full AO density with Gaussian-surface COSMO/CPCM."//nl//&
       "      --ddcosmo <real>/<name> Use ddX conductor-like screening model (ddCOSMO)."//nl//&
       "                           Solvent is specified by dielectric constant or solvent name."//nl//&

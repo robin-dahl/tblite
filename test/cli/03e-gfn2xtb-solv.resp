@@ -4,4 +4,5 @@ $ORIGIN/03-ser-xar.sdf
 gfn2
 --ddcpcm
 inf
+--solv-monopoles
 --grad

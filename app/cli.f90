@@ -275,13 +275,14 @@ subroutine get_run_arguments(config, list, start, error)
    character(len=:), allocatable :: arg, sec, mixer_name
    real(wp) :: anneal_input(3)
    logical :: solvent_not_found, parametrized_solvation
-   logical :: solv_dipoles, solv_quadrupoles, solv_full_density
+   logical :: solv_monopoles, solv_dipoles, solv_quadrupoles, solv_full_density
    logical, allocatable :: alpb
    integer, allocatable :: ddx_model, cosmo_model
    integer, allocatable :: kernel, sol_state
    type(solvent_data), allocatable :: solvent
 
    iarg = start
+   solv_monopoles = .false.
    solv_dipoles = .false.
    solv_quadrupoles = .false.
    solv_full_density = .false.
@@ -452,6 +453,9 @@ subroutine get_run_arguments(config, list, start, error)
             call fatal_error(error, "Unknown Born kernel '"//arg//"'")
             exit
          end select
+
+      case("--solv-monopoles")
+         solv_monopoles = .true.
 
       case("--solv-dipoles")
          solv_dipoles = .true.
@@ -786,7 +790,7 @@ subroutine get_run_arguments(config, list, start, error)
       config%post_proc_output = "tblite-data.npz"
    end if
 
-   if ((solv_dipoles .or. solv_quadrupoles) .and. &
+   if ((solv_monopoles .or. solv_dipoles .or. solv_quadrupoles) .and. &
       & .not.allocated(cosmo_model) .and. .not.allocated(ddx_model)) then
       call fatal_error(error, &
          & "Solvation multipoles require COSMO/CPCM or a ddX solvation model")
@@ -796,8 +800,14 @@ subroutine get_run_arguments(config, list, start, error)
       call fatal_error(error, "Full-density solvation requires --cosmo or --cpcm")
       return
    end if
-   if (solv_full_density .and. (solv_dipoles .or. solv_quadrupoles)) then
+   if (solv_full_density .and. (solv_monopoles .or. solv_dipoles .or. solv_quadrupoles)) then
       call fatal_error(error, "Full-density and multipole solvation representations are mutually exclusive")
+      return
+   end if
+   if ((allocated(cosmo_model) .or. allocated(ddx_model)) .and. &
+      & .not.(solv_monopoles .or. solv_dipoles .or. solv_quadrupoles .or. solv_full_density)) then
+      call fatal_error(error, "No solute electron-density representation selected; specify "//&
+         & "--solv-monopoles, --solv-dipoles, --solv-quadrupoles, or --solv-full-density")
       return
    end if
 
@@ -833,7 +843,7 @@ subroutine get_run_arguments(config, list, start, error)
          end if
          allocate(config%solvation)
          config%solvation%cosmo = cosmo_input(solvent%eps, model=cosmo_model, &
-            & dipoles=solv_dipoles, quadrupoles=solv_quadrupoles, &
+            & monopoles=solv_monopoles, dipoles=solv_dipoles, quadrupoles=solv_quadrupoles, &
             & full_density=solv_full_density)
       else
          ! ddX solvation model
@@ -843,7 +853,8 @@ subroutine get_run_arguments(config, list, start, error)
          end if
          allocate(config%solvation)
          config%solvation%ddx = ddx_input(ddx_model, solvent%eps, &
-            & use_dipoles=solv_dipoles, use_quadrupoles=solv_quadrupoles)
+            & use_monopoles=solv_monopoles, use_dipoles=solv_dipoles, &
+            & use_quadrupoles=solv_quadrupoles)
       end if
    end if
 

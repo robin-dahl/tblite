@@ -29,7 +29,7 @@ module tblite_solvation
    use tblite_solvation_alpb, only : alpb_solvation, new_alpb, alpb_input, born_kernel
    use tblite_solvation_cds, only : cds_solvation, new_cds, cds_input
    use tblite_solvation_cosmo, only : cosmo_solvation, new_cosmo, cosmo_input, &
-      & cosmo_solvation_model
+      & cosmo_solvation_model, write_cpcm_file
    use tblite_solvation_data, only : solvent_data, get_solvent_data
    use tblite_solvation_data_alpb, only: get_alpb_param
    use tblite_solvation_data_cds, only: get_cds_param
@@ -45,6 +45,7 @@ module tblite_solvation
    public :: ddx_solvation, ddx_solvation_model, new_ddx, ddx_input
    public :: cds_solvation, new_cds, cds_input
    public :: cosmo_solvation, new_cosmo, cosmo_input, cosmo_solvation_model
+   public :: write_cpcm_file
    public :: shift_solvation, new_shift, shift_input
    public :: solvent_data, get_solvent_data
    public :: solvation_input, new_solvation, solvation_type

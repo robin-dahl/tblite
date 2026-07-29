@@ -28,7 +28,7 @@ module tblite_solvation_ddx
    use ddx, only: allocate_state, check_error, ddinit, ddrun, ddx_error_type, &
       & ddx_state_type, ddx_type, fill_guess, fill_guess_adjoint, setup, &
       & solvation_force_terms, solve, solve_adjoint
-   use ddx_core, only: ddx_electrostatics_type
+   use ddx_core, only: ddx_electrostatics_type, ddeval_grid
    use ddx_multipolar_solutes, only: multipole_electrostatics, multipole_force_terms, multipole_psi
 #endif
    use mctc_env, only: wp, error_type, fatal_error
@@ -49,6 +49,9 @@ module tblite_solvation_ddx
 
    public :: ddx_solvation, new_ddx, ddx_input, ddx_cache, ddx_solvation_model
    public :: valid_ddx_model
+#if TBLITE_HAS_DDX
+   public :: write_ddx_cpcm_file
+#endif
 
    !> Possible solvation models to be used within the dd framework
    type :: enum_ddx_solvation_model
@@ -84,6 +87,8 @@ module tblite_solvation_ddx
       real(wp) :: eta = 0.1_wp
       !> Maximum angular momentum of basis functions
       integer :: lmax = 1
+      !> Include atom-resolved monopoles in the ddX solute density
+      logical :: use_monopoles = .true.
       !> Include atom-resolved dipoles in the ddX solute density
       logical :: use_dipoles = .false.
       !> Include atom-resolved quadrupoles in the ddX solute density
@@ -113,6 +118,8 @@ module tblite_solvation_ddx
       integer :: nang
       !> Maximum angular momentum of basis functions
       integer :: lmax
+      !> Include atom-resolved monopoles in the ddX solute density
+      logical :: use_monopoles = .true.
       !> Include atom-resolved dipoles in the ddX solute density
       logical :: use_dipoles = .false.
       !> Include atom-resolved quadrupoles in the ddX solute density
@@ -178,8 +185,8 @@ module tblite_solvation_ddx
 contains
 
 !> Constructor for ddX input
-function create_ddx_input(ddx_model, dielectric_const, rvdw, rscale, nang, eta, lmax, use_dipoles, &
-      & use_quadrupoles) result(self)
+function create_ddx_input(ddx_model, dielectric_const, rvdw, rscale, nang, eta, lmax, use_monopoles, &
+      & use_dipoles, use_quadrupoles) result(self)
    !> ddX model
    integer, intent(in), optional :: ddx_model
    !> Dielectric constant
@@ -194,6 +201,8 @@ function create_ddx_input(ddx_model, dielectric_const, rvdw, rscale, nang, eta, 
    real(wp), intent(in), optional :: eta
    !> Maximum angular momentum of basis functions
    integer, intent(in), optional :: lmax
+   !> Include atom-resolved monopoles in the ddX solute density
+   logical, intent(in), optional :: use_monopoles
    !> Include atom-resolved dipoles in the ddX solute density
    logical, intent(in), optional :: use_dipoles
    !> Include atom-resolved quadrupoles in the ddX solute density
@@ -227,6 +236,9 @@ function create_ddx_input(ddx_model, dielectric_const, rvdw, rscale, nang, eta, 
       self%lmax = lmax
    end if
 
+   if (present(use_monopoles)) then
+      self%use_monopoles = use_monopoles
+   end if
    if (present(use_dipoles)) then
       self%use_dipoles = use_dipoles
    end if
@@ -318,6 +330,7 @@ subroutine new_ddx(self, mol, input, error)
    self%nang = input%nang
    self%eta = input%eta
    self%lmax = max(input%lmax, multipole_order(input%use_dipoles, input%use_quadrupoles))
+   self%use_monopoles = input%use_monopoles
    self%use_dipoles = input%use_dipoles
    self%use_quadrupoles = input%use_quadrupoles
 #else
@@ -472,6 +485,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    type(container_cache), intent(inout) :: cache
 #if TBLITE_HAS_DDX
    type(ddx_cache), pointer :: ptr
+   type(error_type), allocatable :: write_error
    integer :: mp_order
 
    call view(cache, ptr)
@@ -481,7 +495,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
 
    ! Convert the multipoles from Cartesian into the spherical harmonics representation
    ! according to https://en.wikipedia.org/wiki/Table_of_spherical_harmonics
-   call set_multipoles(ptr, wfn, self%use_dipoles, self%use_quadrupoles)
+   call set_multipoles(ptr, wfn, self%use_monopoles, self%use_dipoles, self%use_quadrupoles)
    ! Compute the electrostatic potential on the cavity surface
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%multipoles, mp_order, ptr%ddx_electrostatics, ptr%ddx_error)
@@ -498,6 +512,10 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    call solve(ptr%ddx%params, ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%ddx_state, self%conv, ptr%ddx_error)
    call check_error(ptr%ddx_error)
+
+   ! This routine is evaluated in every SCF iteration. Replacing the file
+   ! here leaves the surface data from the final energy evaluation.
+   call write_ddx_cpcm_file(ptr, write_error)
 
    ! Add solvation energy to total energy
    energies(:) = energies + self%feps * 0.5_wp * sum(ptr%ddx_state%xs * ptr%ddx_state%psi, 1)
@@ -529,7 +547,7 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    ! Convert the multipoles from Cartesian space into the spherical harmonics representation
    ! according to https://en.wikipedia.org/wiki/Table_of_spherical_harmonics
-   call set_multipoles(ptr, wfn, self%use_dipoles, self%use_quadrupoles)
+   call set_multipoles(ptr, wfn, self%use_monopoles, self%use_dipoles, self%use_quadrupoles)
    ! Compute the electrostatic potential on the cavity surface
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%multipoles, mp_order, ptr%ddx_electrostatics, ptr%ddx_error)
@@ -562,10 +580,16 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    ! (Again, see J. Chem. Theory Comput. 2013, 9, 3637−3648)
    ! Zeta is an intermediate in the computation of the latter and needs to be
    ! contracted with the Coulomb matrix in a last step.
-   call gemv(ptr%jmat, ptr%ddx_state%zeta, ptr%ddx_pot(:), alpha=-1.0_wp, beta=1.0_wp, trans='t')
+   if (self%use_monopoles) then
+      call gemv(ptr%jmat, ptr%ddx_state%zeta, ptr%ddx_pot(:), &
+         & alpha=-1.0_wp, beta=1.0_wp, trans='t')
+   end if
 
    ! Scale with 0.5 and feps, and get the Psi contribution to potential
-   ptr%ddx_pot(:) = 0.5_wp * self%feps * (ptr%ddx_pot(:) + sqrt(4.0_wp*pi) * ptr%ddx_state%xs(1, :))
+   if (self%use_monopoles) then
+      ptr%ddx_pot(:) = 0.5_wp * self%feps * (ptr%ddx_pot(:) + &
+         & sqrt(4.0_wp*pi) * ptr%ddx_state%xs(1, :))
+   end if
 
    if (self%use_dipoles .and. allocated(pot%vdp)) then
       ptr%ddx_dppot(:, :) = 0.0_wp
@@ -588,7 +612,7 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    end if
 
    ! Add potential to overall potential for new SCC step
-   pot%vat(:,1) = pot%vat(:,1) + ptr%ddx_pot(:)
+   if (self%use_monopoles) pot%vat(:,1) = pot%vat(:,1) + ptr%ddx_pot(:)
    if (self%use_dipoles .and. allocated(pot%vdp)) then
       pot%vdp(1,:,1) = pot%vdp(1,:,1) + ptr%ddx_dppot(3,:)
       pot%vdp(2,:,1) = pot%vdp(2,:,1) + ptr%ddx_dppot(1,:)
@@ -626,7 +650,7 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
    call view(cache, ptr)
    mp_order = multipole_order(self%use_dipoles, self%use_quadrupoles)
 
-   call set_multipoles(ptr, wfn, self%use_dipoles, self%use_quadrupoles)
+   call set_multipoles(ptr, wfn, self%use_monopoles, self%use_dipoles, self%use_quadrupoles)
 
    call multipole_electrostatics(ptr%ddx%params, ptr%ddx%constants, &
       & ptr%ddx%workspace, ptr%multipoles, mp_order, ptr%ddx_electrostatics, ptr%ddx_error)
@@ -667,6 +691,68 @@ subroutine get_gradient(self, mol, cache, wfn, gradient, sigma)
 
 end subroutine get_gradient
 
+#if TBLITE_HAS_DDX
+!> Write the current ddX surface in the same table layout as tblite COSMO.
+subroutine write_ddx_cpcm_file(ptr, error)
+   type(ddx_cache), intent(in) :: ptr
+   type(error_type), allocatable, intent(out) :: error
+
+   integer :: icav, igrid, isph, io, stat
+   character(len=512) :: iomsg
+   real(wp) :: area, charge
+   real(wp), allocatable :: sigma_grid(:, :)
+
+   if (.not.allocated(ptr%ddx_state%xs) .or. &
+      & .not.allocated(ptr%ddx_electrostatics%phi_cav)) then
+      call fatal_error(error, "ddX surface data are not available")
+      return
+   end if
+
+   allocate(sigma_grid(ptr%ddx%params%ngrid, ptr%ddx%params%nsph), source=0.0_wp)
+   call ddeval_grid(ptr%ddx%params, ptr%ddx%constants, 1.0_wp, &
+      & ptr%ddx_state%xs, 0.0_wp, sigma_grid)
+
+   open(newunit=io, file="tblite.cpcm", status="replace", action="write", &
+      & iostat=stat, iomsg=iomsg)
+   if (stat /= 0) then
+      call fatal_error(error, "Could not open tblite.cpcm: "//trim(iomsg))
+      return
+   end if
+
+   write(io, '(a)', iostat=stat, iomsg=iomsg) &
+      & "          X                 Y                 Z               area"// &
+      & "            potential          charge            w_leb"// &
+      & "             Switch_F          G_width       atom"
+   if (stat == 0) then
+      do isph = 1, ptr%ddx%params%nsph
+         do icav = ptr%ddx%constants%icav_ia(isph), &
+            & ptr%ddx%constants%icav_ia(isph + 1) - 1
+            igrid = ptr%ddx%constants%icav_ja(icav)
+            area = ptr%ddx%params%rsph(isph)**2 * &
+               & ptr%ddx%constants%wgrid(igrid) * ptr%ddx%constants%ui_cav(icav)
+            ! ddX represents sigma with the Laplace Green's function
+            ! 1/(4*pi*r), whereas tblite and ORCA use point charges with
+            ! the Coulomb kernel 1/r.
+            charge = sigma_grid(igrid, isph) * area / (4.0_wp*pi)
+            write(io, '(3f18.9,4f18.9,f20.14,1x,a19,i8)', &
+               & iostat=stat, iomsg=iomsg) ptr%ddx%constants%ccav(:, icav), &
+               & area, ptr%ddx_electrostatics%phi_cav(icav), charge, &
+               & ptr%ddx%constants%wgrid(igrid), ptr%ddx%constants%ui_cav(icav), &
+               & "-", isph - 1
+            if (stat /= 0) exit
+         end do
+         if (stat /= 0) exit
+      end do
+   end if
+
+   close(io)
+   if (stat /= 0) then
+      call fatal_error(error, "Could not write tblite.cpcm: "//trim(iomsg))
+      return
+   end if
+end subroutine write_ddx_cpcm_file
+#endif
+
 !> Return dependency on density
 pure function variable_info(self) result(info)
    !> Instance of the solvation model
@@ -674,7 +760,7 @@ pure function variable_info(self) result(info)
    !> Information on the required potential data
    type(scf_info) :: info
 
-   info = scf_info(charge=atom_resolved, &
+   info = scf_info(charge=merge(atom_resolved, not_used, self%use_monopoles), &
       & dipole=merge(atom_resolved, not_used, self%use_dipoles), &
       & quadrupole=merge(atom_resolved, not_used, self%use_quadrupoles))
 end function variable_info
@@ -694,9 +780,10 @@ pure function multipole_order(use_dipoles, use_quadrupoles) result(order)
    end if
 end function multipole_order
 
-subroutine set_multipoles(ptr, wfn, use_dipoles, use_quadrupoles)
+subroutine set_multipoles(ptr, wfn, use_monopoles, use_dipoles, use_quadrupoles)
    type(ddx_cache), intent(inout) :: ptr
    type(wavefunction_type), intent(in) :: wfn
+   logical, intent(in) :: use_monopoles
    logical, intent(in) :: use_dipoles
    logical, intent(in) :: use_quadrupoles
 
@@ -704,7 +791,7 @@ subroutine set_multipoles(ptr, wfn, use_dipoles, use_quadrupoles)
    real(wp), parameter :: dfac = sqrt(3.0_wp/(4.0_wp*pi))
 
    ptr%multipoles(:, :) = 0.0_wp
-   ptr%multipoles(1, :) = wfn%qat(:, 1) * qfac
+   if (use_monopoles) ptr%multipoles(1, :) = wfn%qat(:, 1) * qfac
    if (use_dipoles .and. allocated(wfn%dpat)) then
       ptr%multipoles(2, :) = wfn%dpat(2,:,1) * dfac
       ptr%multipoles(3, :) = wfn%dpat(3,:,1) * dfac

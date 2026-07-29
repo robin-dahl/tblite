@@ -34,7 +34,7 @@ module tblite_solvation_cosmo
 #if TBLITE_HAS_LIBCINT
    use tblite_integral_libcint, only : libcint_integral_type
 #endif
-   use tblite_scf_info, only : atom_resolved, orbital_resolved, scf_info
+   use tblite_scf_info, only : atom_resolved, not_used, orbital_resolved, scf_info
    use tblite_scf_potential, only : potential_type
    use tblite_solvation_type, only : solvation_type
    use tblite_wavefunction_type, only : wavefunction_type
@@ -42,6 +42,8 @@ module tblite_solvation_cosmo
    private
 
    public :: cosmo_input, cosmo_solvation, cosmo_cache, new_cosmo
+   public :: write_cpcm_file
+   public :: get_gaussian_multipole_kernels
    public :: cosmo_solvation_model
 
    type :: enum_cosmo_solvation_model
@@ -64,6 +66,8 @@ module tblite_solvation_cosmo
       real(wp) :: rscale = 1.0_wp
       !> Number of Lebedev points on each atomic sphere.
       integer :: nang = 110
+      !> Include atom-resolved monopoles in the solute density.
+      logical :: monopoles = .true.
       !> Include atom-resolved dipoles in the solute density.
       logical :: dipoles = .false.
       !> Include atom-resolved quadrupoles in the solute density.
@@ -86,6 +90,8 @@ module tblite_solvation_cosmo
       real(wp), allocatable :: rvdw(:)
       !> Number of Lebedev points per sphere.
       integer :: nang
+      !> Include atom-resolved monopoles.
+      logical :: monopoles = .true.
       !> Include atom-resolved dipoles.
       logical :: dipoles = .false.
       !> Include atom-resolved quadrupoles.
@@ -122,13 +128,13 @@ module tblite_solvation_cosmo
 contains
 
 function create_cosmo_input(dielectric_const, model, rvdw, rscale, nang, &
-      & dipoles, quadrupoles, full_density) result(self)
+      & monopoles, dipoles, quadrupoles, full_density) result(self)
    real(wp), intent(in) :: dielectric_const
    integer, intent(in), optional :: model
    real(wp), intent(in), optional :: rvdw(:)
    real(wp), intent(in), optional :: rscale
    integer, intent(in), optional :: nang
-   logical, intent(in), optional :: dipoles, quadrupoles
+   logical, intent(in), optional :: monopoles, dipoles, quadrupoles
    logical, intent(in), optional :: full_density
    type(cosmo_input) :: self
 
@@ -137,6 +143,7 @@ function create_cosmo_input(dielectric_const, model, rvdw, rscale, nang, &
    if (present(rvdw)) self%rvdw = rvdw
    if (present(rscale)) self%rscale = rscale
    if (present(nang)) self%nang = nang
+   if (present(monopoles)) self%monopoles = monopoles
    if (present(dipoles)) self%dipoles = dipoles
    if (present(quadrupoles)) self%quadrupoles = quadrupoles
    if (present(full_density)) self%full_density = full_density
@@ -175,6 +182,7 @@ subroutine new_cosmo(self, mol, input, error, basis)
       return
    end select
    self%nang = input%nang
+   self%monopoles = input%monopoles
    self%dipoles = input%dipoles
    self%quadrupoles = input%quadrupoles
    self%full_density = input%full_density
@@ -213,7 +221,7 @@ subroutine update(self, mol, cache)
    ! type(moist_cavity_drop_lsf_svdw_type) :: svdw
    type(error_type), allocatable :: error
    integer :: igrid, iat
-   real(wp) :: vec(3), r2, r1, r3, r5
+   real(wp) :: vec(3), r1, r3
 
    call taint(cache, ptr)
    ptr%ready = .false.
@@ -281,19 +289,43 @@ subroutine update(self, mol, cache)
    do iat = 1, mol%nat
       do igrid = 1, ptr%cavity%ngrid
          vec = ptr%cavity%xyz(:, igrid) - mol%xyz(:, iat)
-         r2 = sum(vec**2)
-         r1 = sqrt(r2)
-         r3 = r1*r2
-         r5 = r3*r2
-         ptr%c0(igrid, iat) = 1.0_wp/r1
-         ptr%c1(:, igrid, iat) = vec/r3
-         ptr%c2(:, igrid, iat) = [vec(1)*vec(1), 2.0_wp*vec(1)*vec(2), &
-            & vec(2)*vec(2), 2.0_wp*vec(1)*vec(3), &
-            & 2.0_wp*vec(2)*vec(3), vec(3)*vec(3)]/r5
+         call get_gaussian_multipole_kernels(vec, ptr%cavity%xi(igrid), &
+            & ptr%c0(igrid, iat), ptr%c1(:, igrid, iat), &
+            & ptr%c2(:, igrid, iat))
       end do
    end do
    ptr%ready = .true.
 end subroutine update
+
+!> Coulomb coupling of a monopole, dipole, and traceless Cartesian
+!> quadrupole to one normalized spherical Gaussian surface function.
+pure subroutine get_gaussian_multipole_kernels(vec, xi, c0, c1, c2)
+   real(wp), intent(in) :: vec(3)
+   real(wp), intent(in) :: xi
+   real(wp), intent(out) :: c0
+   real(wp), intent(out) :: c1(3)
+   real(wp), intent(out) :: c2(6)
+
+   real(wp) :: r1, r2, gaussian, erf_term
+   real(wp) :: dipole_kernel, quadrupole_kernel
+   real(wp), parameter :: sqrtpi = sqrt(acos(-1.0_wp))
+
+   r2 = sum(vec**2)
+   r1 = sqrt(r2)
+   gaussian = exp(-(xi*r1)**2)
+   erf_term = erf(xi*r1)
+
+   c0 = erf_term/r1
+   dipole_kernel = erf_term/(r1*r2) &
+      & - 2.0_wp*xi*gaussian/(sqrtpi*r2)
+   quadrupole_kernel = erf_term/(r1*r2*r2) &
+      & - 2.0_wp*xi*gaussian/(sqrtpi*r2*r2) &
+      & - 4.0_wp*xi**3*gaussian/(3.0_wp*sqrtpi*r2)
+   c1 = dipole_kernel*vec
+   c2 = [vec(1)*vec(1), 2.0_wp*vec(1)*vec(2), &
+      & vec(2)*vec(2), 2.0_wp*vec(1)*vec(3), &
+      & 2.0_wp*vec(2)*vec(3), vec(3)*vec(3)]*quadrupole_kernel
+end subroutine get_gaussian_multipole_kernels
 
 !> Form the solute potential and solve for apparent surface charges.
 subroutine solve_surface(self, ptr, wfn)
@@ -312,7 +344,8 @@ subroutine solve_surface(self, ptr, wfn)
          ptr%phi(ic) = ptr%phi(ic) - sum(ptr%bmat(ic, :, :)*density)
       end do
    else
-      ptr%phi = matmul(ptr%c0, wfn%qat(:, 1))
+      ptr%phi = 0.0_wp
+      if (self%monopoles) ptr%phi = matmul(ptr%c0, wfn%qat(:, 1))
    end if
    do iat = 1, size(wfn%qat, 1)
       if (.not.self%full_density .and. self%dipoles) then
@@ -338,6 +371,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    real(wp), intent(inout) :: energies(:)
 
    type(cosmo_cache), pointer :: ptr
+   type(error_type), allocatable :: write_error
    integer :: iat, ic
    real(wp) :: vat, vdp(3), vqp(6)
 
@@ -346,6 +380,9 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    if (.not.ptr%ready) return
    call solve_surface(self, ptr, wfn)
    if (.not.ptr%ready) return
+   ! The energy routine is evaluated in every SCF iteration. Replacing the
+   ! file here leaves the converged surface table after the final iteration.
+   call write_cpcm_file(ptr%cavity, ptr%phi, ptr%qsurf, self%feps, write_error)
    if (self%full_density) then
       energies(:) = energies(:) + 0.5_wp*dot_product(ptr%qsurf, ptr%phi)/real(mol%nat, wp)
    else
@@ -357,13 +394,18 @@ subroutine get_energy(self, mol, cache, wfn, energies)
          do ic = 1, 6
             vqp(ic) = dot_product(ptr%c2(ic, :, iat), ptr%qsurf)
          end do
-         energies(iat) = energies(iat) + 0.5_wp*wfn%qat(iat, 1)*vat
+         if (self%monopoles) energies(iat) = energies(iat) + 0.5_wp*wfn%qat(iat, 1)*vat
          if (self%dipoles) energies(iat) = energies(iat) + &
             & 0.5_wp*dot_product(wfn%dpat(:, iat, 1), vdp)
          if (self%quadrupoles) energies(iat) = energies(iat) + &
             & 0.5_wp*dot_product(wfn%qpat(:, iat, 1), vqp)
       end do
    end if
+
+   ! Print monopoles, dipoles, and quadrupoles
+   ! print *, "Monopoles: ", wfn%qat
+   ! print *, "Dipoles: ", wfn%dpat
+   ! print *, "Quadrupoles: ", wfn%qpat
 
 end subroutine get_energy
 
@@ -391,7 +433,8 @@ subroutine get_potential(self, mol, cache, wfn, pot)
       end do
    else
       do iat = 1, mol%nat
-         pot%vat(iat, 1) = pot%vat(iat, 1) + dot_product(ptr%c0(:, iat), ptr%qsurf)
+         if (self%monopoles) pot%vat(iat, 1) = pot%vat(iat, 1) + &
+            & dot_product(ptr%c0(:, iat), ptr%qsurf)
          if (self%dipoles) then
             do ic = 1, 3
                pot%vdp(ic, iat, 1) = pot%vdp(ic, iat, 1) + &
@@ -408,15 +451,69 @@ subroutine get_potential(self, mol, cache, wfn, pot)
    end if
 end subroutine get_potential
 
+!> Write the current iSwiG surface in ORCA-compatible CPCM table format.
+subroutine write_cpcm_file(cavity, phi, qsurf, feps, error)
+   type(cavity_type_iswig), intent(in) :: cavity
+   real(wp), intent(in) :: phi(:)
+   real(wp), intent(in) :: qsurf(:)
+   real(wp), intent(in) :: feps
+   type(error_type), allocatable, intent(out) :: error
+
+   integer :: igrid, io, stat
+   character(len=512) :: iomsg
+   real(wp) :: charge
+
+   if (size(phi) /= cavity%ngrid .or. size(qsurf) /= cavity%ngrid) then
+      call fatal_error(error, "CPCM surface data dimensions do not match the cavity")
+      return
+   end if
+   if (abs(feps) <= epsilon(1.0_wp)) then
+      call fatal_error(error, "CPCM dielectric scaling factor is zero")
+      return
+   end if
+
+   open(newunit=io, file="tblite.cpcm", status="replace", action="write", &
+      & iostat=stat, iomsg=iomsg)
+   if (stat /= 0) then
+      call fatal_error(error, "Could not open tblite.cpcm: "//trim(iomsg))
+      return
+   end if
+
+   write(io, '(a)', iostat=stat, iomsg=iomsg) &
+      & "          X                 Y                 Z               area"// &
+      & "            potential          charge            w_leb"// &
+      & "             Switch_F          G_width       atom"
+   if (stat == 0) then
+      do igrid = 1, cavity%ngrid
+         ! Moist stores the area, Lebedev weight, switching function, and
+         ! Gaussian width in the convention printed by ORCA. ORCA prints
+         ! conductor charges before application of the dielectric scaling.
+         charge = qsurf(igrid)/feps
+         write(io, '(3f18.9,3f18.9,f18.9,2f20.14,i8)', &
+            & iostat=stat, iomsg=iomsg) cavity%xyz(:, igrid), &
+            & cavity%a(igrid), phi(igrid), charge, &
+            & cavity%wleb(igrid), cavity%f(igrid), &
+            & cavity%xi(igrid), cavity%owner(igrid) - 1
+         if (stat /= 0) exit
+      end do
+   end if
+
+   close(io)
+   if (stat /= 0) then
+      call fatal_error(error, "Could not write tblite.cpcm: "//trim(iomsg))
+      return
+   end if
+end subroutine write_cpcm_file
+
 pure function variable_info(self) result(info)
    class(cosmo_solvation), intent(in) :: self
    type(scf_info) :: info
    if (self%full_density) then
       info = scf_info(density=orbital_resolved)
    else
-      info = scf_info(charge=atom_resolved, &
-      & dipole=merge(atom_resolved, 0, self%dipoles), &
-      & quadrupole=merge(atom_resolved, 0, self%quadrupoles))
+      info = scf_info(charge=merge(atom_resolved, not_used, self%monopoles), &
+      & dipole=merge(atom_resolved, not_used, self%dipoles), &
+      & quadrupole=merge(atom_resolved, not_used, self%quadrupoles))
    end if
 end function variable_info
 

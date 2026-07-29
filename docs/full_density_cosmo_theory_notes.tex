@@ -1,0 +1,367 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\newcommand{\vect}[1]{\bm{#1}}
+\newcommand{\dd}{\mathop{}\!\mathrm{d}}
+\newcommand{\erf}{\operatorname{erf}}
+\newcommand{\ee}{\mathrm{e}}
+
+\title{Theory Notes: Gaussian-Surface COSMO/C-PCM Coupled to GFN2-xTB}
+\author{Working notes for the tblite implementation}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Purpose and scope}
+
+The implementation couples GFN2-xTB in \texttt{tblite} to a conductor-like
+continuum model using the iSwiG cavity from \texttt{moist}.  The solute can be
+represented either by the complete GFN2 AO density matrix or by atom-centred
+GFN2 monopoles and optional dipoles and quadrupoles.  Both descriptions interact
+with exactly the same Gaussian functions on the cavity.  Thus, the intended
+variable in a comparison is the solute-density representation, not the cavity
+or surface-charge representation.
+
+\section{iSwiG cavity}
+
+The cavity is a union of atom-centred spheres.  The default radii are obtained
+from \texttt{moist}'s \texttt{new\_gauss\_radii} model.  This table contains
+Bondi radii where available, uses $R_{\mathrm H}=1.10$~\AA, uses Mantina
+\emph{et al.} radii for missing main-group elements, and uses $2.00$~\AA{} as
+a fallback.  All base radii are multiplied by 1.2.  For example,
+\begin{equation}
+ R_{\mathrm H}^{\mathrm{cav}}=1.2(1.10~\text{\AA})=1.32~\text{\AA}.
+\end{equation}
+Explicit custom radii remain possible.
+
+The current default is a fixed 110-point Lebedev grid on every sphere.  This
+value is passed explicitly to \texttt{moist}; its internal grid default is not
+used.  The iSwiG switching function smoothly suppresses buried points.  For
+each retained point $i$, \texttt{moist} provides its position $\vect{s}_i$,
+area $a_i$, Lebedev weight $w_i$, switching value $F_i$, Gaussian width
+$\xi_i$, and owner atom.
+
+The normalized surface Gaussian is
+\begin{equation}
+ g_i(\vect{r})=
+ \left(\frac{\xi_i^2}{\pi}\right)^{3/2}
+ \exp[-\xi_i^2|\vect{r}-\vect{s}_i|^2],
+ \qquad \int g_i(\vect{r})\dd\vect{r}=1,
+ \label{eq:gi}
+\end{equation}
+and the apparent surface density is
+\begin{equation}
+ \rho_{\mathrm{surf}}(\vect{r})=\sum_i q_i g_i(\vect{r}).
+\end{equation}
+
+\section{Gaussian surface interaction and dielectric equation}
+
+The surface matrix is the Coulomb metric
+\begin{equation}
+ A_{ij}=(g_i|g_j).
+\end{equation}
+The entries constructed by \texttt{moist} are
+\begin{align}
+ A_{ij}&=\frac{\erf(\xi_{ij}r_{ij})}{r_{ij}},\quad i\ne j,\\
+ \xi_{ij}&=\frac{\xi_i\xi_j}{\sqrt{\xi_i^2+\xi_j^2}},\\
+ A_{ii}&=\sqrt{\frac{2}{\pi}}\frac{\xi_i}{F_i}.
+\end{align}
+This matrix definition has been tested in \texttt{moist} against ORCA 6.1.1
+surface charges and dielectric energy for a supplied ORCA surface.
+
+For the solute potential vector $\vect{\phi}$, the stationary functional is
+\begin{equation}
+ \mathcal G_{\mathrm{pol}}(\vect q;\vect\phi)
+ =\frac{1}{2f_\epsilon}\vect q^{\mathrm T}A\vect q
+  +\vect q^{\mathrm T}\vect\phi.
+\end{equation}
+Stationarity gives
+\begin{equation}
+ A\vect q=-f_\epsilon\vect\phi,
+\end{equation}
+where
+\begin{align}
+ f_\epsilon^{\mathrm{COSMO}}&=\frac{\epsilon-1}{\epsilon+1/2},\\
+ f_\epsilon^{\mathrm{CPCM}}&=\frac{\epsilon-1}{\epsilon}.
+\end{align}
+The polarization energy is
+\begin{equation}
+ E_{\mathrm{pol}}=\frac12\vect q^{\mathrm T}\vect\phi
+ =-\frac{f_\epsilon}{2}\vect\phi^{\mathrm T}A^{-1}\vect\phi.
+ \label{eq:epol}
+\end{equation}
+
+\section{Full GFN2-xTB density}
+
+GFN2-xTB uses a minimal valence AO basis $\{\chi_\mu\}$.  The charge-density
+matrix is the sum of the spin blocks,
+\begin{equation}
+ P_{\mu\nu}=\sum_\sigma P_{\mu\nu}^{\sigma},
+\end{equation}
+and the electronic number density is
+\begin{equation}
+ \rho_{\mathrm e}(\vect r)=
+ \sum_{\mu\nu}P_{\mu\nu}\chi_\mu(\vect r)\chi_\nu(\vect r).
+\end{equation}
+``Full density'' therefore means the complete density within the GFN2 valence
+AO model; it does not mean a conventional all-electron density in a large basis.
+The nuclei and excluded core electrons are represented by xTB effective core
+charges $Z_A^{\mathrm{eff}}$, stored as \texttt{wfn\%n0at}.  The total solute
+charge density is
+\begin{equation}
+ \rho_{\mathrm{solute}}(\vect r)=
+ \sum_A Z_A^{\mathrm{eff}}\delta(\vect r-\vect R_A)
+ -\rho_{\mathrm e}(\vect r).
+\end{equation}
+
+The effective-core interaction with surface Gaussian $i$ is
+\begin{equation}
+ U_{iA}=\frac{\erf(\xi_iR_{iA})}{R_{iA}},
+ \qquad R_{iA}=|\vect s_i-\vect R_A|.
+\end{equation}
+The AO-pair interaction is the three-centre two-electron integral
+\begin{equation}
+ B_{i,\mu\nu}=(g_i|\chi_\mu\chi_\nu)
+ =\iint\frac{g_i(\vect s)\chi_\mu(\vect r)\chi_\nu(\vect r)}
+ {|\vect s-\vect r|}\dd\vect s\dd\vect r,
+\end{equation}
+which is evaluated with \texttt{libcint}.  Hence
+\begin{equation}
+ \phi_i^{\mathrm{full}}
+ =\sum_A Z_A^{\mathrm{eff}}U_{iA}
+ -\sum_{\mu\nu}P_{\mu\nu}B_{i,\mu\nu}.
+ \label{eq:fullphi}
+\end{equation}
+The stationary reaction-field AO potential returned to the SCF is
+\begin{equation}
+ V_{\mu\nu}^{\mathrm{reac}}=-\sum_i q_iB_{i,\mu\nu}.
+\end{equation}
+There is no factor $1/2$ in this potential: differentiating the stationary
+energy in Eq.~\eqref{eq:epol} supplies the complete response.
+
+\section{Multipole representation}
+
+The alternative representation uses the converged atom-resolved GFN2 variables
+$q_A$, $\vect\mu_A$, and $Q_A$.  The monopoles are always used.  Dipoles and
+quadrupoles are independently enabled.  The Cartesian quadrupole ordering is
+\begin{equation}
+ (Q_{xx},Q_{xy},Q_{yy},Q_{xz},Q_{yz},Q_{zz}),
+ \qquad \operatorname{Tr}Q=0.
+\end{equation}
+
+\subsection{Explicit derivation of the Gaussian--multipole coupling}
+
+This subsection records how the implemented coupling was derived.  It was not
+copied from an ORCA or \texttt{moist} routine.  It follows by treating point
+multipoles as derivatives of a delta distribution and differentiating the
+exact Gaussian--point-charge interaction.
+
+Let
+\begin{equation}
+ \vect R=\vect s_i-\vect R_A,
+ \qquad R=|\vect R|,
+ \qquad x=\xi_iR,
+\end{equation}
+and define
+\begin{equation}
+ U(R)=(g_i|\delta_A)=\frac{\erf(\xi_iR)}{R}.
+ \label{eq:screened-U}
+\end{equation}
+For reference, the point-charge limit is recovered when $x\to\infty$:
+\begin{equation}
+ U(R)\longrightarrow\frac1R.
+\end{equation}
+
+\subsubsection*{Monopole}
+
+A monopole charge distribution is
+\begin{equation}
+ \rho_A^{(0)}(\vect r)=q_A\delta(\vect r-\vect R_A),
+\end{equation}
+so its contribution is simply
+\begin{equation}
+ \phi_{iA}^{(0)}=q_AU(R).
+\end{equation}
+
+\subsubsection*{Dipole}
+
+With the sign convention used here, a point dipole is generated by a derivative
+with respect to its source centre,
+\begin{equation}
+ \rho_A^{(1)}(\vect r)
+ =\vect\mu_A\mathbin{\cdot}\nabla_{R_A}
+   \delta(\vect r-\vect R_A).
+\end{equation}
+Because $\vect R=\vect s_i-\vect R_A$,
+\begin{equation}
+ \nabla_{R_A}U(R)=-\nabla_RU(R)=-\frac{U'(R)}{R}\vect R.
+ \label{eq:source-gradient}
+\end{equation}
+Differentiating Eq.~\eqref{eq:screened-U} gives
+\begin{equation}
+ U'(R)=\frac{2\xi_i}{\sqrt\pi}\frac{\ee^{-x^2}}{R}
+       -\frac{\erf(x)}{R^2}.
+\end{equation}
+Inserting this into Eq.~\eqref{eq:source-gradient} yields
+\begin{align}
+ \vect C_{iA}^{(1)}&=K_1(R)\vect R,\\
+ K_1(R)&=
+ \frac{\erf(x)}{R^3}
+ -\frac{2\xi_i\ee^{-x^2}}{\sqrt\pi R^2}.
+ \label{eq:k1}
+\end{align}
+Thus
+\begin{equation}
+ \phi_{iA}^{(1)}=\vect\mu_A\mathbin{\cdot}\vect C_{iA}^{(1)}.
+\end{equation}
+As $x\to\infty$, the exponential vanishes and
+\begin{equation}
+ \vect C_{iA}^{(1)}\longrightarrow\frac{\vect R}{R^3},
+\end{equation}
+which is exactly the former \texttt{tblite} point-dipole kernel.  This
+asymptotic check fixes the sign convention.
+
+\subsubsection*{Quadrupole}
+
+For any radial function $U(R)$, its Cartesian Hessian is
+\begin{equation}
+ \frac{\partial^2U}{\partial R_\alpha\partial R_\beta}
+ =\frac{U'(R)}{R}\delta_{\alpha\beta}
+ +\left(\frac{U''(R)}{R^2}-\frac{U'(R)}{R^3}\right)
+ R_\alpha R_\beta.
+ \label{eq:radial-hessian}
+\end{equation}
+The existing \texttt{tblite} point-quadrupole potential uses
+\begin{equation}
+ Q_{\alpha\beta}\frac{R_\alpha R_\beta}{R^5}.
+ \label{eq:tblite-point-q}
+\end{equation}
+This is related to the Hessian of $1/R$ by
+\begin{equation}
+ \frac13 Q_{\alpha\beta}
+ \frac{\partial^2}{\partial R_\alpha\partial R_\beta}\frac1R
+ =Q_{\alpha\beta}\frac{R_\alpha R_\beta}{R^5},
+ \label{eq:q-factor-third}
+\end{equation}
+because
+\begin{equation}
+ \frac{\partial^2}{\partial R_\alpha\partial R_\beta}\frac1R
+ =\frac{3R_\alpha R_\beta-R^2\delta_{\alpha\beta}}{R^5}
+\end{equation}
+and $Q_{\alpha\alpha}=0$.  Equation~\eqref{eq:q-factor-third} explains both
+the factor $1/3$ and why the isotropic part of Eq.~\eqref{eq:radial-hessian}
+can be omitted for the traceless GFN2 quadrupoles.
+
+The Gaussian quadrupole interaction is therefore defined by applying the same
+operator to $U(R)$:
+\begin{equation}
+ \phi_{iA}^{(2)}=
+ \frac13Q_{A,\alpha\beta}
+ \frac{\partial^2U(R)}{\partial R_\alpha\partial R_\beta}.
+ \label{eq:q-gaussian-definition}
+\end{equation}
+The required second derivative is
+\begin{equation}
+ U''(R)=
+ -\frac{4\xi_i^3}{\sqrt\pi}\ee^{-x^2}
+ -\frac{4\xi_i}{\sqrt\pi R^2}\ee^{-x^2}
+ +\frac{2\erf(x)}{R^3}.
+\end{equation}
+Using Eqs.~\eqref{eq:radial-hessian} and
+\eqref{eq:q-gaussian-definition}, the radial factor multiplying
+$Q_{\alpha\beta}R_\alpha R_\beta$ is
+\begin{align}
+ K_2(R)
+ &=\frac13\left(\frac{U''(R)}{R^2}
+                 -\frac{U'(R)}{R^3}\right)\\
+ &=\frac{\erf(x)}{R^5}
+ -\frac{2\xi_i\ee^{-x^2}}{\sqrt\pi R^4}
+ -\frac{4\xi_i^3\ee^{-x^2}}{3\sqrt\pi R^2}.
+ \label{eq:k2}
+\end{align}
+In the six-component storage convention, the implemented kernel is
+\begin{equation}
+ \vect C_{iA}^{(2)}=K_2(R)
+ \begin{pmatrix}
+ X^2 & 2XY & Y^2 & 2XZ & 2YZ & Z^2
+ \end{pmatrix}^{\mathrm T}.
+\end{equation}
+The factors of two are the two equal off-diagonal terms in the full Cartesian
+contraction.  In the point-charge limit,
+\begin{equation}
+ K_2(R)\longrightarrow\frac1{R^5},
+\end{equation}
+so the previous point-quadrupole kernel is recovered exactly.
+
+\subsubsection*{Combined multipole potential}
+
+The surface potential from the atom-centred representation is
+\begin{equation}
+ \phi_i^{\mathrm{mult}}=\sum_A\left[
+ q_AC_{iA}^{(0)}
+ +\vect\mu_A\mathbin{\cdot}\vect C_{iA}^{(1)}
+ +\vect Q_A\mathbin{\cdot}\vect C_{iA}^{(2)}
+ \right],
+ \label{eq:multipole-potential}
+\end{equation}
+with optional omission of the dipole or quadrupole term.  The same coupling
+matrices are used to form $\vect\phi$ and to return the adjoint reaction-field
+potentials to the GFN2 SCF variables.
+
+\paragraph{Validation status.}
+The monopole result is the standard Gaussian--point-charge integral, and the
+dipole and quadrupole expressions follow analytically by differentiation.  The
+signs and normalization have also been checked against the original point
+kernels in the $x\to\infty$ limit.  Nevertheless, before publication the
+quadrupole convention should additionally be tested against direct numerical
+integration and finite differences for several Gaussian widths and geometries.
+
+\section{Controlled comparison of density representations}
+
+The full-density and multipole calculations use the same geometry, radii,
+Lebedev grid, point filtering, surface Gaussians, switching values, matrix $A$,
+dielectric factor, linear solver, and energy expression.  Only
+Eq.~\eqref{eq:fullphi} versus Eq.~\eqref{eq:multipole-potential} changes.
+Useful calculations are monopoles only; monopoles plus dipoles; monopoles plus
+quadrupoles; all multipoles through quadrupole order; and the complete AO
+density.  Potential errors can be quantified through
+\begin{align}
+ \Delta_{\mathrm{RMS}}(\phi)&=
+ \sqrt{\frac1N\sum_i(\phi_i^{\mathrm{mult}}-
+ \phi_i^{\mathrm{full}})^2},\\
+ \Delta_{\max}(\phi)&=\max_i|\phi_i^{\mathrm{mult}}-
+ \phi_i^{\mathrm{full}}|.
+\end{align}
+
+\section{ORCA-style output and present limitations}
+
+The file \texttt{tblite.cpcm} is overwritten during every energy evaluation,
+leaving the final SCF surface after convergence.  It contains coordinates,
+area, potential, conductor charge, Lebedev weight, switching value, Gaussian
+width, and zero-based owner atom.  The printed conductor charge is
+$q_i/f_\epsilon$; internally, $q_i$ includes dielectric scaling.
+
+Important limitations and checks are:
+\begin{enumerate}
+ \item the fixed 110-point grid differs from ORCA's recent adaptive default;
+ \item the AO density is complete only within the GFN2 valence basis;
+ \item the three-centre surface integrals require continuing independent tests;
+ \item the Gaussian quadrupole convention requires direct numerical tests;
+ \item a complete analytic nuclear gradient is not yet implemented;
+ \item the model described here contains only the electrostatic continuum term.
+\end{enumerate}
+
+\begin{thebibliography}{9}
+\bibitem{bondi} A. Bondi, \emph{J. Phys. Chem.} \textbf{68}, 441--451 (1964).
+\bibitem{mantina} M. Mantina \emph{et al.}, \emph{J. Phys. Chem. A}
+\textbf{113}, 5806--5812 (2009).
+\bibitem{iswig} A. W. Lange and J. M. Herbert, \emph{J. Chem. Phys.}
+\textbf{133}, 244111 (2010).
+\bibitem{gfn2} C. Bannwarth, S. Ehlert, and S. Grimme,
+\emph{J. Chem. Theory Comput.} \textbf{15}, 1652--1671 (2019).
+\end{thebibliography}
+
+\end{document}
