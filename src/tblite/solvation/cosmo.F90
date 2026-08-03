@@ -26,7 +26,7 @@ module tblite_solvation_cosmo
    ! use moist_cavity_drop, only : cavity_type_drop, new_cavity_drop
    ! use moist_cavity_drop_lsf_svdw, only : moist_cavity_drop_lsf_svdw_type
    use moist_cavity_iswig, only : cavity_type_iswig, new_cavity_iswig
-   use moist_model_component_pcm_solvers, only : solve_pcm_cholesky
+   use moist_model_component_pcm_solvers, only : solve_pcm_iterative
    use moist_radii, only : radius_type, new_radii_custom_atoms
    use moist_radii_static, only : static_radius_type, new_gauss_radii
    use tblite_basis_type, only : basis_type
@@ -115,8 +115,8 @@ module tblite_solvation_cosmo
       real(wp), allocatable :: amat(:, :)
       !> Potential kernels for monopoles, dipoles, and quadrupoles.
       real(wp), allocatable :: c0(:, :)
-      real(wp), allocatable :: c1(:, :, :)
-      real(wp), allocatable :: c2(:, :, :)
+      real(wp), allocatable :: c1(:, :)
+      real(wp), allocatable :: c2(:, :)
       real(wp), allocatable :: phi(:)
       real(wp), allocatable :: qsurf(:)
       !> Nuclear and AO-pair coupling to the Gaussian surface basis.
@@ -221,7 +221,7 @@ subroutine update(self, mol, cache)
    ! type(moist_cavity_drop_lsf_svdw_type) :: svdw
    type(error_type), allocatable :: error
    integer :: igrid, iat
-   real(wp) :: vec(3), r1, r3
+   real(wp) :: vec(3), r1, r3, k0, k1(3), k2(6)
 
    call taint(cache, ptr)
    ptr%ready = .false.
@@ -257,10 +257,11 @@ subroutine update(self, mol, cache)
    call ptr%cavity%get_amat(ptr%amat, error)
    if (allocated(error)) return
 
-   allocate(ptr%c0(ptr%cavity%ngrid, mol%nat))
-   allocate(ptr%c1(3, ptr%cavity%ngrid, mol%nat))
-   allocate(ptr%c2(6, ptr%cavity%ngrid, mol%nat))
-   allocate(ptr%phi(ptr%cavity%ngrid), ptr%qsurf(ptr%cavity%ngrid))
+   if (self%monopoles) allocate(ptr%c0(ptr%cavity%ngrid, mol%nat))
+   if (self%dipoles) allocate(ptr%c1(ptr%cavity%ngrid, 3*mol%nat))
+   if (self%quadrupoles) allocate(ptr%c2(ptr%cavity%ngrid, 6*mol%nat))
+   allocate(ptr%phi(ptr%cavity%ngrid), source=0.0_wp)
+   allocate(ptr%qsurf(ptr%cavity%ngrid), source=0.0_wp)
 
    if (self%full_density) then
       if (allocated(ptr%ucore)) deallocate(ptr%ucore)
@@ -286,14 +287,21 @@ subroutine update(self, mol, cache)
       if (allocated(error)) return
    end if
 
-   do iat = 1, mol%nat
-      do igrid = 1, ptr%cavity%ngrid
-         vec = ptr%cavity%xyz(:, igrid) - mol%xyz(:, iat)
-         call get_gaussian_multipole_kernels(vec, ptr%cavity%xi(igrid), &
-            & ptr%c0(igrid, iat), ptr%c1(:, igrid, iat), &
-            & ptr%c2(:, igrid, iat))
+   if (self%monopoles .or. self%dipoles .or. self%quadrupoles) then
+      !$omp parallel do collapse(2) default(none) &
+      !$omp shared(self, ptr, mol) private(iat, igrid, vec, k0, k1, k2)
+      do iat = 1, mol%nat
+         do igrid = 1, ptr%cavity%ngrid
+            vec = ptr%cavity%xyz(:, igrid) - mol%xyz(:, iat)
+            call get_gaussian_multipole_kernels(vec, ptr%cavity%xi(igrid), &
+               & k0, k1, k2)
+            if (self%monopoles) ptr%c0(igrid, iat) = k0
+            if (self%dipoles) ptr%c1(igrid, 3*iat-2:3*iat) = k1
+            if (self%quadrupoles) ptr%c2(igrid, 6*iat-5:6*iat) = k2
+         end do
       end do
-   end do
+      !$omp end parallel do
+   end if
    ptr%ready = .true.
 end subroutine update
 
@@ -334,8 +342,10 @@ subroutine solve_surface(self, ptr, wfn)
    type(wavefunction_type), intent(in) :: wfn
 
    type(error_type), allocatable :: error
-   integer :: iat, ic
+   integer :: ic
    real(wp), allocatable :: density(:, :)
+   real(wp), parameter :: solver_tol = 1.0e-10_wp
+   integer, parameter :: solver_maxiter = 1000
 
    if (self%full_density) then
       ptr%phi = matmul(ptr%ucore, wfn%n0at)
@@ -346,20 +356,13 @@ subroutine solve_surface(self, ptr, wfn)
    else
       ptr%phi = 0.0_wp
       if (self%monopoles) ptr%phi = matmul(ptr%c0, wfn%qat(:, 1))
+      if (self%dipoles) ptr%phi = ptr%phi + &
+         & matmul(ptr%c1, reshape(wfn%dpat(:, :, 1), [size(ptr%c1, 2)]))
+      if (self%quadrupoles) ptr%phi = ptr%phi + &
+         & matmul(ptr%c2, reshape(wfn%qpat(:, :, 1), [size(ptr%c2, 2)]))
    end if
-   do iat = 1, size(wfn%qat, 1)
-      if (.not.self%full_density .and. self%dipoles) then
-         do ic = 1, 3
-            ptr%phi = ptr%phi + ptr%c1(ic, :, iat)*wfn%dpat(ic, iat, 1)
-         end do
-      end if
-      if (.not.self%full_density .and. self%quadrupoles) then
-         do ic = 1, 6
-            ptr%phi = ptr%phi + ptr%c2(ic, :, iat)*wfn%qpat(ic, iat, 1)
-         end do
-      end if
-   end do
-   call solve_pcm_cholesky(ptr%amat, -self%feps*ptr%phi, ptr%qsurf, error)
+   call solve_pcm_iterative(ptr%amat, -self%feps*ptr%phi, ptr%qsurf, &
+      & solver_tol, solver_maxiter, error)
    if (allocated(error)) ptr%ready = .false.
 end subroutine solve_surface
 
@@ -371,34 +374,26 @@ subroutine get_energy(self, mol, cache, wfn, energies)
    real(wp), intent(inout) :: energies(:)
 
    type(cosmo_cache), pointer :: ptr
-   type(error_type), allocatable :: write_error
-   integer :: iat, ic
-   real(wp) :: vat, vdp(3), vqp(6)
+   integer :: iat
+   real(wp), allocatable :: vat(:), vdp(:, :), vqp(:, :)
 
    call view(cache, ptr)
    if (.not.associated(ptr)) return
    if (.not.ptr%ready) return
    call solve_surface(self, ptr, wfn)
    if (.not.ptr%ready) return
-   ! The energy routine is evaluated in every SCF iteration. Replacing the
-   ! file here leaves the converged surface table after the final iteration.
-   call write_cpcm_file(ptr%cavity, ptr%phi, ptr%qsurf, self%feps, write_error)
    if (self%full_density) then
       energies(:) = energies(:) + 0.5_wp*dot_product(ptr%qsurf, ptr%phi)/real(mol%nat, wp)
    else
+      if (self%monopoles) vat = matmul(transpose(ptr%c0), ptr%qsurf)
+      if (self%dipoles) vdp = reshape(matmul(transpose(ptr%c1), ptr%qsurf), [3, mol%nat])
+      if (self%quadrupoles) vqp = reshape(matmul(transpose(ptr%c2), ptr%qsurf), [6, mol%nat])
       do iat = 1, mol%nat
-         vat = dot_product(ptr%c0(:, iat), ptr%qsurf)
-         do ic = 1, 3
-            vdp(ic) = dot_product(ptr%c1(ic, :, iat), ptr%qsurf)
-         end do
-         do ic = 1, 6
-            vqp(ic) = dot_product(ptr%c2(ic, :, iat), ptr%qsurf)
-         end do
-         if (self%monopoles) energies(iat) = energies(iat) + 0.5_wp*wfn%qat(iat, 1)*vat
+         if (self%monopoles) energies(iat) = energies(iat) + 0.5_wp*wfn%qat(iat, 1)*vat(iat)
          if (self%dipoles) energies(iat) = energies(iat) + &
-            & 0.5_wp*dot_product(wfn%dpat(:, iat, 1), vdp)
+            & 0.5_wp*dot_product(wfn%dpat(:, iat, 1), vdp(:, iat))
          if (self%quadrupoles) energies(iat) = energies(iat) + &
-            & 0.5_wp*dot_product(wfn%qpat(:, iat, 1), vqp)
+            & 0.5_wp*dot_product(wfn%qpat(:, iat, 1), vqp(:, iat))
       end do
    end if
 
@@ -418,6 +413,7 @@ subroutine get_potential(self, mol, cache, wfn, pot)
 
    type(cosmo_cache), pointer :: ptr
    integer :: iat, ic
+   real(wp), allocatable :: vat(:), vdp(:, :), vqp(:, :)
 
    call view(cache, ptr)
    if (.not.associated(ptr)) return
@@ -432,22 +428,18 @@ subroutine get_potential(self, mol, cache, wfn, pot)
          end do
       end do
    else
-      do iat = 1, mol%nat
-         if (self%monopoles) pot%vat(iat, 1) = pot%vat(iat, 1) + &
-            & dot_product(ptr%c0(:, iat), ptr%qsurf)
-         if (self%dipoles) then
-            do ic = 1, 3
-               pot%vdp(ic, iat, 1) = pot%vdp(ic, iat, 1) + &
-                  & dot_product(ptr%c1(ic, :, iat), ptr%qsurf)
-            end do
-         end if
-         if (self%quadrupoles) then
-            do ic = 1, 6
-               pot%vqp(ic, iat, 1) = pot%vqp(ic, iat, 1) + &
-                  & dot_product(ptr%c2(ic, :, iat), ptr%qsurf)
-            end do
-         end if
-      end do
+      if (self%monopoles) then
+         vat = matmul(transpose(ptr%c0), ptr%qsurf)
+         pot%vat(:, 1) = pot%vat(:, 1) + vat
+      end if
+      if (self%dipoles) then
+         vdp = reshape(matmul(transpose(ptr%c1), ptr%qsurf), [3, mol%nat])
+         pot%vdp(:, :, 1) = pot%vdp(:, :, 1) + vdp
+      end if
+      if (self%quadrupoles) then
+         vqp = reshape(matmul(transpose(ptr%c2), ptr%qsurf), [6, mol%nat])
+         pot%vqp(:, :, 1) = pot%vqp(:, :, 1) + vqp
+      end if
    end if
 end subroutine get_potential
 
