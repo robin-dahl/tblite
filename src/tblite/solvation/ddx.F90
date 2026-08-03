@@ -84,7 +84,7 @@ module tblite_solvation_ddx
       !> Number of grid points for each atom (default=110)
       integer :: nang = grid_size(8)
       !> Regularization parameter / width of the switching function
-      real(wp) :: eta = 0.1_wp
+      real(wp) :: eta = 0.0_wp
       !> Maximum angular momentum of basis functions
       integer :: lmax = 1
       !> Include atom-resolved monopoles in the ddX solute density
@@ -730,10 +730,11 @@ subroutine write_ddx_cpcm_file(ptr, error)
             igrid = ptr%ddx%constants%icav_ja(icav)
             area = ptr%ddx%params%rsph(isph)**2 * &
                & ptr%ddx%constants%wgrid(igrid) * ptr%ddx%constants%ui_cav(icav)
-            ! ddX represents sigma with the Laplace Green's function
-            ! 1/(4*pi*r), whereas tblite and ORCA use point charges with
-            ! the Coulomb kernel 1/r.
-            charge = sigma_grid(igrid, isph) * area / (4.0_wp*pi)
+            ! The ddX unknown X is the radius-scaled surface density,
+            ! X_A = R_A*sigma_A. Hence q_i = sigma_A*dS_i is obtained as
+            ! X_A(s_i)*R_A*w_i*U_i.
+            charge = sigma_grid(igrid, isph) * ptr%ddx%params%rsph(isph) * &
+               & ptr%ddx%constants%wgrid(igrid) * ptr%ddx%constants%ui_cav(icav)
             write(io, '(3f18.9,4f18.9,f20.14,1x,a19,i8)', &
                & iostat=stat, iomsg=iomsg) ptr%ddx%constants%ccav(:, icav), &
                & area, ptr%ddx_electrostatics%phi_cav(icav), charge, &
