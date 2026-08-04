@@ -407,7 +407,7 @@ subroutine solve_surface(self, ptr, wfn)
    type(cosmo_cache), intent(inout) :: ptr
    type(wavefunction_type), intent(in) :: wfn
 
-   type(error_type), allocatable :: error
+   type(error_type), allocatable :: error, write_error
    integer :: ic
    real(wp), allocatable :: density(:, :)
    real(wp), parameter :: solver_tol = 1.0e-10_wp
@@ -430,6 +430,7 @@ subroutine solve_surface(self, ptr, wfn)
    call solve_pcm_iterative(ptr%amat, -self%feps*ptr%phi, ptr%qsurf, &
       & solver_tol, solver_maxiter, error)
    if (allocated(error)) ptr%ready = .false.
+   call write_cpcm_file(ptr%cavity, ptr%phi, ptr%qsurf, self%feps, write_error)
 end subroutine solve_surface
 
 !> Write the current iSwiG surface in ORCA-compatible CPCM table format.
