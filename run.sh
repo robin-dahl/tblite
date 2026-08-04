@@ -2,9 +2,9 @@
 
 meson compile -C build || { echo "Compilation failed"; exit 1; }
 
-mol=dna.xyz
+#mol=dna.xyz
 #mol=coord.xyz
-#mol=acetonitrile.xyz
+mol=acetonitrile.xyz
 #mol=ibu.xyz
 #mol=cl.xyz
 #mol=sf6.xyz

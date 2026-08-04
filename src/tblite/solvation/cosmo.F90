@@ -200,7 +200,8 @@ subroutine new_cosmo(self, mol, input, error, basis)
       end if
       allocate(self%rvdw(mol%nat))
       self%rvdw = input%rscale * input%rvdw(mol%id)
-   else if (input%rscale /= 1.0_wp) then
+   else
+      ! Resolve moist's ORCA-like default radii once, just as in ddX.
       call new_gauss_radii(gauss_radii)
       call gauss_radii%update(mol, error)
       if (allocated(error)) return
@@ -216,7 +217,6 @@ subroutine update(self, mol, cache)
 
    type(cosmo_cache), pointer :: ptr
    class(radius_type), allocatable :: radii
-   type(static_radius_type) :: gauss_radii
    ! sVDW drop cavity (previous implementation):
    ! type(moist_cavity_drop_lsf_svdw_type) :: svdw
    type(error_type), allocatable :: error
@@ -231,18 +231,12 @@ subroutine update(self, mol, cache)
    ! call new_cavity_drop(ptr%cavity, verbose=0, nleb=self%nang, &
    !    & radius_model=radii, lsf_model=svdw, error=error)
 
-   ! iSwiG cavity. Use moist's ORCA-style Gaussian radii by default; retain
-   ! explicitly supplied or additionally scaled radii through the custom model.
-   if (allocated(self%rvdw)) then
-      call new_radii_custom_atoms(self%rvdw, radii, error)
-      if (allocated(error)) return
-      call new_cavity_iswig(ptr%cavity, nleb=self%nang, radius_model=radii, &
-         & error=error)
-   else
-      call new_gauss_radii(gauss_radii)
-      call new_cavity_iswig(ptr%cavity, nleb=self%nang, radius_model=gauss_radii, &
-         & error=error)
-   end if
+   ! iSwiG cavity. self%rvdw was resolved in new_cosmo from either explicitly
+   ! supplied radii or moist's ORCA-like Gaussian radii, as done for ddX.
+   call new_radii_custom_atoms(self%rvdw, radii, error)
+   if (allocated(error)) return
+   call new_cavity_iswig(ptr%cavity, nleb=self%nang, radius_model=radii, &
+      & error=error)
    if (allocated(error)) return
    call ptr%cavity%update(mol, error)
    if (allocated(error)) return
@@ -305,6 +299,78 @@ subroutine update(self, mol, cache)
    ptr%ready = .true.
 end subroutine update
 
+subroutine get_potential(self, mol, cache, wfn, pot)
+   class(cosmo_solvation), intent(in) :: self
+   type(structure_type), intent(in) :: mol
+   type(container_cache), intent(inout) :: cache
+   type(wavefunction_type), intent(in) :: wfn
+   type(potential_type), intent(inout) :: pot
+
+   type(cosmo_cache), pointer :: ptr
+   integer :: iat, ic
+   real(wp), allocatable :: vat(:), vdp(:, :), vqp(:, :)
+
+   call view(cache, ptr)
+   if (.not.associated(ptr)) return
+   if (.not.ptr%ready) return
+   call solve_surface(self, ptr, wfn)
+   if (.not.ptr%ready) return
+   if (self%full_density) then
+      do ic = 1, size(ptr%qsurf)
+         do iat = 1, size(pot%vmat, 3)
+            pot%vmat(:, :, iat) = pot%vmat(:, :, iat) - &
+               & ptr%qsurf(ic)*ptr%bmat(ic, :, :)
+         end do
+      end do
+   else
+      if (self%monopoles) then
+         vat = matmul(transpose(ptr%c0), ptr%qsurf)
+         pot%vat(:, 1) = pot%vat(:, 1) + vat
+      end if
+      if (self%dipoles) then
+         vdp = reshape(matmul(transpose(ptr%c1), ptr%qsurf), [3, mol%nat])
+         pot%vdp(:, :, 1) = pot%vdp(:, :, 1) + vdp
+      end if
+      if (self%quadrupoles) then
+         vqp = reshape(matmul(transpose(ptr%c2), ptr%qsurf), [6, mol%nat])
+         pot%vqp(:, :, 1) = pot%vqp(:, :, 1) + vqp
+      end if
+   end if
+end subroutine get_potential
+
+subroutine get_energy(self, mol, cache, wfn, energies)
+   class(cosmo_solvation), intent(in) :: self
+   type(structure_type), intent(in) :: mol
+   type(container_cache), intent(inout) :: cache
+   type(wavefunction_type), intent(in) :: wfn
+   real(wp), intent(inout) :: energies(:)
+
+   type(cosmo_cache), pointer :: ptr
+   integer :: iat
+   real(wp), allocatable :: vat(:), vdp(:, :), vqp(:, :)
+
+   call view(cache, ptr)
+   if (.not.associated(ptr)) return
+   if (.not.ptr%ready) return
+   call solve_surface(self, ptr, wfn)
+   if (.not.ptr%ready) return
+   if (self%full_density) then
+      energies(:) = energies(:) + 0.5_wp*dot_product(ptr%qsurf, ptr%phi)/real(mol%nat, wp)
+   else
+      if (self%monopoles) vat = matmul(transpose(ptr%c0), ptr%qsurf)
+      if (self%dipoles) vdp = reshape(matmul(transpose(ptr%c1), ptr%qsurf), [3, mol%nat])
+      if (self%quadrupoles) vqp = reshape(matmul(transpose(ptr%c2), ptr%qsurf), [6, mol%nat])
+      do iat = 1, mol%nat
+         if (self%monopoles) energies(iat) = energies(iat) + 0.5_wp*wfn%qat(iat, 1)*vat(iat)
+         if (self%dipoles) energies(iat) = energies(iat) + &
+            & 0.5_wp*dot_product(wfn%dpat(:, iat, 1), vdp(:, iat))
+         if (self%quadrupoles) energies(iat) = energies(iat) + &
+            & 0.5_wp*dot_product(wfn%qpat(:, iat, 1), vqp(:, iat))
+      end do
+   end if
+   
+end subroutine get_energy
+
 !> Coulomb coupling of a monopole, dipole, and traceless Cartesian
 !> quadrupole to one normalized spherical Gaussian surface function.
 pure subroutine get_gaussian_multipole_kernels(vec, xi, c0, c1, c2)
@@ -365,78 +431,6 @@ subroutine solve_surface(self, ptr, wfn)
       & solver_tol, solver_maxiter, error)
    if (allocated(error)) ptr%ready = .false.
 end subroutine solve_surface
-
-subroutine get_energy(self, mol, cache, wfn, energies)
-   class(cosmo_solvation), intent(in) :: self
-   type(structure_type), intent(in) :: mol
-   type(container_cache), intent(inout) :: cache
-   type(wavefunction_type), intent(in) :: wfn
-   real(wp), intent(inout) :: energies(:)
-
-   type(cosmo_cache), pointer :: ptr
-   integer :: iat
-   real(wp), allocatable :: vat(:), vdp(:, :), vqp(:, :)
-
-   call view(cache, ptr)
-   if (.not.associated(ptr)) return
-   if (.not.ptr%ready) return
-   call solve_surface(self, ptr, wfn)
-   if (.not.ptr%ready) return
-   if (self%full_density) then
-      energies(:) = energies(:) + 0.5_wp*dot_product(ptr%qsurf, ptr%phi)/real(mol%nat, wp)
-   else
-      if (self%monopoles) vat = matmul(transpose(ptr%c0), ptr%qsurf)
-      if (self%dipoles) vdp = reshape(matmul(transpose(ptr%c1), ptr%qsurf), [3, mol%nat])
-      if (self%quadrupoles) vqp = reshape(matmul(transpose(ptr%c2), ptr%qsurf), [6, mol%nat])
-      do iat = 1, mol%nat
-         if (self%monopoles) energies(iat) = energies(iat) + 0.5_wp*wfn%qat(iat, 1)*vat(iat)
-         if (self%dipoles) energies(iat) = energies(iat) + &
-            & 0.5_wp*dot_product(wfn%dpat(:, iat, 1), vdp(:, iat))
-         if (self%quadrupoles) energies(iat) = energies(iat) + &
-            & 0.5_wp*dot_product(wfn%qpat(:, iat, 1), vqp(:, iat))
-      end do
-   end if
-   
-end subroutine get_energy
-
-subroutine get_potential(self, mol, cache, wfn, pot)
-   class(cosmo_solvation), intent(in) :: self
-   type(structure_type), intent(in) :: mol
-   type(container_cache), intent(inout) :: cache
-   type(wavefunction_type), intent(in) :: wfn
-   type(potential_type), intent(inout) :: pot
-
-   type(cosmo_cache), pointer :: ptr
-   integer :: iat, ic
-   real(wp), allocatable :: vat(:), vdp(:, :), vqp(:, :)
-
-   call view(cache, ptr)
-   if (.not.associated(ptr)) return
-   if (.not.ptr%ready) return
-   call solve_surface(self, ptr, wfn)
-   if (.not.ptr%ready) return
-   if (self%full_density) then
-      do ic = 1, size(ptr%qsurf)
-         do iat = 1, size(pot%vmat, 3)
-            pot%vmat(:, :, iat) = pot%vmat(:, :, iat) - &
-               & ptr%qsurf(ic)*ptr%bmat(ic, :, :)
-         end do
-      end do
-   else
-      if (self%monopoles) then
-         vat = matmul(transpose(ptr%c0), ptr%qsurf)
-         pot%vat(:, 1) = pot%vat(:, 1) + vat
-      end if
-      if (self%dipoles) then
-         vdp = reshape(matmul(transpose(ptr%c1), ptr%qsurf), [3, mol%nat])
-         pot%vdp(:, :, 1) = pot%vdp(:, :, 1) + vdp
-      end if
-      if (self%quadrupoles) then
-         vqp = reshape(matmul(transpose(ptr%c2), ptr%qsurf), [6, mol%nat])
-         pot%vqp(:, :, 1) = pot%vqp(:, :, 1) + vqp
-      end if
-   end if
-end subroutine get_potential
 
 !> Write the current iSwiG surface in ORCA-compatible CPCM table format.
 subroutine write_cpcm_file(cavity, phi, qsurf, feps, error)
