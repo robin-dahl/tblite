@@ -3,8 +3,14 @@
 
 module test_solvation_cosmo
    use mctc_env, only : wp
-   use mctc_env_testing, only : new_unittest, unittest_type, error_type, test_failed
-   use tblite_solvation_cosmo, only : get_gaussian_multipole_kernels
+   use mctc_env_testing, only : error_type, new_unittest, test_failed, unittest_type
+   use mctc_io, only : structure_type
+   use mstore, only : get_structure
+   use tblite_container, only : container_cache
+   use tblite_scf_potential, only : potential_type
+   use tblite_solvation_cosmo, only : cosmo_input, cosmo_solvation, cosmo_solvation_model, &
+      & get_gaussian_multipole_kernels, new_cosmo
+   use tblite_wavefunction, only : wavefunction_type
    implicit none
    private
 
@@ -16,12 +22,189 @@ subroutine collect_solvation_cosmo(testsuite)
    type(unittest_type), allocatable, intent(out) :: testsuite(:)
 
    testsuite = [ &
+      new_unittest("energy-cosmo-monopole", &
+         test_e_cosmo_monopole_m01), &
+      new_unittest("energy-cosmo-dipole", &
+         test_e_cosmo_dipole_m03), &
+      new_unittest("energy-cosmo-quadrupole", &
+         test_e_cosmo_quadrupole_m03), &
       new_unittest("gaussian-multipole-finite-difference", &
          test_gaussian_multipole_finite_difference), &
       new_unittest("gaussian-multipole-point-limit", &
          test_gaussian_multipole_point_limit) &
       ]
 end subroutine collect_solvation_cosmo
+
+
+subroutine test_e(error, model, mol, monopoles, dipoles, quadrupoles, ref, qat, dpat, qpat)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   !> Solvation model (COSMO=1, CPCM=2)
+   integer, intent(in) :: model
+
+   !> Molecular structure data
+   type(structure_type), intent(in) :: mol
+
+   !> Whether to include monopoles in the solute representation
+   logical, intent(in) :: monopoles
+
+   !> Whether to include dipoles in the solute representation
+   logical, intent(in) :: dipoles
+
+   !> Whether to include quadrupoles in the solute representation
+   logical, intent(in) :: quadrupoles
+
+   !> Reference energy
+   real(wp), intent(in) :: ref
+
+   !> Atomic partial charges
+   real(wp), intent(in) :: qat(:)
+
+   !> Atomic dipole moments
+   real(wp), intent(in), optional :: dpat(:,:)
+
+   !> Atomic quadrupole moments
+   real(wp), intent(in), optional :: qpat(:,:)
+   
+
+   type(cosmo_solvation) :: solv
+   type(wavefunction_type) :: wfn
+   type(potential_type) :: pot
+   type(container_cache) :: cache
+   real(wp), parameter :: eps = 80.0_wp
+   integer, parameter :: nang = 302
+   real(wp), parameter :: thr = sqrt(epsilon(1.0_wp))
+   real(wp) :: energy(mol%nat)
+
+   wfn%qat = reshape(qat, [size(qat), 1])
+   allocate(pot%vat(size(qat, 1), 1), source=0.0_wp)
+   if (present(dpat)) then
+      wfn%dpat = reshape(dpat, [3, mol%nat, 1])
+      allocate(pot%vdp(3, mol%nat, 1), source=0.0_wp)
+   end if
+   if (present(qpat)) then
+      wfn%qpat = reshape(qpat, [6, mol%nat, 1])
+      allocate(pot%vqp(6, mol%nat, 1))
+   end if
+   energy = 0.0_wp
+
+   call new_cosmo(solv, mol, cosmo_input(model=model, dielectric_const=eps, nang=nang, &
+      & monopoles=monopoles, dipoles=dipoles, quadrupoles=quadrupoles), error)
+   if (allocated(error)) return
+
+   call solv%update(mol, cache)
+   call solv%get_potential(mol, cache, wfn, pot)
+   call solv%get_energy(mol, cache, wfn, energy)
+
+   if (abs(sum(energy) - ref) > thr) then
+      call test_failed(error, "Energy does not match reference")
+      print '(a)', 'Energy:'
+      print '(3es20.13)', sum(energy)
+      print '(a)', "---"
+      print '(a)', 'Reference:'
+      print '(3es20.13)', ref
+      print '(a)', "---"
+      print '(a)', 'Difference:'
+      print '(3es20.13)', sum(energy) - ref
+   end if
+end subroutine test_e
+
+!> Test COSMO solvation energy with point monopole representation of solute electron density 
+subroutine test_e_cosmo_monopole_m01(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   logical :: monopoles = .true.
+   logical :: dipoles = .false.
+   logical :: quadrupoles = .false.
+
+   real(wp), parameter :: qat(*) = [&
+      & 7.73347900345264E-1_wp, 1.07626888948184E-1_wp,-3.66999593831010E-1_wp,&
+      & 4.92833325937897E-2_wp,-1.83332156197733E-1_wp, 2.33302086605469E-1_wp,&
+      & 6.61837152062315E-2_wp,-5.43944165050002E-1_wp,-2.70264356583716E-1_wp,&
+      & 2.66618968841682E-1_wp, 2.62725033202480E-1_wp,-7.15315510172571E-2_wp,&
+      &-3.73300777019193E-1_wp, 3.84585237785621E-2_wp,-5.05851088366940E-1_wp,&
+      & 5.17677238544189E-1_wp]
+
+   call get_structure(mol, "MB16-43", "01")
+
+   call test_e(error, cosmo_solvation_model%cosmo, mol, monopoles, dipoles, &
+      & quadrupoles, -1.9661425306307E-02_wp, qat)
+
+end subroutine test_e_cosmo_monopole_m01
+
+!> Test COSMO solvation energy with point monopole+dipole representation of solute electron density
+subroutine test_e_cosmo_dipole_m03(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   logical :: monopoles = .true.
+   logical :: dipoles = .true.
+   logical :: quadrupoles = .false.
+
+   real(wp), parameter :: qat(*) = [&
+      & 2.50000000000000E-1_wp,-2.50000000000000E-1_wp, 5.00000000000000E-1_wp,&
+      &-5.00000000000000E-1_wp]
+   real(wp), parameter :: dpat(3, 4) = reshape([&
+      & 1.00000000000000E-1_wp,-2.00000000000000E-2_wp, 3.00000000000000E-2_wp,&
+      &-4.00000000000000E-2_wp, 8.00000000000000E-2_wp,-1.00000000000000E-2_wp,&
+      & 6.00000000000000E-2_wp, 2.00000000000000E-2_wp,-7.00000000000000E-2_wp,&
+      &-3.00000000000000E-2_wp,-5.00000000000000E-2_wp, 4.00000000000000E-2_wp], &
+      & [3, 4])
+
+   call get_structure(mol, "Heavy28", "bih3")
+
+   call test_e(error, cosmo_solvation_model%cosmo, mol, monopoles, dipoles, &
+      & quadrupoles, -3.7657586483210E-02_wp, qat, dpat=dpat)
+
+end subroutine test_e_cosmo_dipole_m03
+
+!> Test COSMO solvation energy with point monopole+dipole+quadrupole representation of solute electron density
+subroutine test_e_cosmo_quadrupole_m03(error)
+
+   !> Error handling
+   type(error_type), allocatable, intent(out) :: error
+
+   type(structure_type) :: mol
+
+   logical :: monopoles = .true.
+   logical :: dipoles = .true.
+   logical :: quadrupoles = .true.
+
+   real(wp), parameter :: qat(*) = [&
+      & 2.50000000000000E-1_wp,-2.50000000000000E-1_wp, 5.00000000000000E-1_wp,&
+      &-5.00000000000000E-1_wp]
+   real(wp), parameter :: dpat(3, 4) = reshape([&
+      & 1.00000000000000E-1_wp,-2.00000000000000E-2_wp, 3.00000000000000E-2_wp,&
+      &-4.00000000000000E-2_wp, 8.00000000000000E-2_wp,-1.00000000000000E-2_wp,&
+      & 6.00000000000000E-2_wp, 2.00000000000000E-2_wp,-7.00000000000000E-2_wp,&
+      &-3.00000000000000E-2_wp,-5.00000000000000E-2_wp, 4.00000000000000E-2_wp], &
+      & [3, 4])
+   real(wp), parameter :: qpat(6, 4) = reshape([&
+      & 2.00000000000000E-2_wp, 1.00000000000000E-2_wp,-3.00000000000000E-2_wp,&
+      & 4.00000000000000E-3_wp,-2.00000000000000E-3_wp, 1.00000000000000E-2_wp,&
+      &-1.00000000000000E-2_wp, 3.00000000000000E-3_wp, 2.00000000000000E-2_wp,&
+      &-5.00000000000000E-3_wp, 7.00000000000000E-3_wp,-2.00000000000000E-2_wp,&
+      & 3.00000000000000E-2_wp,-4.00000000000000E-3_wp, 1.00000000000000E-2_wp,&
+      & 8.00000000000000E-3_wp,-6.00000000000000E-3_wp,-4.00000000000000E-2_wp,&
+      &-2.00000000000000E-2_wp, 5.00000000000000E-3_wp,-1.00000000000000E-2_wp,&
+      &-7.00000000000000E-3_wp, 2.00000000000000E-3_wp, 3.00000000000000E-2_wp], &
+      & [6, 4])
+
+   call get_structure(mol, "Heavy28", "bih3")
+
+   call test_e(error, cosmo_solvation_model%cosmo, mol, monopoles, dipoles, &
+      & quadrupoles, -3.7794562071892E-02_wp, qat, dpat=dpat, qpat=qpat)
+
+end subroutine test_e_cosmo_quadrupole_m03
 
 subroutine test_gaussian_multipole_finite_difference(error)
    type(error_type), allocatable, intent(out) :: error

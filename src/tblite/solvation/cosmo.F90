@@ -396,12 +396,7 @@ subroutine get_energy(self, mol, cache, wfn, energies)
             & 0.5_wp*dot_product(wfn%qpat(:, iat, 1), vqp(:, iat))
       end do
    end if
-
-   ! Print monopoles, dipoles, and quadrupoles
-   ! print *, "Monopoles: ", wfn%qat
-   ! print *, "Dipoles: ", wfn%dpat
-   ! print *, "Quadrupoles: ", wfn%qpat
-
+   
 end subroutine get_energy
 
 subroutine get_potential(self, mol, cache, wfn, pot)
